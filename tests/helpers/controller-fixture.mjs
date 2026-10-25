@@ -13,6 +13,7 @@ export function fixture() {
   let customNodes;
   const axTrees = [];
   let binding;
+  let fileCount = 0;
   const api = { extension: { isAllowedFileSchemeAccess: async () => true },
     storage: { session: { get: async () => structuredClone(stored), set: async value => { stored = structuredClone(value); } } },
     tabGroups: { get: async id => { if (!groups.has(id)) throw new Error('Unknown group'); return groups.get(id); },
@@ -69,6 +70,7 @@ export function fixture() {
         if (method === 'DOM.resolveNode') return { object: { objectId: `object-${args.backendNodeId}` } };
         if (method === 'DOM.getContentQuads') return { quads: [[10, 10, 100, 10, 100, 50, 10, 50]] };
         if (method === 'DOM.getNodeForLocation') return { backendNodeId: 12, frameId: 'main' };
+        if (method === 'DOM.setFileInputFiles') fileCount = args.files.length;
         if (method === 'Runtime.evaluate' && args.expression.includes('function installKeyReceipt')) return { result: { objectId: 'key-guard' } };
         if (method === 'Runtime.evaluate' && args.expression.includes('visibility_state: document.visibilityState')) return { result: { value: { visibility_state: 'visible', has_focus: true } } };
         if (method === 'Runtime.evaluate' && args.expression.includes('title: document.title')) return { result: { value: { title: tabs.get(9).title, url: tabs.get(9).url } } };
@@ -77,6 +79,8 @@ export function fixture() {
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true, x: 10, y: 10, width: 90, height: 40 } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function hitRelation')) return { result: { value: blocked ? null : 'same_node' } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes("input.type !== 'file'")) return { result: { objectId: 'file-input' } };
+        if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes("this.value = '';")) fileCount = 0;
+        if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('this.files?.length')) return { result: { value: fileCount } };
         if (method === 'Runtime.callFunctionOn') return { result: { value: !blocked } };
         if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1024, height: 1800 } };
         if (method === 'Page.captureScreenshot') return { data: 'image-data' };

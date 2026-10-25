@@ -15,6 +15,7 @@
 ## 能做什么
 
 - 发现多个浏览器配置，精确选择并独占接管标签页，完成后释放。
+- 在浏览器扩展详情中为 BrowserAttach 开启 **允许访问文件网址** 后，可操作已打开的普通 `file://` 标签页；发现、接管、观察与输入工具完全相同。
 - 读取可访问性树，按名称、value 或邻近字段 context 查询并取得可操作引用，检查字段值和编辑器模型；通过 ref 或严格 CSS/XPath、HTML label、placeholder、AX role/name 定位点击和填写，也可显式向当前聚焦字段逐字输入。
 - 原生指针悬停、分步拖拽、条件等待；无需打开系统弹层即可选择 HTML 下拉选项。
 - 导航与历史前进/后退、打开或关闭标签页，处理 JavaScript 对话框，上传本机文件并截取整页或单个元素。
@@ -67,7 +68,7 @@ npx --yes --package=@evan_zhong/browser-attach@latest browser-attach setup
 
 Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局安装时，也可以配置 `"command": "browser-attach", "args": ["mcp"]`。重启 MCP 客户端后发现工具。
 
-`@latest` 在启动时选择 npm 包版本。当配对已经运行 0.17 或更高版本时，MCP 启动会协调空闲 Hub 升级、同步已配对的扩展目录，并通知较旧扩展自行重新加载。首次加载扩展，以及从 0.17 之前版本进行的第一次升级，仍需手动重载一次扩展；旧 Hub 必须先停止，新 MCP 才能启动。如果其他 MCP 连接正在使用 Hub，请关闭这些连接后重连，以重试升级。
+`@latest` 在启动时选择包版本；升级已有配对会在启动时协调。首次加载扩展，以及仍停留在更旧协议的配对，需要手动重载一次扩展，详见[本机数据与升级](#本机数据与升级)。
 
 各宿主的装配步骤见 [Agent 集成](docs/AGENT-INTEGRATION.md)；其他客户端直接使用上面的 stdio 配置。
 
@@ -78,7 +79,7 @@ Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局�
 3. `browser_snapshot` 取得元素 `ref`，再执行点击、填写或其他动作。
 4. 动作后重新观察，结束时调用 `browser_tab_control(action="release")`。
 
-标题易变时，claim 可省略 `expected_title`；`expected_url` 也可选。点击/填写可改用每次重新解析的 `selector`。原生元素点击自动滚动；整页坐标点击使用 `coordinate_space: "document"`。求值结果使用 `cursor` 续读缓存，不会重新运行脚本。设计取舍见 [架构说明](docs/ARCHITECTURE.md#设计取舍)。
+标题易变时省略 `expected_title`，改为核对 claim 返回的当前身份。元素可用 `ref` 或每次重新解析的 `selector` 定位；设计取舍见 [架构说明](docs/ARCHITECTURE.md#设计取舍)。
 
 接管和普通输入不会主动激活标签或窗口；需要前台渲染时显式调用 `browser_tab_control(action="activate")`。操作结果未知时先重新观察，避免重复提交。完整参数、分页、上传与输入语义见 [使用指南](docs/USAGE.md)。
 
@@ -94,7 +95,7 @@ Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局�
 | `browser_wait` | 只读等待元素、文本、URL 或网络空闲 |
 | `browser_click` / `browser_hover` / `browser_drag` / `browser_select_option` / `browser_type` / `browser_fill` / `browser_press_key` / `browser_scroll` | 原生/DOM 输入、指针悬停与拖拽、下拉选择、逐字输入与滚动 |
 | `browser_batch` | 单队列顺序执行 1–20 步 click/fill/type/press_key/hover/scroll/select_option/wait，失败即停并返回部分结果 |
-| `browser_navigate` | HTTP(S) 导航与加载等待 |
+| `browser_navigate` | HTTP(S)/file 导航、后退前进与加载等待 |
 | `browser_handle_dialog` | alert、confirm、prompt |
 | `browser_upload_file` | 原生文件 input 或拦截的文件选择器 |
 | `browser_screenshot` | 视口或整页 PNG，附坐标映射 |
@@ -112,13 +113,9 @@ Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局�
 
 宿主装配步骤写入客户端条目时，会固定当前 Node、CLI 和实际配对文件的绝对路径，并设置 MCP 的 `BROWSER_ATTACH_HOME`；支持与自定义 `--config` 一起使用。MCP 启动 Hub 时继续传入同一绝对配对路径及目录，避免不同启动环境重新推导出另一份配置。详见 [Agent 集成](docs/AGENT-INTEGRATION.md)。
 
-```sh
-npm install --global @evan_zhong/browser-attach
-```
+升级时用第 1 步的同一命令重新安装，然后重连 MCP。使用 `@latest` 且配对已运行 0.17 或更高版本时，重连即可；仍停留在更旧协议时需先执行 `browser-attach stop`、重启 MCP，并手动重载一次扩展。自定义配对路径、端口和扩展目录会保留，未打开的浏览器 profile 在下次连接时更新，旧 MCP 包不会降级新版 Hub 或已安装扩展。
 
-安装新版后重连 MCP。使用 `@latest` 时，在 Hub 与扩展已经运行 0.17 或更高版本后，重连 MCP 即可协调后续升级；显式运行 `setup` 或 `start` 也使用同一流程。从更旧版本升级时，需要先执行 `browser-attach stop`、重启 MCP，并手动重载一次扩展。自定义配对路径、端口和扩展目录会保留。未打开的浏览器 profile 在下次连接时完成更新。旧 MCP 包不会降级新版 Hub 或已安装扩展。
-
-升级会等待扩展清理，并在重载后确认新版本；清理或重载失败会明确报告，不重放页面动作。扩展设置页保留手动重新加载按钮用于恢复。正常页面控制仍要求 Hub 与扩展版本一致。默认端口为 `47831`，创建配对时可通过 `setup --port` 选择其他端口。
+升级会等待扩展清理，并在重载后确认新版本；清理或重载失败会明确报告，不重放页面动作。扩展设置页保留手动重新加载按钮用于恢复，正常页面控制仍要求 Hub 与扩展版本一致。默认端口为 `47831`，创建配对时可通过 `setup --port` 选择其他端口。
 
 ## 架构与使用边界
 
@@ -130,13 +127,13 @@ MCP 客户端 → Node.js stdio MCP → 127.0.0.1 Hub
                               现有 HTTP(S) 标签页
 ```
 
-每个 MCP 连接拥有独立控制权，句柄不能跨连接使用。断连或停止调试会释放控制。客户端端点要求 Bearer 密钥并拒绝网页 Origin；扩展验证固定 Origin、密钥和版本。`browser_evaluate` 可以使用页面现有登录态读写数据，执行后快照分页失效，原节点 refs 可继续解析；超时或报错前可能已产生作用，不应自动重放。未暴露通用 CDP 工具。
+每个 MCP 连接拥有独立控制权，句柄不能跨连接使用。断连或停止调试会释放控制。客户端端点要求 Bearer 密钥并拒绝网页 Origin；扩展验证固定 Origin、密钥和版本。`browser_evaluate` 可以使用页面现有登录态读写数据；超时或报错前可能已产生作用，不应自动重放。未暴露通用 CDP 工具。
 
-日志从接管开始采集，跨导航保留，释放时清除；每类最多保留 500 条、1,048,576 个 JSON 字符，超限淘汰会报告 `data_loss`。网络日志默认只记录生命周期元数据；显式 capture 才读取之后的 XHR/fetch 有界、脱敏 headers/正文，不改变缓存或拦截流量。完整参数及边界见[使用指南](docs/USAGE.md#诊断日志)。
+日志从接管开始采集，跨导航保留，释放时清除；缓冲区有上限，淘汰会报告 `data_loss`。网络日志默认只记录生命周期元数据；显式 capture 才读取之后的 XHR/fetch 有界、脱敏 headers/正文，不改变缓存或拦截流量。缓冲上限与参数见[使用指南](docs/USAGE.md#诊断日志)。
 
 浏览器扩展具有调试权限，客户端操作可使用现有网站登录态；只应将其接入你信任的 MCP 客户端。网页内容不应被视为用户授权。配对密钥和生成的 `config.generated.js` 不应提交或发布，打包检查会拒绝包含该文件的包。
 
-目前仅支持 Chrome / Edge 的 HTTP(S) 页面。下载管理、网络拦截和 Firefox / WebKit 尚不支持。跨进程 iframe 使用递归 session 路由，覆盖快照、输入、上传和日志；透视变换的 iframe 点击会明确拒绝。原生指针输入要求活动且未暂停的标签及未最小化窗口，焦点和文档可见性只作诊断；不就绪时快速返回未派发及 tab_control(action=activate) 提示；不会自动抢焦点。后台截图可能因浏览器暂停渲染而超时；原生菜单和标签拖动也可能抑制输入。
+支持 Chrome / Edge 的 HTTP(S) 页面，以及开启扩展文件访问权限后已打开的普通 `file://` 标签页；文件权限在发现、接管、操作和导航时都会检查。`open_tab` 与 `fetch` 仍只接受 HTTP(S)。浏览器内部页、任意扩展页、下载管理、网络拦截和 Firefox / WebKit 不在范围内，内置 PDF 查看器内容取决于浏览器。原生指针输入要求未暂停的标签及未最小化窗口；无修饰键的左键单击可在非活动标签尝试，hover、drag 及其他点击变体仍要求活动标签。完整边界与排查见[使用指南](docs/USAGE.md#限制与排查)。
 
 ## 本地开发
 

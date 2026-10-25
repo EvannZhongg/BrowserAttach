@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.23.4**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.23.5**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -114,7 +114,8 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **可操作性诊断**：区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only 和 unstable_geometry；无可见落点单独返回 no_visible_click_point。失败时最多采集 8 层 composed 祖先的样式、滚动方向和 transition 属性/时长，成功路径保留原有几何就绪语义；不以 opacity=0 拒绝输入，不自动 hover、移除遮挡或等待推断出的组件状态。
 - **原生下拉**：select_option 不要求可见或稳定几何，先只读核对节点、禁用/inert 祖先与唯一选项，再在一次派发中复查并用 selectedIndex setter 和合成 input/change 设置，核验保留结果并返回 events_trusted=false。单步和 batch 共用实现。native click 的 select 命中（含 UA shadow 内部节点和关联 label）在派发前拒绝。
 - **命中提示**：普通命中保留实际 hit node，沿父元素、Shadow host、slot 查找最近的 HTML/ARIA 可点击候选，返回 clickable_target；hint=false 表示未识别候选，不代表无法响应事件。CSSPseudoElement 先解析为事件所属的 originating element，提示标记 pseudo_element=true，并使用该元素安装事件校验。语义候选不会被用于替换点击目标。
-- **遮挡失败诊断**：当前 frame 的遮挡直接复用已读取的 hit_target；祖先 frame 遮挡额外用至多 200 ms 读取命中描述，诊断节点消失时保留原遮挡错误与 backend node ID。错误包含命中点和受阻 frame。根据共享预算的派发状态区分“未派发”和“结果未知”，避免 drag 按住后准备目的节点时误报零输入。
+- **遮挡失败诊断**：当前 frame 的遮挡直接复用已读取的 hit_target；祖先 frame 遮挡额外用至多 200 ms 读取命中描述，诊断节点消失时保留原遮挡错误与 backend node ID。命中元素与最近可点击祖先均附 tag/id/classes，classes 至多 8 项、每项 100 字符，只作当次身份线索，不生成唯一 selector 或替换目标。错误包含命中点和受阻 frame。根据共享预算的派发状态区分“未派发”和“结果未知”，避免 drag 按住后准备目的节点时误报零输入。
+- **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。完成后读回原 input 的 FileList 数量，数量不符或节点脱离时报告结果未知，读取失败也保留已派发事实，不补发设置或事件。files_set 仅表示当时保留的数量；非空路径的 events_trusted=null，不把 CDP 回执作为事件送达核验。清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。value_verified 表示字段文本写入；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
 - **有限多步输入**：batch 在现有标签队列内执行 1–20 步 click/fill/type/press_key/hover/scroll/select_option/wait，共享至多 30 秒预算，每步可另设更短超时；不增加后台任务、循环或脚本引擎；元素目标使用每步重新解析的 selector，type 也接受 focused=true。所有参数先验证，selector 每步重解析，尚未出现的目标只在准备阶段等待；歧义立即报错。首个失败、主文档变化或接管结束后停止，返回此前结果与失败索引；不回滚、不重放、不自动激活或切换输入模式。start_at 显式跳过已完成前缀，返回 failed_step、next_unattempted_step、retry_failed_step_safe；没有后台作业或自动选择续跑点。
 - **OOPIF 坐标**：点击从顶层派发。逐层用 `DOM.getBoxModel` 把坐标换算到祖先文档，并用 `DOM.getNodeForLocation` 确认该位置确实落在 frame owner 上，防止祖先页面的遮挡被跳过。

@@ -169,12 +169,14 @@ export function describeHit() {
     if (parent.matches(':disabled,[inert],[aria-disabled="true"]')) disabled = true;
   }
   const rect = element.getBoundingClientRect(), style = element.ownerDocument.defaultView.getComputedStyle(element);
-  return { tag: element.tagName?.toLowerCase(), id: element.id || null, text: (element.innerText || element.textContent || '').slice(0, 300),
+  const identity = node => ({ tag: node.tagName.toLowerCase(), id: node.id || null,
+    classes: Array.from(node.classList).slice(0, 8).map(name => name.slice(0, 100)) });
+  return { ...identity(element), text: (element.innerText || element.textContent || '').slice(0, 300),
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height }, coordinate_space: 'frame_viewport_css_pixels',
     position: style.position, z_index: style.zIndex, visibility: style.visibility,
     role: element.getAttribute('role'), disabled, clickable_hint: !!clickable,
     native_select: nativeSelect,
-    clickable_target: clickable ? { tag: clickable.tagName.toLowerCase(), role: clickable.getAttribute('role'),
+    clickable_target: clickable ? { ...identity(clickable), role: clickable.getAttribute('role'),
       text: (clickable.innerText || clickable.textContent || '').slice(0, 300) } : null };
 }
 

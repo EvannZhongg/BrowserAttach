@@ -1,8 +1,20 @@
 # 验证报告
 
-当前版本 **0.23.4**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.23.5**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- read_text 的工具描述与使用指南明确：默认正文不包含 input/textarea 当前值；单字段使用 mode=value，整表使用 snapshot(profile=fields)。complete_source 表示来源覆盖，分页仍以 next_offset 为准。
+- 上传完成后读回原 input 的 FileList 数量，files_set 不再直接回显请求数量；数量不符或节点脱离时报告 file_count_not_retained、已派发且结果未知。派发或读回异常均保留未知结果，不自动补发。非空路径返回 method=native、events_trusted=null；清空返回 method=dom、events_trusted=false；两者 application_result=not_checked，不声称事件送达、组件登记或上传完成。
+- 命中元素及最近可点击祖先补充 id/classes；classes 至多 8 项，每项 100 字符，作为当前身份线索，沿用原有遮挡检查与派发边界。
+- 文档整理：升级协调、日志上限与边界描述原先在 README、Agent 集成与架构文档中重复，现各自保留一处并按读者分层（用户步骤 / 宿主装配 / 协议实现）；中文 README 与英文对齐 file:// 范围与后台单击规则；使用指南中的字段、frame、日志与上传示例改用中性占位值，不再引用测试 fixture 的字段名与业务数据。
+- `npm test`：284 项通过。新增上传后页面重置/节点脱离与读回异常不重放的回归，补充清空结果、未检查的应用状态和有界 class 诊断断言。
+- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 388 次调用、36 项检查通过。新增 FileList 读回及结果语义核验，真实 change 处理器立即清空文件时返回未知结果且仅触发 1 次 change；跨 frame 遮挡保留 class/祖先身份且未误点。保留隐藏 input、选择器、清空、多文件、OOPIF 上传及其他既有回归。
+- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、62 个发布文件，无配对密钥。未增加工具、参数、依赖或权限，版本递增至 0.23.5。
+- 本机部署：通过 stop/start 重启，Hub 为 0.23.5 / ready，Chrome、Edge 扩展均为 0.23.5 / ready；稳定扩展副本的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有客户端需重连并重新发现、接管。
+- 剩余边界：FileList 核验仅为当时数量，不核验内容或服务器持久化；页面已经消费文件也可能导致未知结果。class 线索不保证唯一或跨重渲染稳定。本轮未操作真实业务表单。
+
+## 0.23.4 验证
 
 - 补充 npm 包的 `mcpName` 和根目录 `server.json`，包含 Registry 名称、展示名称、描述、源码/文档链接及 npm stdio 启动信息；元数据通过官方 2025-12-11 JSON Schema 校验。
 - `npm test`：282 项通过。仅调整发布元数据、版本与打包检查，未修改页面操作实现，未重复运行真实浏览器 fixture 测试。

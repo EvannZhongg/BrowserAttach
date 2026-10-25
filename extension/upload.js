@@ -28,23 +28,31 @@ export function createUploads(cdp, value) {
     if (resolved.exceptionDetails) value(resolved);
     if (!resolved.result?.objectId) throw new Error('Could not resolve the file input');
     args.budget.dispatch();
-    if (args.files.length === 0) {
-      // Chromium's native empty-path assignment does not emit input/change.
-      // Like Playwright's empty payload path, explicitly clear and notify the app.
-      value(await send(target.target, 'Runtime.callFunctionOn', { objectId: resolved.result.objectId, returnByValue: true,
-        functionDeclaration: `function() {
-          this.value = '';
-          const Event = this.ownerDocument.defaultView.Event;
-          this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
-          this.dispatchEvent(new Event('change', { bubbles: true }));
-          return true;
-        }` }));
-    } else {
-      // Native CDP assignment emits input/change and preserves actual file metadata.
-      await send(target.target, 'DOM.setFileInputFiles', { objectId: resolved.result.objectId, files: args.files });
-    }
-    fileChoosers.delete(tabId);
-    return { files_set: args.files.length, cleared: args.files.length === 0, events_trusted: args.files.length > 0, observe_again: true };
+    try {
+      if (args.files.length === 0) {
+        // Chromium's native empty-path assignment does not emit input/change.
+        // Like Playwright's empty payload path, explicitly clear and notify the app.
+        value(await send(target.target, 'Runtime.callFunctionOn', { objectId: resolved.result.objectId, returnByValue: true,
+          functionDeclaration: `function() {
+            this.value = '';
+            const Event = this.ownerDocument.defaultView.Event;
+            this.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+            this.dispatchEvent(new Event('change', { bubbles: true }));
+            return true;
+          }` }));
+      } else {
+        // Native CDP assignment emits input/change and preserves actual file metadata.
+        await send(target.target, 'DOM.setFileInputFiles', { objectId: resolved.result.objectId, files: args.files });
+      }
+      fileChoosers.delete(tabId);
+      const count = value(await send(target.target, 'Runtime.callFunctionOn', { objectId: resolved.result.objectId, returnByValue: true,
+        functionDeclaration: `function() { return this.isConnected ? this.files?.length : null; }` }));
+      if (count !== args.files.length) throw Object.assign(new Error('File input did not retain the requested file count. The page may have consumed or reset the selection; application outcome is unknown. Observe before continuing; do not replay automatically.'), {
+        outcome_unknown: true, diagnostics: { reason: 'file_count_not_retained', expected_count: args.files.length, observed_count: Number.isInteger(count) ? count : null },
+      });
+      return { files_set: count, cleared: count === 0, method: args.files.length ? 'native' : 'dom',
+        events_trusted: args.files.length ? null : false, application_result: 'not_checked', observe_again: true };
+    } catch (error) { error.outcome_unknown = true; throw error; }
   }
   return { upload,
     opened(tabId, params, sessionId) {

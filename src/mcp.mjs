@@ -113,7 +113,7 @@ export function createMcp(client) {
     query: z.string().min(1).max(2000).optional().describe('Case-insensitive literal substring of names, values or nearby context. fields also searches HTML labels, DOM id/name/placeholder and selected options. Zero matches is not an error.'),
     verbose: z.boolean().default(false).describe('Include viewport and snapshot_id.'),
   });
-  tool('read_text', 'Read rendered page/frame text, optionally scoped to a selector. mode=value reads a field; mode=editor reads a Monaco/CodeMirror 5 model. complete_source reports completeness; next_offset continues live text, which may change.', {
+  tool('read_text', 'Read rendered page/frame text, optionally scoped to a selector. Default visible text excludes input/textarea values: use mode=value with a selector for one field, or browser_snapshot profile=fields for structured form values. mode=editor reads a Monaco/CodeMirror 5 model. complete_source describes source coverage, not pagination; next_offset continues live text, which may change.', {
     ...handle, ...selector, ...frameScope, nth: target.nth, mode: z.enum(['visible', 'text_content', 'value', 'editor']).default('visible'),
     offset: integerRange('offset', 0, Number.MAX_SAFE_INTEGER).default(0), max_chars: integerRange('max_chars', 1, 100000).default(20000),
   });
@@ -196,7 +196,7 @@ export function createMcp(client) {
   tool('handle_dialog', 'Accept/dismiss a JS dialog and return its original details and accepted.', {
     ...handle, accept: z.boolean(), prompt_text: z.string().optional().describe('Response sent to the website for a prompt dialog.'),
   });
-  tool('upload_file', 'Set browser-host absolute file paths on a file-input/label ref, or omit ref for the pending intercepted chooser. [] clears/cancels; multiple files require a multiple input. Directories unsupported.', {
+  tool('upload_file', 'Set browser-host absolute file paths on a file-input/label ref, or omit ref for the pending intercepted chooser. [] clears/cancels; multiple files require a multiple input. Reads back the current FileList count only, not event delivery, application acceptance or upload completion. Directories unsupported.', {
     ...handle, ...inputTimeout, ...target, files: z.array(z.string()).max(100),
   }, null, async args => ({ ...args, files: await validateFiles(args.files) }));
   tool('screenshot', 'Capture viewport/full-page or one element as PNG with image-to-viewport CSS mapping. Full-page points may need scrolling before input. If background rendering stalls, activate the tab or use AX/text.', {

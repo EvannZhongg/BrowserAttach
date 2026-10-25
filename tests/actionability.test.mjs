@@ -102,13 +102,17 @@ test('mouse parameters validate buttons, double clicks, modifiers and DOM limita
 
 test('hit hints follow ancestors and shadow/slot boundaries while preserving the actual hit node', () => {
   const element = (tag, parent, { clickable = false, disabled = false } = {}) => ({ nodeType: 1, tagName: tag.toUpperCase(),
-    parentElement: parent, innerText: tag, getRootNode: () => ({}), getAttribute: () => null,
+    parentElement: parent, innerText: tag, classList: [], getRootNode: () => ({}), getAttribute: () => null,
     getBoundingClientRect: () => ({ x: 1, y: 2, width: 30, height: 40 }),
     ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: 'visible', position: 'fixed', zIndex: '9' }) } },
     matches: selector => selector.startsWith('button,') ? clickable : disabled });
   const button = element('button', null, { clickable: true }), span = element('span', button);
+  button.id = 'confirm'; button.classList = ['dialog-confirm'];
+  span.classList = ['dialog-label', ...Array.from({ length: 10 }, () => 'x'.repeat(120))];
   const hit = describeHit.call(span);
   assert.equal(hit.tag, 'span'); assert.equal(hit.clickable_hint, true); assert.equal(hit.clickable_target.tag, 'button');
+  assert.equal(hit.classes.length, 8); assert.equal(hit.classes[0], 'dialog-label'); assert.equal(hit.classes[1].length, 100);
+  assert.equal(hit.clickable_target.id, 'confirm'); assert.deepEqual(hit.clickable_target.classes, ['dialog-confirm']);
   assert.equal(hit.disabled, false);
   const shadow = element('span', null); shadow.getRootNode = () => ({ host: button });
   assert.equal(describeHit.call(shadow).clickable_target.tag, 'button');

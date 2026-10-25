@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.23.4**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.23.5**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -173,8 +173,8 @@ ref 错误的 diagnostics.reason=stale_ref，cause 区分 snapshot_replaced、do
 
 ```json
 {"tab_handle":"...","profile":"fields"}
-{"tab_handle":"...","profile":"fields","query":"TEXTS28"}
-{"tab_handle":"...","profile":"fields","include_hidden":true,"query":"rawFee"}
+{"tab_handle":"...","profile":"fields","query":"邮箱"}
+{"tab_handle":"...","profile":"fields","include_hidden":true,"query":"orderId"}
 ```
 
 fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和字段名，避免以标签作为键覆盖数据。`node_count/total_node_count` 与 max_nodes 计数字段，max_chars 仍按完整序列化项计算。`frames` 列出本次观察的 frame_id/URL，读取失败及变化见 omitted_frames。每行示例：
@@ -182,9 +182,9 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 ```json
 {
   "ref":"token:1", "frame_id":"frame-id",
-  "labels":["签证费"], "context":null,
-  "ax":{"role":"textbox","name":"签证费","value":"1,234.00","readonly":true},
-  "dom":{"tag":"input","id":"fee","name":"TEXTS28","type":"text","value":"1,234.00","value_source":"input_value"}
+  "labels":["订单号"], "context":null,
+  "ax":{"role":"textbox","name":"订单号","value":"SO-0001","readonly":true},
+  "dom":{"tag":"input","id":"order-no","name":"orderNo","type":"text","value":"SO-0001","value_source":"input_value"}
 }
 ```
 
@@ -197,7 +197,7 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 
 ### browser_read_text
 
-`browser_read_text({tab_handle})` 默认读取主 frame 的可见正文。可用 selector 限定范围，或用 frame/frame_id 选择子 frame。
+`browser_read_text({tab_handle})` 默认读取主 frame 的可见正文，不包含 input/textarea 的当前值，不能据此判断表单为空。单字段用 `browser_read_text({tab_handle, selector:"#name", mode:"value"})`；整张表单用 `browser_snapshot({tab_handle, profile:"fields"})`，可加 query 筛选字段。可用 selector 限定正文范围，或用 frame/frame_id 选择子 frame。
 
 | mode | 来源 |
 |---|---|
@@ -231,12 +231,12 @@ browser_click({tab_handle, selector_type:"role", selector:"option", name:"2026"}
 CSS/XPath/label/placeholder 不穿透 Shadow DOM；可用 AX role 或 ref。role 每次读取所选 frame 的完整 AX 树，不保证比简单 CSS 查询便宜。selector、read_text、evaluate 可用 frame 或 frame_id 指定范围，两者互斥：
 
 ```json
-{"tab_handle":"...","selector":"input","frame":{"path":["iframe[title='Outer']","iframe[title='Inner']"]},"text":"填写内容"}
+{"tab_handle":"...","selector":"#comment","frame":{"path":["iframe[title='Outer']","iframe[title='Inner']"]},"text":"填写内容"}
 ```
 
 frame.url/title 精确匹配子 frame，path 是逐层且每层唯一的 CSS iframe 路径，可再用 url/title 校验最终 frame。路径每次重解析，歧义报错；ref 已携带 frame/session，不能另传 frame。
 
-例如 iframe 的 id 为 `icims_content_iframe` 时，path 应写为 `["#icims_content_iframe"]`。定位失败的 diagnostics 包含失败步骤和至多 10 个当前 frame 的 id、父 id、URL 及省略数量；快照也会列出 frame id/URL。frame_id 每次按当前 frame tree 校验，不是 ref；iframe 重建或导航后的 ID 应重新观察，不猜测替代目标。
+例如 iframe 的 id 为 `payment_frame` 时，path 应写为 `["#payment_frame"]`。定位失败的 diagnostics 包含失败步骤和至多 10 个当前 frame 的 id、父 id、URL 及省略数量；快照也会列出 frame id/URL。frame_id 每次按当前 frame tree 校验，不是 ref；iframe 重建或导航后的 ID 应重新观察，不猜测替代目标。
 
 ## 输入：可操作性与两种模式
 
@@ -264,7 +264,7 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 
 原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 附带 hit_target、命中点及受阻 frame，前序输入可能已经送达。
 
-hit_target 描述实际命中的 tag/id/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。clickable_hint 和最近的 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
+hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
 
 DOM 模式调用一次 HTMLElement.click()，返回 method=dom、events_trusted=false。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
 
@@ -451,7 +451,8 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 
 - files 是浏览器本机的绝对可读文件路径，最多 100 个；支持中文、空格及空文件，内容不传给 MCP 或 Hub。
 - 多文件要求 multiple；禁用控件、目录、webkitdirectory 和失效目标会被拒绝。accept 只是页面提示，网站可自行拒绝格式。
-- files=[] 清空指定 input 或结束待处理选择，派发合成 input/change，events_trusted=false；非空文件设置的事件为可信，仍不证明服务端上传完成。
+- 成功后读回原 input 的 FileList 数量，files_set 是当时观察到且与请求数量一致的值，cleared 表示该数量为 0；不核验文件内容或组件是否登记。数量不符或原 input 脱离文档时返回 file_count_not_retained 和未知结果；页面可能已经消费或重置选择，不代表上传失败，不自动重放。
+- 非空文件通过 CDP 设置，返回 method=native、events_trusted=null：没有监听核验事件送达或信任状态。files=[] 清空指定 input 或结束待处理选择，显式派发合成 input/change，返回 method=dom、events_trusted=false。两者均返回 application_result=not_checked、observe_again=true，不证明组件接受、解析或服务端上传完成。
 - 跨进程 iframe 的 file input 已支持；File System Access API 的 showOpenFilePicker() 不在范围内。
 
 若网站解析文件后重载表单，先等待具体字段或就绪标志，重新观察，再用新的 selector/batch 补齐确认缺失的字段。upload_file 不等待应用解析完成，不自动重放上传或恢复字段；batch 在主文档变化后停止。

@@ -70,7 +70,7 @@ Merge the following into your client's MCP configuration, or see [mcp-config.jso
 
 On Windows clients that require a full command extension, use `npx.cmd`. With a global install you can also configure `"command": "browser-attach", "args": ["mcp"]`. Restart the MCP client to discover the tools.
 
-`@latest` selects the npm package at launch. For a pair already running 0.17 or newer, startup coordinates an idle Hub upgrade, synchronizes the paired extension directory and asks older connected extensions to reload themselves. First-time extension loading and the first upgrade from a pre-0.17 pair still require one manual extension reload; a pre-0.17 Hub must be stopped once before the new MCP can start. If another MCP connection is using the Hub, close it and reconnect to retry the upgrade.
+`@latest` selects the package at launch; upgrading an existing pair is coordinated at startup. The first extension load, and pairs still on an older protocol, need one manual extension reload — see [local data and upgrades](#local-data-and-upgrades).
 
 Assembly steps for supported hosts are in [agent integration](docs/AGENT-INTEGRATION.md); other clients use the stdio entry above.
 
@@ -81,7 +81,7 @@ Assembly steps for supported hosts are in [agent integration](docs/AGENT-INTEGRA
 3. `browser_snapshot` to get element `ref`s, then click, fill or run other actions.
 4. Observe again after each action, and finish with `browser_tab_control(action="release")`.
 
-When titles change easily, claim can omit `expected_title`; `expected_url` is optional too. Click/fill can instead use a `selector` that is re-resolved on every call. Native element clicks scroll into view automatically; full-page coordinate clicks use `coordinate_space: "document"`. Evaluation results continue from the cache through `cursor` without re-running the script. Design trade-offs: [architecture notes](docs/ARCHITECTURE.md#设计取舍).
+When titles change often, omit `expected_title` and check the identity returned by claim instead. Elements may be addressed by `ref` or by a `selector` re-resolved on every call; design trade-offs: [architecture notes](docs/ARCHITECTURE.md#设计取舍).
 
 Claiming and ordinary input never activate a tab or window; call `browser_tab_control(action="activate")` explicitly when foreground rendering is needed. When an outcome is unknown, observe again first and avoid duplicate submissions. Full parameters, pagination, uploads and input semantics: [usage guide](docs/USAGE.md).
 
@@ -115,13 +115,9 @@ Override it explicitly with the absolute path `BROWSER_ATTACH_HOME`. The Windows
 
 A host assembly step that writes the client entry pins the absolute paths of the current Node, CLI and the actual pairing file and sets `BROWSER_ATTACH_HOME`; it works together with a custom `--config`. When the MCP launches the Hub it passes the same absolute pairing path and directory, so different launch environments cannot derive a second configuration. See [agent integration](docs/AGENT-INTEGRATION.md).
 
-```sh
-npm install --global @evan_zhong/browser-attach
-```
+To upgrade, install again with the command from step 1 and reconnect the MCP client. With `@latest` and a pair on 0.17 or newer the restart is enough; a pair still on an older protocol needs `browser-attach stop`, a restart and one manual extension reload. Custom pairing paths, ports and extension directories are retained, closed browser profiles update when they next connect, and an older MCP package cannot downgrade a newer Hub or installed extension.
 
-Then restart the MCP connection. With `@latest`, restarting MCP is sufficient for later upgrades once Hub and extension are on 0.17 or newer; `setup` and `start` use the same coordination when run explicitly. Upgrading from an older pair first requires `browser-attach stop`, a restart and one manual extension reload. Custom pairing paths, ports and extension directories are retained. Closed browser profiles update when they next connect. An older MCP package cannot downgrade a newer Hub or installed extension.
-
-An upgrade waits for extension cleanup and confirms the new version after reload; cleanup or reload failures are reported instead of replaying page actions. Manual reload remains available on the extension options page for recovery. Hub and extension versions must match for page control. The default port is `47831`; choose another port with `setup --port` when creating a pairing.
+An upgrade waits for extension cleanup and confirms the new version after reload; cleanup or reload failures are reported instead of replaying page actions. Manual reload remains available on the extension options page for recovery, and Hub and extension versions must match for page control. The default port is `47831`; choose another port with `setup --port` when creating a pairing.
 
 ## Architecture and boundaries
 
@@ -133,13 +129,13 @@ MCP client → Node.js stdio MCP → 127.0.0.1 Hub
                                existing HTTP(S) / authorized file:// tabs
 ```
 
-Each MCP connection holds its own control and handles cannot be used across connections. Disconnecting or stopping debugging releases control. The client endpoint requires a Bearer key and rejects web page Origins; the extension verifies a fixed Origin, key and version. `browser_evaluate` can read and write data with the page's existing sign-in state; after it runs, snapshot pagination expires while refs to the original nodes still resolve; a timeout or error may already have had an effect and must not be replayed automatically. No generic CDP tool is exposed.
+Each MCP connection holds its own control and handles cannot be used across connections. Disconnecting or stopping debugging releases control. The client endpoint requires a Bearer key and rejects web page Origins; the extension verifies a fixed Origin, key and version. `browser_evaluate` can read and write data with the page's existing sign-in state; a timeout or error may already have had an effect and must not be replayed automatically. No generic CDP tool is exposed.
 
-Logs are collected from claim time, survive navigation and are cleared on release; each kind keeps at most 500 entries and 1,048,576 JSON characters, and eviction reports `data_loss`. Network logs store lifecycle metadata only by default; an explicit capture reads bounded, redacted headers/bodies of subsequent XHR/fetch requests without changing caches or intercepting traffic. Full parameters and limits: [usage guide](docs/USAGE.md#诊断日志).
+Logs are collected from claim time, survive navigation and are cleared on release, with bounded buffers that report `data_loss` on eviction. Network logs store lifecycle metadata only by default; an explicit capture reads bounded, redacted headers/bodies of subsequent XHR/fetch requests without changing caches or intercepting traffic. Buffer limits and parameters: [usage guide](docs/USAGE.md#诊断日志).
 
 The extension holds debugger permission and client actions can use existing site sign-in state; only connect clients you trust. Web page content must not be treated as user authorization. The pairing key and the generated `config.generated.js` must not be committed or published; the packaging check rejects packages that contain that file.
 
-Chrome / Edge HTTP(S) pages and existing ordinary `file://` tabs with extension file access enabled are supported. File access is checked during discovery, claim, operations and navigation, including history destinations. `open_tab` and `fetch` still accept HTTP(S) only. Built-in PDF viewer AX/content and screenshots are browser-dependent and are not guaranteed; browser internal pages and arbitrary extension pages remain outside scope. Download management, network interception and Firefox / WebKit are not supported. Cross-process iframes use recursive session routing covering snapshots, input, uploads and logs; clicks in perspective-transformed iframes are refused explicitly. Native pointer input requires an unsuspended tab in a non-minimized window. An unmodified left single click may target an inactive tab with trusted delivery verification; hover, drag and other click variants still require an active tab. Focus and document visibility are diagnostic only; when the tab is not ready it returns without dispatch and suggests tab_control(action=activate) instead of stealing focus. Background screenshots may time out because the browser pauses rendering; native menus and tab drags may also suppress input.
+Chrome / Edge HTTP(S) pages and existing ordinary `file://` tabs with extension file access enabled are supported, and file access is checked during discovery, claim, operations and navigation. `open_tab` and `fetch` still accept HTTP(S) only. Browser internal pages, arbitrary extension pages, download management, network interception and Firefox / WebKit remain outside scope, and built-in PDF viewer content is browser-dependent. Native pointer input requires an unsuspended tab in a non-minimized window; an unmodified left single click may target an inactive tab, while hover, drag and other click variants require an active tab. Full limits and failure modes: [usage guide](docs/USAGE.md#限制与排查).
 
 ## Local development
 

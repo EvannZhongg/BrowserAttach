@@ -110,7 +110,7 @@ npm root -g       # 全局安装目录；CLI 位于 <root>/@evan_zhong/browser-a
 - `web` profile 开启 HMR，修改条目会就地重连；`headless`、`sdk`、`acp` 关闭 HMR，需要重启 harness。
 - MCP 工具与原生工具一样经过 DSH 的权限检查与审批策略。
 
-安装新版后重启或重连 harness，由 MCP 启动流程协调 0.17+ 的后续 Hub 与扩展升级；首次加载扩展以及从更旧版本首次升级仍需手动重载。
+安装新版后重启或重连 harness 即可，启动流程会协调升级；残留失败与手动重载见 [README：本机数据与升级](../README.md#本机数据与升级)。
 
 ## 新增宿主
 

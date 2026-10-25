@@ -496,7 +496,9 @@ try {
   await call('click', { ...handle, ref: await ref('Increment') });
   assert.equal((await state()).count, 1); checks.push('existing click');
   const single = await ref('Single');
-  await call('upload_file', { ...handle, ref: single, files: [file] });
+  const assigned = await call('upload_file', { ...handle, ref: single, files: [file] });
+  assert.equal(assigned.files_set, 1); assert.equal(assigned.method, 'native');
+  assert.equal(assigned.events_trusted, null); assert.equal(assigned.application_result, 'not_checked');
   await until(async () => (await state()).files.single?.length, 'single file content');
   assert.equal((await state()).files.single[0].text, 'Attach 上传内容\n'); checks.push('single file content + Unicode path');
   assert.ok((await state()).events.includes('single:input'));
@@ -518,8 +520,21 @@ try {
   await call('upload_file', { ...handle, files: [file] });
   await until(async () => (await state()).files['shadow-upload']?.length === 1, 'showPicker input');
   checks.push('HTMLInputElement.showPicker');
-  await call('upload_file', { ...handle, ref: await ref('Multiple'), files: [] });
+  const clearedFiles = await call('upload_file', { ...handle, ref: await ref('Multiple'), files: [] });
+  assert.equal(clearedFiles.files_set, 0); assert.equal(clearedFiles.method, 'dom'); assert.equal(clearedFiles.events_trusted, false);
   await until(async () => (await state()).files.multiple?.length === 0, 'cleared selection'); checks.push('clear selection');
+  await evaluate(`(() => {
+    window.fileResetEvents = 0;
+    const input = document.createElement('input'); input.type = 'file'; input.id = 'reset-upload'; input.hidden = true;
+    input.onchange = () => { window.fileResetEvents++; input.value = ''; }; document.body.append(input);
+  })()`);
+  const resetUpload = await rawCall('upload_file', { ...handle, selector: '#reset-upload', files: [file] });
+  assert.equal(resetUpload.isError, true);
+  const resetEvidence = JSON.parse(resetUpload.content[0].text);
+  assert.equal(resetEvidence.input_dispatched, true); assert.equal(resetEvidence.diagnostics.reason, 'file_count_not_retained');
+  assert.equal(resetEvidence.diagnostics.observed_count, 0);
+  assert.equal((await evaluate('window.fileResetEvents')).value, 1);
+  checks.push('upload FileList readback, unchecked native event trust/application result, synchronous reset reports unknown without replay');
   for (const [label, files] of [['Single', [file, empty]], ['Disabled', [file]], ['Directory', [file]]]) {
     assert.equal((await rawCall('upload_file', { ...handle, ref: await ref(label), files })).isError, true); checks.push(`${label} validation`);
   }
@@ -593,9 +608,12 @@ try {
     await call('tab_control', { ...handle, action: 'activate' });
     await call('click', { ...handle, ref: stable });
   }
-  await evaluate(`(()=>{const cover=document.createElement('button');cover.id='cover';cover.textContent='Cover';cover.style='position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647';cover.onclick=()=>window.coverClicks=(window.coverClicks||0)+1;document.body.append(cover)})()`);
+  await evaluate(`(()=>{const cover=document.createElement('button');cover.id='cover';cover.className='confirm-overlay fixed-bar';cover.textContent='Cover';cover.style='position:fixed;inset:0;width:100vw;height:100vh;z-index:2147483647';cover.onclick=()=>window.coverClicks=(window.coverClicks||0)+1;document.body.append(cover)})()`);
   const covered = await rawCall('click', { ...handle, ref: await childRef('button', 'Child button'), timeout_ms: 500 });
   assert.equal(covered.isError, true); assert.match(covered.content[0].text, /covers this frame.*hit_target=.*Cover.*No input was dispatched/);
+  const blocker = JSON.parse(covered.content[0].text).diagnostics.hit_target;
+  assert.deepEqual(blocker.classes, ['confirm-overlay', 'fixed-bar']);
+  assert.equal(blocker.clickable_target.id, 'cover'); assert.deepEqual(blocker.clickable_target.classes, blocker.classes);
   assert.equal((await evaluate('window.coverClicks||0')).value, 0);
   await call('navigate', { ...handle, url });
   checks.push('nested OOPIF snapshot/native and DOM fill/keyboard/right-middle-double-Control clicks/chooser upload/logs/subframe navigation cleanup');
