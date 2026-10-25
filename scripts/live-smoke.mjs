@@ -48,6 +48,10 @@ document.querySelector('#name').oninput=sync;sync();</script>`;
 let fetchVisits = 0, crawled = 0;
 const fixture = http.createServer((request, response) => {
   const port = fixture.address().port;
+  if (request.url === '/editor-tt') {
+    response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "require-trusted-types-for 'script'" });
+    response.end('<!doctype html><title>Trusted Types editor</title><div id="editor" role="textbox" aria-label="Editor" contenteditable="true" style="white-space:normal;min-height:30px">Old<div><span>paragraph</span></div></div><input id="other">'); return;
+  }
   if (request.url === '/fetch/hang') return;
   if (request.url === '/fetch/events') { response.writeHead(200, { 'Content-Type': 'text/event-stream' }); response.write('data: connected\n\n'); return; }
   if (request.url === '/fetch/stall') { response.setHeader('Content-Type', 'text/html'); response.end('<title>Incomplete load</title><h1>Readable before load</h1><img src="/fetch/hang">'); return; }
@@ -390,14 +394,22 @@ try {
   assert.equal((await evaluate(`document.querySelector('#format-probe').dataset.inputs`)).value, '1');
   await evaluate(`document.querySelector('#format-probe').remove()`);
   checks.push('native fill formatting mismatch reports value_not_retained with unknown-outcome evidence and one input event');
-  await evaluate(`(()=>{const e=document.createElement('div');e.id='rich-fill-probe';e.contentEditable='true';e.setAttribute('role','textbox');e.style='white-space:normal;min-height:30px';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs||0)+1)};document.body.append(e)})()`);
-  for (const text of [' leading and trailing ', 'first\r\nsecond', 'first\rsecond', '中文🙂\n第二行']) {
+  await evaluate(`(()=>{const e=document.createElement('div');e.id='rich-fill-probe';e.contentEditable='true';e.setAttribute('role','textbox');e.style='white-space:normal;min-height:30px';e.oninput=event=>{e.dataset.inputs=String(Number(e.dataset.inputs||0)+1);e.dataset.trusted=String(event.isTrusted)};document.body.append(e)})()`);
+  for (const text of [' leading and trailing ', 'first\r\nsecond', 'first\rsecond', '中文🙂\n第二行', 'Line one\n\nLine two', 'a\n\n\nb', 'a\n', '\na', '\n\n', '', 'replacement']) {
     await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs='0'`);
     assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text })).value_verified, true);
-    assert.ok(Number((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value) > 0);
+    if (text) {
+      assert.ok(Number((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value) > 0);
+      assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.trusted`)).value, 'true');
+    }
+    assert.equal((await evaluate(`getSelection().isCollapsed`)).value, true);
+    if (text === 'Line one\n\nLine two') assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').innerText`)).value, 'Line one\n\n\nLine two');
   }
-  assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text: 'a\n b', mode: 'dom' })).value_verified, true);
-  for (const [mode, text, html] of [['native', 'ab', '<div>a</div><div>b</div>'], ['dom', 'a\nb', 'a<br>b']]) {
+  assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').textContent`)).value, 'replacement');
+  assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text: 'a\n\nb', mode: 'dom' })).value_verified, true);
+  assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').innerText`)).value, 'a\n\nb');
+  assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.trusted`)).value, 'false');
+  for (const [mode, text, html] of [['native', 'ab', '<div>a</div><div>b</div>'], ['dom', 'a\n\nb', 'a<br>b']]) {
     await evaluate(`(()=>{const e=document.querySelector('#rich-fill-probe');e.dataset.inputs='0';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.innerHTML=${JSON.stringify(html)}}})()`);
     const result = await rawCall('fill', { ...handle, selector: '#rich-fill-probe', text, mode });
     assert.equal(result.isError, true);
@@ -407,7 +419,7 @@ try {
     assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value, '1');
   }
   await evaluate(`document.querySelector('#rich-fill-probe').remove()`);
-  checks.push('contenteditable fill: native rendered text accepts CRLF/CR and browser NBSP; DOM text stays exact; cross-representation mismatches never replay');
+  checks.push('contenteditable fill: native selected text preserves blank/trailing lines and replaces existing paragraphs; DOM emits visible breaks; actual line-count changes never replay');
   await call('fill', { ...handle, selector: '#name', mode: 'dom', text: 'selector input' });
   assert.equal((await call('read_text', { ...handle, selector: '#name', mode: 'value' })).text, 'selector input');
   const textPage = await call('read_text', { ...handle, selector: '#full-text', mode: 'value', max_chars: 4 });
@@ -603,6 +615,26 @@ try {
   const largeNext = await call('snapshot', { ...handle, cursor: largeSnapshot.next_cursor, max_nodes: 2 });
   assert.match(largeNext.snapshot, /group "Large row 0"/);
   checks.push(`12000 semantic DOM nodes snapshot/pagination with max_nodes=1 (${Date.now() - largeSnapshotStarted} ms, ${largeSnapshot.total_node_count} rendered AX entries)`);
+  await call('navigate', { ...handle, url: url + 'editor-tt', include_snapshot: false });
+  assert.equal((await evaluate(`(()=>{try{document.querySelector('#editor').innerHTML='blocked';return false}catch(e){return e instanceof TypeError}})()`)).value, true);
+  for (const mode of ['native', 'dom']) for (const text of ['Line one\n\nLine two', 'replacement']) {
+    await call('fill', { ...handle, selector: '#editor', mode, text });
+    if (text === 'replacement') assert.equal((await evaluate(`document.querySelector('#editor').textContent`)).value, 'replacement');
+  }
+  await evaluate(`document.querySelector('#other').focus()`);
+  await call('fill', { ...handle, selector: '#editor', mode: 'dom', text: 'a\n\nb' });
+  assert.equal((await evaluate(`document.activeElement.id`)).value, 'other');
+  assert.equal((await evaluate(`document.querySelector('#editor').innerText`)).value, 'a\n\nb');
+  const invalidType = await rawCall('type', { ...handle, selector: '#editor', text: 'a\nb' });
+  assert.equal(invalidType.isError, true); assert.match(invalidType.content[0].text, /press_key.*Enter/);
+  await evaluate(`(()=>{const e=document.querySelector('#editor');e.dataset.inputs='0';e.oninput=()=>e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.onfocus=()=>queueMicrotask(()=>getSelection().collapseToEnd())})()`);
+  const lostSelection = await rawCall('fill', { ...handle, selector: '#editor', text: 'must not append' });
+  assert.equal(lostSelection.isError, true);
+  assert.equal(JSON.parse(lostSelection.content[0].text).diagnostics.reason, 'fill_selection_lost');
+  assert.equal((await evaluate(`document.querySelector('#editor').innerText`)).value, 'a\n\nb');
+  assert.equal((await evaluate(`document.querySelector('#editor').dataset.inputs`)).value, '0');
+  checks.push('Trusted Types blocks innerHTML; native/DOM multiline replacement succeeds without HTML sinks; DOM keeps focus; type newline error names Enter');
+  checks.push('page collapses replacement selection after focus: fill_selection_lost before insertText, no append and zero input events');
   await call('tab_control', { ...handle, action: 'release' });
   }
   const report = { date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()), family: values.family, user_agent: browsers[0].user_agent, extension_version: VERSION, checks, calls: calls.length, results: calls };

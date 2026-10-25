@@ -124,7 +124,14 @@ export function createInput(cdp, value, sessions) {
     budget.dispatch();
     value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
       functionDeclaration: prepareFill.toString(), arguments: [{ value: mode }, { value: args.text }] }));
-    if (mode === 'native') await send('Input.insertText', { text: args.text });
+    if (mode === 'native') {
+      const selected = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
+        functionDeclaration: verifyReplacementSelection.toString() }));
+      if (selected !== true) throw Object.assign(new Error('Fill replacement selection was lost before text insertion; no replacement text was inserted. Observe the field before continuing.'), {
+        outcome_unknown: true, diagnostics: { reason: 'fill_selection_lost', frame_id: node.frameId },
+      });
+      await send('Input.insertText', { text: args.text });
+    }
     const matches = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
       functionDeclaration: verifyFill.toString(), arguments: [{ value: args.text }, { value: mode }] }));
     if (matches !== true) throw Object.assign(new Error(`Fill did not retain the requested text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Outcome is unknown. ${BUSY}`), {
@@ -261,7 +268,7 @@ function prepareFill(mode, text) {
   if (tag === 'input' && !['text', 'search', 'email', 'password', 'tel', 'url', ''].includes(this.type)) throw new Error('Input type cannot be filled with text');
   if (mode === 'dom') {
     const win = this.ownerDocument.defaultView;
-    if (this.isContentEditable) this.textContent = text;
+    if (this.isContentEditable) this.innerText = text;
     else {
       const prototype = tag === 'textarea' ? win.HTMLTextAreaElement.prototype : win.HTMLInputElement.prototype;
       Object.getOwnPropertyDescriptor(prototype, 'value').set.call(this, text);
@@ -280,17 +287,46 @@ function prepareFill(mode, text) {
   return true;
 }
 
+function verifyReplacementSelection() {
+  if (!this.isConnected) return false;
+  const active = this.getRootNode().activeElement;
+  if (active !== this && !this.contains(active)) return false;
+  if (!this.isContentEditable) return true;
+  const selection = this.ownerDocument.getSelection();
+  if (!selection || selection.rangeCount !== 1) return false;
+  const expected = this.ownerDocument.createRange(); expected.selectNodeContents(this);
+  const actual = selection.getRangeAt(0);
+  return actual.compareBoundaryPoints(0, expected) === 0 && actual.compareBoundaryPoints(2, expected) === 0;
+}
+
 function verifyFill(text, mode) {
   if (!this.isConnected) return false;
   if (!this.isContentEditable) return this.value === text;
-  if (mode === 'dom') return this.textContent === text;
-  // Native editing uses rendered line boundaries; raw textContent can lose them.
-  const actual = this.innerText.replace(/\r\n?/g, '\n'), expected = text.replace(/\r\n?/g, '\n');
+  let retained;
+  if (mode === 'dom') retained = this.innerText;
+  else {
+    const active = this.getRootNode().activeElement;
+    if (active !== this && !this.contains(active)) return false;
+    const selection = this.ownerDocument.getSelection();
+    if (!selection) return false;
+    const { anchorNode, anchorOffset, focusNode, focusOffset } = selection;
+    const range = this.ownerDocument.createRange(); range.selectNodeContents(this);
+    try {
+      // Chromium's selected text understands editing placeholders such as an
+      // empty <div><br></div>; innerText counts their line breaks twice.
+      selection.removeAllRanges(); selection.addRange(range);
+      retained = selection.toString();
+    } finally {
+      selection.removeAllRanges();
+      if (anchorNode?.isConnected && focusNode?.isConnected) selection.setBaseAndExtent(anchorNode, anchorOffset, focusNode, focusOffset);
+    }
+  }
+  const actual = retained.replace(/\r\n?/g, '\n'), expected = text.replace(/\r\n?/g, '\n');
   if (actual.length !== expected.length) return false;
   for (let index = 0; index < expected.length; index++) {
     // Chromium may preserve an inserted ordinary space as NBSP. Keep its position
     // and count, and still require an explicitly requested NBSP to be retained.
-    if (actual[index] !== expected[index] && !(expected[index] === ' ' && actual[index] === '\u00a0')) return false;
+    if (actual[index] !== expected[index] && !(mode === 'native' && expected[index] === ' ' && actual[index] === '\u00a0')) return false;
   }
   return true;
 }
@@ -339,7 +375,9 @@ export function selectElement(choice, apply = true) {
 }
 
 export function typeOptions(args) {
-  if (typeof args.text !== 'string' || args.text.length > 10000 || /[\r\n\t\x00-\x1f]/.test(args.text)) throw new Error('type text must contain at most 10000 characters');
+  if (typeof args.text !== 'string') throw new Error('type text must be a string');
+  if (args.text.length > 10000) throw new Error('type text must contain at most 10000 characters');
+  if (/[\x00-\x1f]/.test(args.text)) throw new Error('type accepts printable characters only; use press_key with Enter for line breaks or Tab for tabs');
   timingOption(args.delay_ms ?? 0, 'delay_ms');
 }
 

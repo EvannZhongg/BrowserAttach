@@ -75,18 +75,28 @@ test('contenteditable fill verifies the mode-specific text without hiding conten
     ['native changed character', 'native', 'interesting', 'interested', 'interesting', false],
     ['native empty', 'native', '', '', '', true],
     ['native Unicode', 'native', '中文🙂\n第二行', '中文🙂\n第二行', '中文🙂第二行', true],
-    ['DOM raw text despite rendered whitespace', 'dom', 'a\n b', 'a b', 'a\n b', true],
-    ['DOM rendered text cannot hide raw changes', 'dom', 'a\nb', 'a\nb', 'ab', false],
-    ['DOM spaces stay exact', 'dom', ' a ', ' a ', '\u00a0a\u00a0', false],
-    ['DOM CRLF stays exact', 'dom', 'a\r\nb', 'a\nb', 'a\r\nb', true],
-    ['DOM changed line encoding', 'dom', 'a\r\nb', 'a\r\nb', 'a\nb', false],
+    ['DOM collapsed whitespace cannot pass on raw text', 'dom', 'a\n b', 'a b', 'a\n b', false],
+    ['DOM rendered line breaks', 'dom', 'a\nb', 'a\nb', 'ab', true],
+    ['DOM spaces stay exact', 'dom', ' a ', '\u00a0a\u00a0', '\u00a0a\u00a0', false],
+    ['DOM CRLF line breaks', 'dom', 'a\r\nb', 'a\nb', 'ab', true],
+    ['DOM missing blank line', 'dom', 'a\n\nb', 'a\nb', 'a\n\nb', false],
   ];
   for (const [name, mode, text, innerText, textContent, matches] of cases) await t.test(name, async () => {
     const f = fixture(); await f.claim();
     const field = { isConnected: true, isContentEditable: true, innerText, textContent };
+    const anchorNode = { isConnected: true }, focusNode = { isConnected: true };
+    let restored;
+    const selection = { anchorNode, anchorOffset: 2, focusNode, focusOffset: 1,
+      removeAllRanges() {}, addRange() {}, toString: () => innerText,
+      setBaseAndExtent(...args) { restored = args; } };
+    field.getRootNode = () => ({ activeElement: field });
+    field.ownerDocument = { getSelection: () => selection, createRange: () => ({ selectNodeContents() {} }) };
     // Readback represents the retained editor state, including synchronous page formatting.
-    Object.defineProperty(field, mode === 'native' ? 'textContent' : 'innerText', {
+    Object.defineProperty(field, 'textContent', {
       get() { throw new Error('Fill read the other input mode\'s text representation'); },
+    });
+    if (mode === 'native') Object.defineProperty(field, 'innerText', {
+      get() { throw new Error('Native fill must use browser-selected text for editing placeholders'); },
     });
     const send = f.api.debugger.sendCommand;
     f.api.debugger.sendCommand = async (target, method, args) => {
@@ -105,7 +115,25 @@ test('contenteditable fill verifies the mode-specific text without hiding conten
     });
     assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, mode === 'native' ? 1 : 0);
     assert.equal(f.calls.filter(call => call.args?.functionDeclaration?.includes('function prepareFill')).length, 1);
+    if (mode === 'native') assert.deepEqual(restored, [anchorNode, 2, focusNode, 1]);
+    else assert.equal(restored, undefined);
   });
+});
+
+test('native fill does not insert text after losing the replacement selection', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function verifyReplacementSelection')) result.result.value = false;
+    return result;
+  };
+  await assert.rejects(f.exec('fill', { selector: '#editor', text: 'replacement' }), error => {
+    assert.equal(error.diagnostics.reason, 'fill_selection_lost');
+    assert.match(error.message, /no replacement text was inserted/);
+    return true;
+  });
+  assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, 0);
 });
 
 test('DOM click invokes HTML activation once without native input, rejects coordinates and disabled targets', async () => {

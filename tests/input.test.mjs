@@ -1,6 +1,15 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { keyParameters } from '../extension/input.js';
+import { keyParameters, typeOptions } from '../extension/input.js';
+
+test('type validation distinguishes control keys from length and type errors', () => {
+  for (const text of ['a\nb', 'a\n\nb', 'a\rb', 'a\tb']) {
+    assert.throws(() => typeOptions({ text }), /printable characters only.*press_key.*Enter.*Tab/);
+  }
+  assert.throws(() => typeOptions({ text: 3 }), /must be a string/);
+  assert.throws(() => typeOptions({ text: 'x'.repeat(10001) }), /at most 10000/);
+  typeOptions({ text: 'Hello' });
+});
 
 test('function and editing/navigation keys map to native keycodes without text insertion', () => {
   for (let n = 1; n <= 12; n++) {

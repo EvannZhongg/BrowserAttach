@@ -1,6 +1,6 @@
 {
   "name": "@evan_zhong/browser-attach",
-  "version": "0.23.1",
+  "version": "0.23.2",
   "description": "MCP for existing signed-in Chrome and Edge tabs through a locally paired extension",
   "type": "module",
   "license": "MIT",
