@@ -126,7 +126,7 @@ export function createInput(cdp, value, sessions) {
       functionDeclaration: prepareFill.toString(), arguments: [{ value: mode }, { value: args.text }] }));
     if (mode === 'native') await send('Input.insertText', { text: args.text });
     const matches = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
-      functionDeclaration: verifyFill.toString(), arguments: [{ value: args.text }] }));
+      functionDeclaration: verifyFill.toString(), arguments: [{ value: args.text }, { value: mode }] }));
     if (matches !== true) throw Object.assign(new Error(`Fill did not retain the requested text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Outcome is unknown. ${BUSY}`), {
       outcome_unknown: true, diagnostics: { reason: 'value_not_retained', frame_id: node.frameId },
     });
@@ -280,9 +280,19 @@ function prepareFill(mode, text) {
   return true;
 }
 
-function verifyFill(text) {
-  // Native editing may represent line breaks using nested blocks or <br>.
-  return this.isConnected && (this.isContentEditable ? this.textContent === text || this.innerText === text : this.value === text);
+function verifyFill(text, mode) {
+  if (!this.isConnected) return false;
+  if (!this.isContentEditable) return this.value === text;
+  if (mode === 'dom') return this.textContent === text;
+  // Native editing uses rendered line boundaries; raw textContent can lose them.
+  const actual = this.innerText.replace(/\r\n?/g, '\n'), expected = text.replace(/\r\n?/g, '\n');
+  if (actual.length !== expected.length) return false;
+  for (let index = 0; index < expected.length; index++) {
+    // Chromium may preserve an inserted ordinary space as NBSP. Keep its position
+    // and count, and still require an explicitly requested NBSP to be retained.
+    if (actual[index] !== expected[index] && !(expected[index] === ' ' && actual[index] === '\u00a0')) return false;
+  }
+  return true;
 }
 
 function clickElement() {

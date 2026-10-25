@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.23.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.23.1**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -339,7 +339,9 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 
 支持文本类 input（text/search/email/password/tel/url）、textarea 和 contenteditable。native（默认）聚焦、选中并插入文本，不产生逐字 keydown；dom 写入值并派发合成 input/change，不主动聚焦。
 
-两种模式均核对最终文本，返回 value_verified=true；失焦、替换或同步格式化导致不匹配时报错，不回显字段内容。工具不自动 blur 或按 Enter。需要失焦校验时显式 Tab 或点击其他目标；自定义下拉须在输入过滤后点击具体选项。
+两种模式均核对写入后的文本，返回 value_verified=true。input/textarea 按 value 精确比较；contenteditable 的 native 模式只比较渲染文本 innerText，将 CRLF/CR 视为 LF，并允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）；dom 模式只按 textContent 精确比较。不裁剪首尾空白、不合并空格或空行，也不以另一种文本表示兜底。富文本占位换行、节点替换或页面格式化仍可能导致不匹配，此时返回结果未知，不回显字段内容，不自动重放。核验不等待编辑器异步稳定或保存。
+
+工具不自动 blur 或按 Enter。需要失焦校验时显式 Tab 或点击其他目标；自定义下拉须在输入过滤后点击具体选项。
 
 ### browser_type
 

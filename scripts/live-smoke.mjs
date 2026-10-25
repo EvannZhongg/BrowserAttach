@@ -390,6 +390,24 @@ try {
   assert.equal((await evaluate(`document.querySelector('#format-probe').dataset.inputs`)).value, '1');
   await evaluate(`document.querySelector('#format-probe').remove()`);
   checks.push('native fill formatting mismatch reports value_not_retained with unknown-outcome evidence and one input event');
+  await evaluate(`(()=>{const e=document.createElement('div');e.id='rich-fill-probe';e.contentEditable='true';e.setAttribute('role','textbox');e.style='white-space:normal;min-height:30px';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs||0)+1)};document.body.append(e)})()`);
+  for (const text of [' leading and trailing ', 'first\r\nsecond', 'first\rsecond', '中文🙂\n第二行']) {
+    await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs='0'`);
+    assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text })).value_verified, true);
+    assert.ok(Number((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value) > 0);
+  }
+  assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text: 'a\n b', mode: 'dom' })).value_verified, true);
+  for (const [mode, text, html] of [['native', 'ab', '<div>a</div><div>b</div>'], ['dom', 'a\nb', 'a<br>b']]) {
+    await evaluate(`(()=>{const e=document.querySelector('#rich-fill-probe');e.dataset.inputs='0';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.innerHTML=${JSON.stringify(html)}}})()`);
+    const result = await rawCall('fill', { ...handle, selector: '#rich-fill-probe', text, mode });
+    assert.equal(result.isError, true);
+    const error = JSON.parse(result.content[0].text);
+    assert.equal(error.diagnostics.reason, 'value_not_retained');
+    assert.equal(error.input_dispatched, true); assert.equal(error.post_action.delivery, 'unknown');
+    assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value, '1');
+  }
+  await evaluate(`document.querySelector('#rich-fill-probe').remove()`);
+  checks.push('contenteditable fill: native rendered text accepts CRLF/CR and browser NBSP; DOM text stays exact; cross-representation mismatches never replay');
   await call('fill', { ...handle, selector: '#name', mode: 'dom', text: 'selector input' });
   assert.equal((await call('read_text', { ...handle, selector: '#name', mode: 'value' })).text, 'selector input');
   const textPage = await call('read_text', { ...handle, selector: '#full-text', mode: 'value', max_chars: 4 });

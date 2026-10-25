@@ -1,8 +1,16 @@
 # 验证报告
 
-当前版本 **0.23.0**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.23.1**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- `npm test`：273 项通过。新增 contenteditable 按输入模式核验的 19 个子用例，覆盖 native 渲染换行、CRLF/CR、普通空格以 NBSP 保留、显式 NBSP、空文本和 Unicode；DOM 精确文本；拒绝另一种文本表示掩盖的段落、字符、空格与空行变化，失败保持未知结果且不补发。
+- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 302 次调用、32 项检查通过。真实原生输入验证首尾 NBSP、CRLF/CR 与中文多行；DOM 精确文本和同步格式化造成的跨表示不匹配经过扩展 → Hub → MCP 返回 `value_not_retained`。两种模式的受控不匹配均只产生 1 次 input，不切换模式或重放；多行原生插入本身可产生多个 input 事件。
+- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥。未增加工具、参数、依赖或扩展权限，版本按校验修复递增至 0.23.1。
+- 本机部署：协调升级因已有 MCP 连接拒绝后，按 stop/start 重启；Hub 为 0.23.1 / ready，Chrome、Edge 扩展均为 0.23.1。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 43 个文件已核对：manifest 版本/身份一致，其余非生成源码/资源 SHA-256 一致。
+- 当前边界：native contenteditable 不裁剪空白、不合并空行，富文本占位换行或异步重建仍可能返回结果未知；不增加编辑器适配、自动重试或保存核验。未在真实 Gmail 草稿上验证；本机已有 MCP 客户端需重连并重新发现、接管。
+
+## 0.23.0 验证
 
 - `npm test`：253 项通过。新增结构化字段保留重复标签、真实 HTML label 来源与附近 context、DOM/AX 值区分、原生多选与 mixed 状态、隐藏字段显式读取、密码值省略、节点身份缺失不按名称合并、完整行双预算分页、session 级 DOM 捕获复用与文件选择只读采集。覆盖输入后 cursor 失效且 ref 保留、新观察替换旧 ref、子 frame 变化只移除子树、文档捕获中导航不恢复旧引用。
 - Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 281 次调用、31 项检查通过。真实 DOMSnapshot 与 AX 关联验证重复 HTML 标签、TEXTS28 字段名查询、格式化/只读值、多选原始值/标签、checkbox mixed、隐藏输入、密码省略、闭合 Shadow DOM、同源 iframe、OOPIF、文件选择数量/中文文件名、分页与字段 ref 操作；单纯观察不派发 input。保留输入、截图、上传、对话框、日志与 12000 节点 AX 分页回归。

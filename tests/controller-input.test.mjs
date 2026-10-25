@@ -59,6 +59,55 @@ test('DOM fill bypasses native input and focus, notifies the page and verifies t
   assert.equal((await f.exec('fill', { ref, text: 'again', mode: 'dom' })).value_verified, true);
 });
 
+test('contenteditable fill verifies the mode-specific text without hiding content changes', async t => {
+  const cases = [
+    ['native block line breaks', 'native', 'first\nsecond', 'first\nsecond', 'firstsecond', true],
+    ['native CRLF', 'native', 'first\r\nsecond', 'first\nsecond', 'firstsecond', true],
+    ['native CR', 'native', 'first\rsecond', 'first\nsecond', 'firstsecond', true],
+    ['native space preserved as NBSP', 'native', ' a  b ', '\u00a0a \u00a0b\u00a0', '\u00a0a \u00a0b\u00a0', true],
+    ['native explicit NBSP retained', 'native', 'a\u00a0b', 'a\u00a0b', 'a\u00a0b', true],
+    ['native explicit NBSP lost', 'native', 'a\u00a0b', 'a b', 'a\u00a0b', false],
+    ['native raw text cannot hide a paragraph break', 'native', 'ab', 'a\nb', 'ab', false],
+    ['native collapsed space', 'native', 'a  b', 'a b', 'a  b', false],
+    ['native missing leading space', 'native', ' ab', 'ab', ' ab', false],
+    ['native extra blank line', 'native', 'a\nb', 'a\n\nb', 'a\nb', false],
+    ['native missing blank line', 'native', 'a\n\nb', 'a\nb', 'a\n\nb', false],
+    ['native changed character', 'native', 'interesting', 'interested', 'interesting', false],
+    ['native empty', 'native', '', '', '', true],
+    ['native Unicode', 'native', '中文🙂\n第二行', '中文🙂\n第二行', '中文🙂第二行', true],
+    ['DOM raw text despite rendered whitespace', 'dom', 'a\n b', 'a b', 'a\n b', true],
+    ['DOM rendered text cannot hide raw changes', 'dom', 'a\nb', 'a\nb', 'ab', false],
+    ['DOM spaces stay exact', 'dom', ' a ', ' a ', '\u00a0a\u00a0', false],
+    ['DOM CRLF stays exact', 'dom', 'a\r\nb', 'a\nb', 'a\r\nb', true],
+    ['DOM changed line encoding', 'dom', 'a\r\nb', 'a\r\nb', 'a\nb', false],
+  ];
+  for (const [name, mode, text, innerText, textContent, matches] of cases) await t.test(name, async () => {
+    const f = fixture(); await f.claim();
+    const field = { isConnected: true, isContentEditable: true, innerText, textContent };
+    // Readback represents the retained editor state, including synchronous page formatting.
+    Object.defineProperty(field, mode === 'native' ? 'textContent' : 'innerText', {
+      get() { throw new Error('Fill read the other input mode\'s text representation'); },
+    });
+    const send = f.api.debugger.sendCommand;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      const result = await send(target, method, args);
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function verifyFill')) {
+        result.result.value = vm.runInNewContext(`(${args.functionDeclaration})`).call(field, ...args.arguments.map(arg => arg.value));
+      }
+      return result;
+    };
+    const operation = f.exec('fill', { selector: '#editor', text, mode });
+    if (matches) assert.equal((await operation).value_verified, true);
+    else await assert.rejects(operation, error => {
+      assert.equal(error.diagnostics.reason, 'value_not_retained');
+      assert.equal(error.input_dispatched, true); assert.equal(error.post_action.delivery, 'unknown');
+      return true;
+    });
+    assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, mode === 'native' ? 1 : 0);
+    assert.equal(f.calls.filter(call => call.args?.functionDeclaration?.includes('function prepareFill')).length, 1);
+  });
+});
+
 test('DOM click invokes HTML activation once without native input, rejects coordinates and disabled targets', async () => {
   const f = fixture(); await f.claim();
   let clicks = 0, disabled = false;
