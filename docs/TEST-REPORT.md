@@ -8,7 +8,7 @@
 - `npm test`：282 项通过。仅调整发布元数据、版本与打包检查，未修改页面操作实现，未重复运行真实浏览器 fixture 测试。
 - `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、62 个发布文件，无配对密钥。`server.json` 已纳入发布包；打包检查覆盖 Registry 名称、npm 包名及版本一致性。
 - 本机部署：协调升级因现有 MCP 连接占用拒绝后，通过 stop/start 重启；Hub 为 0.23.4 / ready，Chrome、Edge 扩展均为 0.23.4。稳定扩展副本的 43 个文件已核对：manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有客户端需重连并重新发现、接管。
-- 尚未执行 npm 或 MCP Registry 发布；正式注册需先发布包含 `mcpName` 的 npm 0.23.4，再以对应 GitHub 命名空间登录并发布 Registry 元数据。
+- 已发布 npm `@evan_zhong/browser-attach@0.23.4`（registry latest，含 `mcpName`），并以 GitHub 账号登录 `mcp-publisher` 发布 Registry 元数据：`io.github.EvannZhongg/browser-attach` 0.23.4 状态 active、`isLatest=true`，可通过 `GET /v0.1/servers?search=io.github.EvannZhongg/browser-attach` 检索。
 
 ## 0.23.3 验证
 
