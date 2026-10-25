@@ -2,15 +2,21 @@ import { execFileSync } from 'node:child_process';
 import { readFile } from 'node:fs/promises';
 import { ROOT, VERSION } from '../src/config.mjs';
 
-for (const path of ['package.json', 'extension/manifest.json']) {
+for (const path of ['package.json', 'extension/manifest.json', 'server.json']) {
   if (JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), 'utf8')).version !== VERSION) throw new Error(`Version mismatch: ${path}`);
 }
+const packageJson = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8'));
+const serverJson = JSON.parse(await readFile(new URL('../server.json', import.meta.url), 'utf8'));
+if (!packageJson.mcpName || packageJson.mcpName !== serverJson.name) throw new Error('MCP Registry name mismatch');
+if (serverJson.packages[0].identifier !== packageJson.name || serverJson.packages[0].version !== VERSION)
+  throw new Error('MCP Registry package mismatch');
 
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 const result = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--ignore-scripts', '--json'], {
   cwd: ROOT, encoding: 'utf8', shell: process.platform === 'win32', stdio: ['ignore', 'pipe', 'pipe'],
 }))[0];
 const names = result.files.map(file => file.path);
+if (!names.includes('server.json')) throw new Error('Package is missing server.json');
 for (const path of names) {
   if (/config\.generated\.js|(^|\/)(\.local|\.venv|test-results|node_modules)\//.test(path)) throw new Error(`Private file included in package: ${path}`);
 }

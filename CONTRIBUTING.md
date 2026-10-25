@@ -15,7 +15,9 @@ npm pack --dry-run
 
 浏览器交互改动还应按 [README](README.md#本地开发) 运行真实浏览器 fixture 测试。测试必须使用可丢弃的页面和配置，不应修改真实账号数据。
 
-修改版本时同步 `package.json`、`package-lock.json`、`src/config.mjs`、`extension/manifest.json`、MCP 配置及安装示例。扩展和 Hub 必须保持版本一致。
+修改版本时同步 `package.json`、`package-lock.json`、`src/config.mjs`、`extension/manifest.json`、`server.json`、MCP 配置及安装示例。扩展和 Hub 必须保持版本一致。
+
+`server.json` 用于发布 MCP 官方 Registry 元数据；其中 `name` 与 `package.json.mcpName` 必须完全一致，`packages[0].identifier` 与 npm 包名一致，包版本填写准确版本。先发布包含 `mcpName` 的 npm 包，再执行 `mcp-publisher login github` 和 `mcp-publisher publish`。`npm run test:package` 会检查名称、版本和发布文件的一致性。
 
 ## 提交内容
 

@@ -1,8 +1,16 @@
 # 验证报告
 
-当前版本 **0.23.3**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.23.4**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 补充 npm 包的 `mcpName` 和根目录 `server.json`，包含 Registry 名称、展示名称、描述、源码/文档链接及 npm stdio 启动信息；元数据通过官方 2025-12-11 JSON Schema 校验。
+- `npm test`：282 项通过。仅调整发布元数据、版本与打包检查，未修改页面操作实现，未重复运行真实浏览器 fixture 测试。
+- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、62 个发布文件，无配对密钥。`server.json` 已纳入发布包；打包检查覆盖 Registry 名称、npm 包名及版本一致性。
+- 本机部署：协调升级因现有 MCP 连接占用拒绝后，通过 stop/start 重启；Hub 为 0.23.4 / ready，Chrome、Edge 扩展均为 0.23.4。稳定扩展副本的 43 个文件已核对：manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有客户端需重连并重新发现、接管。
+- 尚未执行 npm 或 MCP Registry 发布；正式注册需先发布包含 `mcpName` 的 npm 0.23.4，再以对应 GitHub 命名空间登录并发布 Registry 元数据。
+
+## 0.23.3 验证
 
 - `npm test`：282 项通过。DOM contenteditable 与 native 共用同位置普通空格 → NBSP 的单向容差；补充首尾/连续空格、混合空格、显式 NBSP 保留与丢失、空格数量及位置变化的回归。input/textarea 的精确 value 比较保持原状。
 - Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 385 次调用、35 项检查通过。页面同步将普通空格改成 NBSP 时 DOM fill 成功；CSS 折叠空格或页面丢失显式 NBSP 时仍返回 value_not_retained、未知结果，每次仅派发 1 次 input，不重放。
