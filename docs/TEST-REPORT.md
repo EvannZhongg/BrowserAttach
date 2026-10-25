@@ -1,8 +1,16 @@
 # 验证报告
 
-当前版本 **0.23.2**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.23.3**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- `npm test`：282 项通过。DOM contenteditable 与 native 共用同位置普通空格 → NBSP 的单向容差；补充首尾/连续空格、混合空格、显式 NBSP 保留与丢失、空格数量及位置变化的回归。input/textarea 的精确 value 比较保持原状。
+- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 385 次调用、35 项检查通过。页面同步将普通空格改成 NBSP 时 DOM fill 成功；CSS 折叠空格或页面丢失显式 NBSP 时仍返回 value_not_retained、未知结果，每次仅派发 1 次 input，不重放。
+- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥。未增加工具、参数、依赖或权限，按比较修复递增至 0.23.3。
+- 本机部署：协调升级完成，Hub 为 0.23.3 / ready，Chrome、Edge 扩展均为 0.23.3；稳定扩展副本的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。
+- 本次未增加选区事件或竞态处理机制。原有 selectionchange、非原子检查及业务保存边界保留；重启后的客户端需重连并重新发现、接管。
+
+## 0.23.2 验证
 
 - `npm test`：275 项通过。覆盖浏览器所选纯文本的换行编码、NBSP 和实际文本差异；核验恢复选区端点及方向，DOM 不操作选区；替换选区丢失不发送 insertText。type 参数错误区分非字符串、长度和控制字符。
 - Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 364 次调用、34 项检查通过。新增 Gmail 同形 DOM 的空行、连续空行、首尾换行、空文本，以及含旧段落内容的连续原生替换；原生 input 可信，核验后光标仍折叠。DOM 写入可见 br 换行并保持已有焦点；真实空行数量不匹配仍返回未知结果、不重放。

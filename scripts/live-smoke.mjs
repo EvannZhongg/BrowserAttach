@@ -409,6 +409,22 @@ try {
   assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text: 'a\n\nb', mode: 'dom' })).value_verified, true);
   assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').innerText`)).value, 'a\n\nb');
   assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.trusted`)).value, 'false');
+  for (const text of [' a ', 'a  b', 'a\u00a0 b']) {
+    await evaluate(`(()=>{const e=document.querySelector('#rich-fill-probe');e.dataset.inputs='0';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.textContent=e.textContent.replaceAll(' ','\u00a0')}})()`);
+    assert.equal((await call('fill', { ...handle, selector: '#rich-fill-probe', text, mode: 'dom' })).value_verified, true);
+    assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').innerText`)).value, text.replaceAll(' ', '\u00a0'));
+    assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value, '1');
+  }
+  for (const text of [' a ', 'a  b', 'a\u00a0b']) {
+    await evaluate(`(()=>{const e=document.querySelector('#rich-fill-probe');e.dataset.inputs='0';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.textContent=e.textContent.replaceAll('\u00a0',' ')}})()`);
+    const result = await rawCall('fill', { ...handle, selector: '#rich-fill-probe', text, mode: 'dom' });
+    assert.equal(result.isError, true);
+    const error = JSON.parse(result.content[0].text);
+    assert.equal(error.diagnostics.reason, 'value_not_retained');
+    assert.equal(error.input_dispatched, true); assert.equal(error.post_action.delivery, 'unknown');
+    assert.equal((await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs`)).value, '1');
+  }
+  checks.push('DOM fill accepts same-position space-to-NBSP formatting, still rejects collapsed whitespace and loss of explicit NBSP without replay');
   for (const [mode, text, html] of [['native', 'ab', '<div>a</div><div>b</div>'], ['dom', 'a\n\nb', 'a<br>b']]) {
     await evaluate(`(()=>{const e=document.querySelector('#rich-fill-probe');e.dataset.inputs='0';e.oninput=()=>{e.dataset.inputs=String(Number(e.dataset.inputs)+1);e.innerHTML=${JSON.stringify(html)}}})()`);
     const result = await rawCall('fill', { ...handle, selector: '#rich-fill-probe', text, mode });

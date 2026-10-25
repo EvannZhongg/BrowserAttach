@@ -324,9 +324,9 @@ function verifyFill(text, mode) {
   const actual = retained.replace(/\r\n?/g, '\n'), expected = text.replace(/\r\n?/g, '\n');
   if (actual.length !== expected.length) return false;
   for (let index = 0; index < expected.length; index++) {
-    // Chromium may preserve an inserted ordinary space as NBSP. Keep its position
+    // Editors may preserve an inserted ordinary space as NBSP. Keep its position
     // and count, and still require an explicitly requested NBSP to be retained.
-    if (actual[index] !== expected[index] && !(mode === 'native' && expected[index] === ' ' && actual[index] === '\u00a0')) return false;
+    if (actual[index] !== expected[index] && !(expected[index] === ' ' && actual[index] === '\u00a0')) return false;
   }
   return true;
 }

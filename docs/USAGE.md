@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.23.2**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.23.3**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -341,7 +341,7 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 
 两种模式均核对写入后的文本，返回 value_verified=true。input/textarea 按 value 精确比较。contenteditable 的 native 模式在插入前确认替换选区仍覆盖字段，选区丢失时以 fill_selection_lost 停止，不插入文本；插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
 
-contenteditable 比较将 CRLF/CR 视为 LF；native 另允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）。不裁剪首尾空白、不合并空格或空行。节点替换、失焦、页面格式化或异步重建仍可能导致结果未知；不回显字段内容，不自动重放，也不等待编辑器保存。read_text 的 visible/value 仍是 innerText，不是浏览器所选纯文本。
+contenteditable 比较将 CRLF/CR 视为 LF；两种模式均允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）。不裁剪首尾空白、不合并空格或空行。节点替换、失焦、页面格式化或异步重建仍可能导致结果未知；不回显字段内容，不自动重放，也不等待编辑器保存。read_text 的 visible/value 仍是 innerText，不是浏览器所选纯文本。
 
 工具不自动 blur 或按 Enter。需要失焦校验时显式 Tab 或点击其他目标；自定义下拉须在输入过滤后点击具体选项。
 
