@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.23.5**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.23.6**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -80,6 +80,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 ## 观察模型
 
 - **AX 渲染**：从 `Accessibility.getFullAXTree` 读取，移除 `InlineTextBox`，合并纯文本列表项与段落名称，丢弃 `generic` / `none` 且无名称无状态的节点，只保留少量状态属性和浏览器提供的 value、invalid。树遍历、交互视图筛选和正文合并使用迭代，跨 frame 逐项合并结果，避免深树递归和大数组参数展开溢出；分页前仍采集并渲染完整 AX 树，max_nodes 不限制采集成本。每行 `[token:n] role "name"`，`token` 是本次观察的随机前缀；这些字段不证明应用已保存。
+- **弹层语义**：AX 树与 fields 共用同一提取函数，保留 hasPopup 与浏览器已解析的 controls/owns DOM idrefs；不输出内部 AX/backend ID、不推断归属、不注册额外 refs。expanded 沿用原有状态提取；查询、分页和 ref 生命周期不变。
 - **交互视图**：可选 `profile=interactive` 在同一渲染器中仅保留 AX 控件角色、可聚焦/可编辑节点及其祖先链和控件内文本，不以 backendNodeId/ref 是否存在判断交互性。独立文本和合并正文可隐藏或截取预览，控件名称、值和 ref 的原始 AX 身份保留；默认 `full` 行为不变。筛选仍读取完整 AX 树，只降低输出与分页成本；视图参数绑定分页观察。
 - **文本查询与精简输出**：`snapshot(query=...)` 复用同一次 AX 渲染，按当前视图中节点的完整名称（含合并正文）、value 或字段 context 做不区分大小写的字面子串筛选，只输出匹配行和对应 frame 标题；不搜索 role/ref 或任意 DOM 属性，不新增索引缓存。新查询仍采集新观察并使旧 refs 失效，query 与分页绑定。默认省略 viewport、snapshot_id 和重复规则说明，`verbose=true` 返回前两项；frame 覆盖、视图、预算和游标语义保留。
 - **字段上下文**：表单控件可附带 context 并参与 query，保留至多 160 字符的前一兄弟分支 AX 文本；只在四层以内 generic/none/group 祖先、单控件容器中查找，每次容器/文本遍历分别限制 64/32 节点。不将其伪装为 accessible name，不用于 label 定位或 ref 身份验证；interactive/text=false 也保留提示。
@@ -115,7 +116,8 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **原生下拉**：select_option 不要求可见或稳定几何，先只读核对节点、禁用/inert 祖先与唯一选项，再在一次派发中复查并用 selectedIndex setter 和合成 input/change 设置，核验保留结果并返回 events_trusted=false。单步和 batch 共用实现。native click 的 select 命中（含 UA shadow 内部节点和关联 label）在派发前拒绝。
 - **命中提示**：普通命中保留实际 hit node，沿父元素、Shadow host、slot 查找最近的 HTML/ARIA 可点击候选，返回 clickable_target；hint=false 表示未识别候选，不代表无法响应事件。CSSPseudoElement 先解析为事件所属的 originating element，提示标记 pseudo_element=true，并使用该元素安装事件校验。语义候选不会被用于替换点击目标。
 - **遮挡失败诊断**：当前 frame 的遮挡直接复用已读取的 hit_target；祖先 frame 遮挡额外用至多 200 ms 读取命中描述，诊断节点消失时保留原遮挡错误与 backend node ID。命中元素与最近可点击祖先均附 tag/id/classes，classes 至多 8 项、每项 100 字符，只作当次身份线索，不生成唯一 selector 或替换目标。错误包含命中点和受阻 frame。根据共享预算的派发状态区分“未派发”和“结果未知”，避免 drag 按住后准备目的节点时误报零输入。
-- **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。完成后读回原 input 的 FileList 数量，数量不符或节点脱离时报告结果未知，读取失败也保留已派发事实，不补发设置或事件。files_set 仅表示当时保留的数量；非空路径的 events_trusted=null，不把 CDP 回执作为事件送达核验。清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
+- **滚动查找诊断**：until 未命中或中断时保留 isError，以 scroll_search_stopped 和 stop_reason 区分预算、步数、文档/frame/控制权变化及其他异常；记录已确认的滚动次数、最后结果和是否有未确认调用。一次无位移只作为 boundary_observed 证据，继续只读等待列表增长，不声明数据到底。超时后不接续循环或重发滚动。
+- **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。value_verified 表示字段文本写入；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
 - **有限多步输入**：batch 在现有标签队列内执行 1–20 步 click/fill/type/press_key/hover/scroll/select_option/wait，共享至多 30 秒预算，每步可另设更短超时；不增加后台任务、循环或脚本引擎；元素目标使用每步重新解析的 selector，type 也接受 focused=true。所有参数先验证，selector 每步重解析，尚未出现的目标只在准备阶段等待；歧义立即报错。首个失败、主文档变化或接管结束后停止，返回此前结果与失败索引；不回滚、不重放、不自动激活或切换输入模式。start_at 显式跳过已完成前缀，返回 failed_step、next_unattempted_step、retry_failed_step_safe；没有后台作业或自动选择续跑点。
 - **OOPIF 坐标**：点击从顶层派发。逐层用 `DOM.getBoxModel` 把坐标换算到祖先文档，并用 `DOM.getNodeForLocation` 确认该位置确实落在 frame owner 上，防止祖先页面的遮挡被跳过。

@@ -45,12 +45,18 @@ export function createUploads(cdp, value) {
         await send(target.target, 'DOM.setFileInputFiles', { objectId: resolved.result.objectId, files: args.files });
       }
       fileChoosers.delete(tabId);
-      const count = value(await send(target.target, 'Runtime.callFunctionOn', { objectId: resolved.result.objectId, returnByValue: true,
-        functionDeclaration: `function() { return this.isConnected ? this.files?.length : null; }` }));
-      if (count !== args.files.length) throw Object.assign(new Error('File input did not retain the requested file count. The page may have consumed or reset the selection; application outcome is unknown. Observe before continuing; do not replay automatically.'), {
-        outcome_unknown: true, diagnostics: { reason: 'file_count_not_retained', expected_count: args.files.length, observed_count: Number.isInteger(count) ? count : null },
-      });
-      return { files_set: count, cleared: count === 0, method: args.files.length ? 'native' : 'dom',
+      let count = null, observationError;
+      try {
+        const observed = value(await send(target.target, 'Runtime.callFunctionOn', { objectId: resolved.result.objectId, returnByValue: true,
+          functionDeclaration: `function() { return this.isConnected ? this.files?.length : null; }` }));
+        if (Number.isInteger(observed) && observed >= 0) count = observed;
+        else observationError = { reason: 'file_selection_unavailable' };
+      } catch (error) { observationError = { reason: 'file_selection_unavailable', error: error.message }; }
+      // A component may consume/reset the FileList synchronously. Readback is
+      // independent evidence and cannot undo the acknowledged assignment.
+      return { assignment_acknowledged: true, requested_count: args.files.length, observed_count: count,
+        count_verified: count == null ? null : count === args.files.length,
+        ...(observationError ? { observation_error: observationError } : {}), method: args.files.length ? 'native' : 'dom',
         events_trusted: args.files.length ? null : false, application_result: 'not_checked', observe_again: true };
     } catch (error) { error.outcome_unknown = true; throw error; }
   }

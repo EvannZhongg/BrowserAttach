@@ -103,7 +103,7 @@ export function createMcp(client) {
     if (args.focus_window != null) throw new Error('focus_window is only valid for action=activate');
     return { tab_handle: args.tab_handle };
   });
-  tool('snapshot', 'Read an AX tree, or profile=fields for structured DOM/AX field facts with refs, HTML labels, nearby context and native values. Field rows distinguish DOM values from AX values, not submitted data or application success. A new observation replaces refs; next_cursor continues the captured view.', {
+  tool('snapshot', 'Read an AX tree, or profile=fields for structured DOM/AX field facts with refs, HTML labels, nearby context and native values. Popup facts include hasPopup and browser-resolved controls/owns DOM idrefs when exposed; they do not infer ownership. Field rows distinguish DOM values from AX values, not submitted data or application success. A new observation replaces refs; next_cursor continues the captured view.', {
     ...handle, max_nodes: integerRange('max_nodes', 1, 3000).default(600),
     max_chars: integerRange('max_chars', 1, 2000000).default(24000), cursor: z.string().optional(),
     profile: z.enum(['full', 'interactive', 'fields']).optional().describe('Default full; interactive keeps controls and ancestors; fields returns a fields array instead of AX text.'),
@@ -186,7 +186,7 @@ export function createMcp(client) {
     ])).min(1).max(20),
   }, null, args => { validateSteps(args.steps, args.start_at); return args; });
   tool('press_key', 'Send a native key/chord to current focus and verify keydown delivery. Supports F1-F12, navigation/editing keys and US ASCII punctuation. Examples: Control+A, Control++, Shift+/.', { ...handle, ...inputTimeout, key: z.string() });
-  tool('scroll', 'Scroll an element container or at viewport x/y (default center). DOM mode emits no wheel events; wheel mode sends native wheel input. until.text runs a bounded search and returns a fresh ref; a miss is inconclusive.', {
+  tool('scroll', 'Scroll an element container or at viewport x/y (default center). DOM mode emits no wheel events; wheel mode sends native wheel input. until.text runs a bounded search and returns a fresh ref. A stopped search reports diagnostics.stop_reason, completed scroll_steps, scroll_pending, boundary_observed and last_scroll; a boundary or miss does not prove all data was loaded.', {
     ...handle, ...inputTimeout, ...target, ...scrollFields,
   }, null, args => { scrollOptions(args); if (['ref', 'selector', 'frame', 'frame_id', 'selector_type', 'name', 'nth'].some(key => args[key] != null)) targetOptions(args); return args; });
   tool('navigate', 'Navigate a claimed tab to an HTTP(S)/file URL or history entry and optionally return a fresh snapshot. File destinations require extension file access. Snapshot observation has a separate deadline; observation_error does not mean navigation failed.', {
@@ -196,7 +196,7 @@ export function createMcp(client) {
   tool('handle_dialog', 'Accept/dismiss a JS dialog and return its original details and accepted.', {
     ...handle, accept: z.boolean(), prompt_text: z.string().optional().describe('Response sent to the website for a prompt dialog.'),
   });
-  tool('upload_file', 'Set browser-host absolute file paths on a file-input/label ref, or omit ref for the pending intercepted chooser. [] clears/cancels; multiple files require a multiple input. Reads back the current FileList count only, not event delivery, application acceptance or upload completion. Directories unsupported.', {
+  tool('upload_file', 'Set browser-host absolute file paths on a file-input/label ref, or omit ref for the pending intercepted chooser. [] clears/cancels; multiple files require a multiple input. assignment_acknowledged confirms the assignment command returned. requested_count/observed_count and count_verified describe current FileList retention only; mismatch or unavailable readback is not an assignment error (count_verified=null when unavailable). Application acceptance/upload completion and native event delivery are not checked. Observe application state before deciding to upload again. Directories unsupported.', {
     ...handle, ...inputTimeout, ...target, files: z.array(z.string()).max(100),
   }, null, async args => ({ ...args, files: await validateFiles(args.files) }));
   tool('screenshot', 'Capture viewport/full-page or one element as PNG with image-to-viewport CSS mapping. Full-page points may need scrolling before input. If background rendering stalls, activate the tab or use AX/text.', {

@@ -44,24 +44,27 @@ export function findScrollText(text, selector) {
 }
 
 export function createScrolling(cdp, value, sessions, pointer, viewport, position, observations, currentClaim) {
-  async function scroll(tabId, node, args) {
-    if (args.until != null) {
-      const { text, selector } = args.until;
-      const maxSteps = args.max_steps ?? 100;
-      const root = node || await resolveSelector(cdp, value, sessions, tabId, { selector: 'html' }, args.budget);
-      const claim = currentClaim(tabId), version = observations.version(tabId), frameVersion = observations.frameVersion(tabId, root.frameId);
-      let last;
-      for (let step = 0; step <= maxSteps;) {
-        if (currentClaim(tabId) !== claim || observations.version(tabId) !== version || observations.frameVersion(tabId, root.frameId) !== frameVersion) throw new Error('Document/frame/control changed during scroll search; observe before continuing');
+  async function search(tabId, node, args) {
+    const { text, selector } = args.until;
+    const maxSteps = args.max_steps ?? 100;
+    const root = node || await resolveSelector(cdp, value, sessions, tabId, { selector: 'html' }, args.budget);
+    const claim = currentClaim(tabId), version = observations.version(tabId), frameVersion = observations.frameVersion(tabId, root.frameId);
+    let last, steps = 0, scrollPending = false, boundaryObserved = false, stopReason;
+    const changed = () => currentClaim(tabId) !== claim ? 'control_changed' : observations.version(tabId) !== version ? 'document_changed'
+      : observations.frameVersion(tabId, root.frameId) !== frameVersion ? 'frame_changed' : null;
+    try {
+      while (true) {
+        stopReason = changed();
+        if (stopReason) throw new Error('Document/frame/control changed during scroll search; observe before continuing');
         const found = await args.budget.run(() => cdp(root.target, 'Runtime.callFunctionOn', { objectId: root.objectId,
           functionDeclaration: findScrollText.toString(), arguments: [{ value: text }, { value: selector }], objectGroup: 'browser-attach-search' }));
         value(found);
         if (found.result?.objectId) {
           const result = await observations.rememberElement(tabId, root.target, found.result.objectId, root.frameId, args.budget);
           await args.budget.run(() => cdp(root.target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach-search' }));
-          return { found: true, ...result, scroll_steps: step, application_result: 'not_checked', observe_again: true };
+          return { found: true, ...result, scroll_steps: steps, application_result: 'not_checked', observe_again: true };
         }
-        if (step === maxSteps) break;
+        if (steps === maxSteps) { stopReason = 'max_steps'; throw new Error(`Scroll search did not find ${JSON.stringify(text)} within ${maxSteps} steps`); }
         if (last?.scrolled === false) {
           // A boundary may precede lazy loading. Observe without repeating a
           // no-op scroll until content grows, a match appears, or time runs out.
@@ -70,13 +73,31 @@ export function createScrolling(cdp, value, sessions, pointer, viewport, positio
           if (JSON.stringify(current) === JSON.stringify(last.after)) { await args.budget.run(() => new Promise(resolve => setTimeout(resolve, 50))); continue; }
         }
         args.budget.dispatch();
+        scrollPending = true;
         last = value(await args.budget.run(() => cdp(root.target, 'Runtime.callFunctionOn', { objectId: root.objectId,
           functionDeclaration: scrollElement.toString(), arguments: [{ value: args.delta_x ?? 0 }, { value: args.delta_y ?? null }], returnByValue: true })));
-        step++;
+        scrollPending = false;
+        steps++;
+        boundaryObserved ||= last.scrolled === false;
         await args.budget.run(() => new Promise(resolve => setTimeout(resolve, 50)));
       }
-      throw Object.assign(new Error(`Scroll search did not find ${JSON.stringify(text)} within ${maxSteps} steps; current=${JSON.stringify(last)}. Content may still load later. Scrolling may already have occurred.`), { outcome_unknown: true });
+    } catch (error) {
+      const timedOut = error.deadline_exceeded === true;
+      stopReason ||= changed() || (timedOut ? 'timeout' : 'error');
+      const cause = error.diagnostics;
+      error.diagnostics = { reason: 'scroll_search_stopped', stop_reason: stopReason, frame_id: root.frameId,
+        scroll_steps: steps, scroll_pending: scrollPending, boundary_observed: boundaryObserved, last_scroll: last ?? null,
+        ...(cause && !timedOut ? { cause } : {}) };
+      if (timedOut) error.message = `Scroll search did not finish before its deadline while looking for ${JSON.stringify(text)}`;
+      error.message += '. Content may still load later; a boundary does not prove all data was loaded. Observe before continuing; do not replay automatically.';
+      error.input_dispatched = args.budget.has_dispatched();
+      error.outcome_unknown = error.input_dispatched;
+      throw error;
     }
+  }
+
+  async function scroll(tabId, node, args) {
+    if (args.until != null) return search(tabId, node, args);
     const mode = args.mode ?? 'dom';
     const budget = args.budget;
     const view = await budget.run(() => viewport(tabId));

@@ -94,11 +94,76 @@ test('scroll boundary timeout stays uncertain, sends no repeated scroll and leav
     return result;
   };
   await assert.rejects(f.exec('scroll', { selector: '#list', until: { text: 'Missing' }, timeout_ms: 250 }), error => {
+    assert.equal(error.diagnostics.reason, 'scroll_search_stopped'); assert.equal(error.diagnostics.stop_reason, 'timeout');
+    assert.equal(error.diagnostics.scroll_steps, 1); assert.equal(error.diagnostics.scroll_pending, false);
+    assert.equal(error.diagnostics.boundary_observed, true); assert.deepEqual(error.diagnostics.last_scroll.after, after);
+    assert.doesNotMatch(error.message, /verified delivery|Browser UI may be capturing/);
     assert.equal(error.post_action.delivery, 'unknown');
     assert.equal(error.post_action.assessment, 'observation_unavailable');
     assert.equal(error.post_action.dom_changed, null); assert.equal(error.post_action.observations.dom.available, false); return true;
   });
   assert.equal(scrolls, 1); assert.ok((await f.exec('snapshot')).snapshot);
+});
+
+test('scroll search distinguishes a step limit from a pending scroll timeout and never resumes late input', async () => {
+  for (const pending of [false, true]) {
+    const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+    let scrolls = 0, finish;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function findScrollText')) return { result: { subtype: 'null' } };
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function scrollElement')) {
+        scrolls++;
+        const result = { result: { value: { scrolled: true, before: { y: 0 }, after: { y: 50 } } } };
+        if (pending) return new Promise(resolve => { finish = () => resolve(result); });
+        return result;
+      }
+      return send(target, method, args);
+    };
+    await assert.rejects(f.exec('scroll', { selector: '#list', until: { text: 'Missing' }, max_steps: 1, timeout_ms: 250 }), error => {
+      const diagnostics = error.diagnostics;
+      assert.equal(diagnostics.reason, 'scroll_search_stopped');
+      assert.equal(diagnostics.stop_reason, pending ? 'timeout' : 'max_steps');
+      assert.equal(diagnostics.scroll_steps, pending ? 0 : 1); assert.equal(diagnostics.scroll_pending, pending);
+      assert.equal(diagnostics.boundary_observed, false); assert.equal(error.input_dispatched, true);
+      assert.deepEqual(diagnostics.last_scroll, pending ? null : { scrolled: true, before: { y: 0 }, after: { y: 50 } });
+      return true;
+    });
+    finish?.(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(scrolls, 1); assert.ok((await f.exec('snapshot')).snapshot);
+  }
+});
+
+test('scroll search timeout supersedes old selector preparation diagnostics without claiming a scroll was dispatched', async () => {
+  const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+  let queries = 0;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.evaluate' && args.expression.startsWith('(function queryElement') && !queries++) return { result: { subtype: 'null' } };
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function findScrollText')) return new Promise(() => {});
+    return send(target, method, args);
+  };
+  await assert.rejects(f.exec('scroll', { selector: '#list', until: { text: 'Missing' }, timeout_ms: 150 }), error => {
+    assert.equal(error.input_dispatched, false); assert.equal(error.diagnostics.stop_reason, 'timeout');
+    assert.equal(error.diagnostics.scroll_steps, 0); assert.equal(error.diagnostics.scroll_pending, false);
+    assert.equal(error.diagnostics.last_scroll, null); return true;
+  });
+});
+
+test('scroll search stops on document change with the completed scroll evidence', async () => {
+  const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+  let scrolls = 0;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function findScrollText')) return { result: { subtype: 'null' } };
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function scrollElement')) {
+      scrolls++; f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.frameNavigated', { frame: { id: 'main' } });
+      return { result: { value: { scrolled: true, after: { y: 50 } } } };
+    }
+    return send(target, method, args);
+  };
+  await assert.rejects(f.exec('scroll', { selector: '#list', until: { text: 'Missing' } }), error => {
+    assert.equal(error.diagnostics.stop_reason, 'document_changed'); assert.equal(error.diagnostics.scroll_steps, 1);
+    assert.equal(error.diagnostics.scroll_pending, false); return true;
+  });
+  assert.equal(scrolls, 1);
 });
 
 test('scrolled-page hit testing uses document coordinates while native input keeps viewport coordinates', async () => {

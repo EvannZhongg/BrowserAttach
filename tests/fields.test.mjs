@@ -10,6 +10,18 @@ function render(nodes, dom, args = {}) {
   return { options, refs, entries: renderFields(nodes, capture.documents[0].nodes, capture.strings, 'fields', refs, 'main', undefined, options) };
 }
 
+test('field AX facts expose popup type and resolved portal ids without requiring DOM ancestry', () => {
+  const nodes = [axField(2, 'Search', 'combobox', { properties: [
+    { name: 'hasPopup', value: { value: 'listbox' } }, { name: 'expanded', value: { value: true } },
+    { name: 'controls', value: { relatedNodes: [{ idref: 'portal-list' }] } },
+  ] })];
+  for (const dom of [[], [{ tag: 'input', backend: 2, attrs: { id: 'search' }, value: '' }]]) {
+    const field = render(nodes, dom, { query: 'Search' }).entries[0].field;
+    assert.equal(field.ax.hasPopup, 'listbox'); assert.equal(field.ax.expanded, true);
+    assert.deepEqual(field.ax.controls, ['portal-list']); assert.ok(field.ref);
+  }
+});
+
 test('structured fields keep duplicate names, actual HTML label sources, nearby context and DOM/AX value distinctions', () => {
   const source = { nativeSource: 'labelfor', superseded: true, value: { value: 'Visa fee' } };
   const nodes = [axField(1, 'Root', 'RootWebArea', { childIds: ['row'] }),

@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.23.5**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.23.6**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -67,6 +67,8 @@
 | `target_verification` | basis 为 element 或 coordinate_hit；hit_relation 为准备时的 same_node / composed_descendant，纯坐标为 null |
 | `delivery_verified` | 已核验工具对应的可信输入事件 |
 | `value_verified` | 字段文本或选项与设置结果一致 |
+| `assignment_acknowledged` | 文件赋值/清空命令已获得回执，不证明事件送达或上传完成 |
+| `count_verified` | 上传后当前 FileList 数量与 requested_count 是否一致；不可读取时为 null |
 | `application_result: "not_checked"` | 尚未检查应用是否接受、提交或保存 |
 
 这些核验不代替业务检查。下拉过滤文字不等于选项已提交，字段值不等于框架状态已保存；按任务观察选中项、成功提示或业务接口。
@@ -82,6 +84,7 @@
 | `delivery_unverified` | 可信输入事件回执未在回执预算内完成 |
 | `target_changed` | click/hover 派发期间的目标核验被拒绝，可能已有前序输入送达 |
 | `preparation_timeout` / `input_timeout` | 无更具体准备原因的超时 / 已进入派发阶段后操作超时 |
+| `scroll_search_stopped` | 滚动查找停止，stop_reason 和进度证据见 browser_scroll |
 
 已有 `stale_ref`、`frame_locator`、可操作性及遮挡原因保持各自语义。frame 路径查询失败仍以 `frame_locator` 为 reason，可在 cause 和 selector_diagnostics 中保留底层选择器原因。定位辅助脚本抛出的诊断通过 CDP 单独读取；文档已销毁或无法读取时保留原错误，诊断可能缺失。派发后超时不会沿用准备阶段的定位/可操作性原因。上述原因不是重放许可；结合 `input_dispatched` 与 `post_action` 判断下一步，不推断服务端业务拒绝。
 
@@ -135,6 +138,8 @@ text 是渲染后的 innerText，html 是当前 DOM（`dom:"rendered"`），均�
 ## 观察：快照与引用
 
 snapshot 返回 AX 语义树，每行 `[token:n] role "name" 状态`；`[token:n]` 是可操作 ref。结果包含 title/url、node_count/total_node_count、truncated/truncation_reason、next_cursor 和 omitted_frames。状态和值来自浏览器，不代表业务已完成。
+
+浏览器提供时保留 hasPopup（弹层类型）、expanded，以及 controls/owns 数组；fields 视图在 ax 中提供相同信息。controls/owns 是浏览器已解析关联的 DOM ID 字符串，不是 ref、AX ID 或后代作用域；可用于明确定位 document 根部的 portal 弹层。没有关联时省略，不根据位置、外观或打开顺序猜测归属；这些事实不代表节点是最终可选叶子或选项已提交。
 
 | 参数 | 用途与默认值 |
 |---|---|
@@ -407,6 +412,8 @@ until 仅支持 DOM 模式，按文本子串查找已渲染且有尺寸的最深
 
 返回 found/ref/frame_id/scroll_steps，不自动点击。没有位移时可继续等内容变化；导航、相关 frame 变化、步数或预算耗尽即停止。未找到不证明服务端没有数据；滚动即使未命中也可能触发加载。
 
+查找停止仍返回 isError，diagnostics.reason=scroll_search_stopped。stop_reason 区分 timeout、max_steps、document_changed、frame_changed、control_changed 或 error；scroll_steps 只计已完成并读回的滚动调用，scroll_pending 表示最后一次滚动已派发但未取得有效结果，last_scroll 保存最近一次已确认的 before/after/scrolled。boundary_observed 表示本次查找曾观察到一次无位移，不证明列表已加载到底，也不说明目标在未渲染数据中不存在。预算耗尽不会重发尚未确认的滚动；先观察当前容器和页面状态再决定下一步。
+
 ## 导航、对话框与截图
 
 ### 导航
@@ -451,7 +458,7 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 
 - files 是浏览器本机的绝对可读文件路径，最多 100 个；支持中文、空格及空文件，内容不传给 MCP 或 Hub。
 - 多文件要求 multiple；禁用控件、目录、webkitdirectory 和失效目标会被拒绝。accept 只是页面提示，网站可自行拒绝格式。
-- 成功后读回原 input 的 FileList 数量，files_set 是当时观察到且与请求数量一致的值，cleared 表示该数量为 0；不核验文件内容或组件是否登记。数量不符或原 input 脱离文档时返回 file_count_not_retained 和未知结果；页面可能已经消费或重置选择，不代表上传失败，不自动重放。
+- 赋值/清空命令返回后，assignment_acknowledged=true；requested_count 为请求数量，observed_count 为读回原 input 的当前 FileList 数量，count_verified 表示二者是否一致。页面消费/重置 FileList 导致数量不符时正常返回 count_verified=false；原 input 脱离或读取失败时 observed_count/count_verified=null，并附 observation_error。这些情况不把已获得回执的赋值报告为失败，也不证明应用已接受文件。赋值本身抛错或回执超时仍返回已派发、结果未知的错误，不自动重放。
 - 非空文件通过 CDP 设置，返回 method=native、events_trusted=null：没有监听核验事件送达或信任状态。files=[] 清空指定 input 或结束待处理选择，显式派发合成 input/change，返回 method=dom、events_trusted=false。两者均返回 application_result=not_checked、observe_again=true，不证明组件接受、解析或服务端上传完成。
 - 跨进程 iframe 的 file input 已支持；File System Access API 的 showOpenFilePicker() 不在范围内。
 

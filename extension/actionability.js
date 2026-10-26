@@ -6,6 +6,7 @@ export function deadline(timeout_ms = 5000, phase = 'input', parentEnd = Infinit
   let dispatched = false, waiting, diagnostics;
   function error() {
     const result = timeoutError();
+    result.deadline_exceeded = true;
     if (diagnostics && !dispatched) result.diagnostics = diagnostics;
     return result;
   }

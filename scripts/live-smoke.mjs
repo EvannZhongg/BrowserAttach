@@ -236,6 +236,45 @@ try {
   const claim = await call('claim_tab', { browser_id: browserId, tab_id: tab.tab_id, expected_url: tab.url, expected_title: tab.title });
   const handle = { tab_handle: claim.tab_handle };
   const evaluate = (expression, args = {}) => call('evaluate', { ...handle, expression, ...args });
+  await evaluate(`(() => {
+    const section = document.createElement('section'); section.id = 'popup-probe';
+    section.innerHTML = '<input id="popup-search" role="combobox" aria-label="Popup search" aria-haspopup="listbox" aria-expanded="true" aria-controls="portal-options"><div role="menu"><div role="menuitem" aria-label="Popup category" aria-haspopup="menu" aria-expanded="false" aria-controls="portal-submenu">Category</div></div>';
+    document.body.append(section);
+    const portal = document.createElement('div'); portal.id = 'portal-probe';
+    portal.innerHTML = '<div id="portal-options" role="listbox" aria-label="Popup results"><div role="option">Result</div></div><div id="portal-submenu" role="menu"><div role="menuitem">Leaf</div></div>';
+    document.body.append(portal);
+  })()`);
+  for (const profile of ['full', 'interactive']) {
+    const popup = await call('snapshot', { ...handle, profile, query: 'Popup' });
+    assert.match(popup.snapshot, /combobox "Popup search".*expanded=true.*hasPopup="listbox".*controls=\["portal-options"\]/);
+    assert.match(popup.snapshot, /menuitem "Popup category".*expanded=false.*hasPopup="menu".*controls=\["portal-submenu"\]/);
+  }
+  const popupFields = await call('snapshot', { ...handle, profile: 'fields', query: 'Popup search' });
+  assert.equal(popupFields.fields[0].ax.hasPopup, 'listbox');
+  assert.deepEqual(popupFields.fields[0].ax.controls, ['portal-options']);
+  await evaluate(`(() => { document.querySelector('#popup-probe').remove(); document.querySelector('#portal-probe').remove(); })()`);
+  checks.push('full/interactive/fields preserve popup type, expanded state and resolved portal DOM idrefs');
+
+  await evaluate(`(() => {
+    const list = document.createElement('div'); list.id = 'search-probe'; list.style.cssText = 'height:80px;width:200px;overflow:auto';
+    list.innerHTML = '<div style="height:400px">Search row</div>'; document.body.append(list);
+  })()`);
+  const limitedSearch = await rawCall('scroll', { ...handle, selector: '#search-probe', until: { text: 'Missing row' }, max_steps: 1, timeout_ms: 1500 });
+  assert.equal(limitedSearch.isError, true);
+  const limitedEvidence = JSON.parse(limitedSearch.content[0].text).diagnostics;
+  assert.equal(limitedEvidence.reason, 'scroll_search_stopped'); assert.equal(limitedEvidence.stop_reason, 'max_steps');
+  assert.equal(limitedEvidence.scroll_steps, 1); assert.equal(limitedEvidence.scroll_pending, false);
+  assert.equal(limitedEvidence.last_scroll.scrolled, true);
+  await evaluate(`document.querySelector('#search-probe').scrollTop = 1000`);
+  const boundarySearch = await rawCall('scroll', { ...handle, selector: '#search-probe', until: { text: 'Missing row' }, timeout_ms: 500 });
+  assert.equal(boundarySearch.isError, true);
+  const boundaryEvidence = JSON.parse(boundarySearch.content[0].text).diagnostics;
+  assert.equal(boundaryEvidence.stop_reason, 'timeout'); assert.equal(boundaryEvidence.boundary_observed, true);
+  assert.equal(boundaryEvidence.scroll_steps, 1); assert.equal(boundaryEvidence.scroll_pending, false);
+  assert.equal(boundaryEvidence.last_scroll.scrolled, false);
+  await evaluate(`document.querySelector('#search-probe').remove()`);
+  checks.push('scroll search step-limit and boundary/deadline diagnostics survive the full stdio MCP chain');
+
   for (const comparison of [{ expected: 'RENDERED_READY' }, { previous: 'Waiting' }]) {
     await evaluate(`(() => {
       document.querySelector('#wait-probe')?.remove();
@@ -497,7 +536,8 @@ try {
   assert.equal((await state()).count, 1); checks.push('existing click');
   const single = await ref('Single');
   const assigned = await call('upload_file', { ...handle, ref: single, files: [file] });
-  assert.equal(assigned.files_set, 1); assert.equal(assigned.method, 'native');
+  assert.equal(assigned.assignment_acknowledged, true); assert.equal(assigned.requested_count, 1);
+  assert.equal(assigned.observed_count, 1); assert.equal(assigned.count_verified, true); assert.equal(assigned.method, 'native');
   assert.equal(assigned.events_trusted, null); assert.equal(assigned.application_result, 'not_checked');
   await until(async () => (await state()).files.single?.length, 'single file content');
   assert.equal((await state()).files.single[0].text, 'Attach 上传内容\n'); checks.push('single file content + Unicode path');
@@ -521,7 +561,8 @@ try {
   await until(async () => (await state()).files['shadow-upload']?.length === 1, 'showPicker input');
   checks.push('HTMLInputElement.showPicker');
   const clearedFiles = await call('upload_file', { ...handle, ref: await ref('Multiple'), files: [] });
-  assert.equal(clearedFiles.files_set, 0); assert.equal(clearedFiles.method, 'dom'); assert.equal(clearedFiles.events_trusted, false);
+  assert.equal(clearedFiles.requested_count, 0); assert.equal(clearedFiles.observed_count, 0); assert.equal(clearedFiles.count_verified, true);
+  assert.equal(clearedFiles.method, 'dom'); assert.equal(clearedFiles.events_trusted, false);
   await until(async () => (await state()).files.multiple?.length === 0, 'cleared selection'); checks.push('clear selection');
   await evaluate(`(() => {
     window.fileResetEvents = 0;
@@ -529,12 +570,13 @@ try {
     input.onchange = () => { window.fileResetEvents++; input.value = ''; }; document.body.append(input);
   })()`);
   const resetUpload = await rawCall('upload_file', { ...handle, selector: '#reset-upload', files: [file] });
-  assert.equal(resetUpload.isError, true);
+  assert.ok(!resetUpload.isError);
   const resetEvidence = JSON.parse(resetUpload.content[0].text);
-  assert.equal(resetEvidence.input_dispatched, true); assert.equal(resetEvidence.diagnostics.reason, 'file_count_not_retained');
-  assert.equal(resetEvidence.diagnostics.observed_count, 0);
+  assert.equal(resetEvidence.assignment_acknowledged, true); assert.equal(resetEvidence.requested_count, 1);
+  assert.equal(resetEvidence.observed_count, 0); assert.equal(resetEvidence.count_verified, false);
+  assert.equal(resetEvidence.application_result, 'not_checked');
   assert.equal((await evaluate('window.fileResetEvents')).value, 1);
-  checks.push('upload FileList readback, unchecked native event trust/application result, synchronous reset reports unknown without replay');
+  checks.push('upload assignment acknowledgement and FileList verification are separate; synchronous consumption is not an assignment error and never replays');
   for (const [label, files] of [['Single', [file, empty]], ['Disabled', [file]], ['Directory', [file]]]) {
     assert.equal((await rawCall('upload_file', { ...handle, ref: await ref(label), files })).isError, true); checks.push(`${label} validation`);
   }

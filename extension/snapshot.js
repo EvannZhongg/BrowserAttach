@@ -76,6 +76,19 @@ export function registerAXRef(node, token, refs, frameId, sessionId) {
   return ref;
 }
 
+export function popupProperties(node) {
+  const result = {};
+  for (const { name, value } of node.properties || []) {
+    if (name === 'hasPopup' && value?.value != null) result.hasPopup = value.value;
+    if (name === 'controls' || name === 'owns') {
+      // Keep browser-resolved DOM idrefs, not AX/backend ids or inferred owners.
+      const ids = [...new Set((value?.relatedNodes || []).map(node => node.idref).filter(id => typeof id === 'string' && id))];
+      if (ids.length) result[name] = ids;
+    }
+  }
+  return result;
+}
+
 export function renderAX(nodes, token, refs, frameId, sessionId, options = snapshotOptions()) {
   const { byId, parents, fieldContext } = axContext(nodes);
   const visited = new Set(), entries = [];
@@ -141,6 +154,7 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
     const states = (node.properties || []).filter(prop =>
       ['disabled', 'focused', 'expanded', 'checked', 'selected', 'required', 'invalid', 'level'].includes(prop.name)
     ).map(prop => `${prop.name}=${JSON.stringify(prop.value?.value)}`);
+    for (const [name, value] of Object.entries(popupProperties(node))) states.push(`${name}=${JSON.stringify(value)}`);
     if (node.value?.value != null) states.push(`value=${JSON.stringify(node.value.value)}`);
     const context = FIELD_ROLES.has(role) && !node.ignored ? fieldContext(node) : null;
     if (context && context !== name) states.push(`context=${JSON.stringify(context)}`);

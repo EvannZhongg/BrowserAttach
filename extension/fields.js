@@ -1,4 +1,4 @@
-import { axContext, FIELD_ROLES, registerAXRef } from './snapshot.js';
+import { axContext, FIELD_ROLES, registerAXRef, popupProperties } from './snapshot.js';
 
 const INPUT_BUTTONS = new Set(['button', 'submit', 'reset', 'image']);
 const AX_STATES = new Set(['disabled', 'readonly', 'required', 'invalid', 'checked', 'selected', 'expanded', 'multiselectable']);
@@ -76,6 +76,7 @@ export function renderFields(axNodes, domNodes, strings, token, refs, frameId, s
     if (ax) {
       if (dom && node.value?.value != null && !protectedValue) ax.value = node.value.value;
       for (const property of node.properties || []) if (AX_STATES.has(property.name)) ax[property.name] = property.value?.value;
+      Object.assign(ax, popupProperties(node));
     }
     const labels = [];
     for (const source of node?.name?.sources || []) {

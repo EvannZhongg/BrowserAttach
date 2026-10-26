@@ -1,8 +1,19 @@
 # 验证报告
 
-当前版本 **0.23.5**（2026-10-25）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.23.6**（2026-10-26）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 快照 full/interactive 与 fields 共用弹层语义提取：保留浏览器提供的 hasPopup、expanded 和已解析 controls/owns DOM idrefs，不猜测归属或增加 ref。
+- 上传将命令回执与 FileList 读回分层：assignment_acknowledged、requested_count、observed_count、count_verified；同步消费/重置不再当作赋值失败，读回不可用附 observation_error，赋值本身超时仍报未知结果且不补发。
+- scroll until 停止时返回 scroll_search_stopped、stop_reason、已完成 scroll_steps、scroll_pending、boundary_observed 与 last_scroll；保持无位移后只读等待增长和未知结果不重放的边界。预算异常使用内部结构化标记，避免残留 selector 准备诊断掩盖搜索超时。
+- npm test：290 项通过。覆盖弹层语义与 portal ID、上传消费/节点脱离/读回异常/派发迟到、滚动边界等待/步数限制/派发迟到/文档变化/初次只读查找超时。
+- Chromium 156、Edge 155 headless 完整 stdio MCP live-smoke：各 398 次调用、38 项检查通过。新增 full/interactive/fields 的真实 portal 关联、滚动预算与步数终止证据；真实 change 处理器消费 FileList 后 count_verified=false，未报告赋值错误且只有一次 change。首次并行运行时 Edge 的既有跨 frame 遮挡检查在 500 ms 准备预算内超时，串行重跑通过，未修改该检查或页面操作超时。
+- npm run test:package：包外安装与 stdio MCP 通过，62 个发布文件、23 个工具，无生成的配对密钥。版本元数据统一为 0.23.6，未增加工具、参数、依赖或权限。
+- 本机部署：协调升级因其他 MCP 连接正在使用 Hub 而拒绝在线替换，按本次明确重启要求执行 stop/start。Hub 与 Chrome/Edge 扩展均为 0.23.6 / ready；稳定目录 F:/.nosis/browser-attach/extension 的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
+- 剩余边界：弹层语义取决于浏览器 AX 暴露；FileList 数量不证明组件登记或服务器上传完成；无位移不证明服务端数据到底。本轮未操作真实业务表单。
+
+## 0.23.5 验证
 
 - read_text 的工具描述与使用指南明确：默认正文不包含 input/textarea 当前值；单字段使用 mode=value，整表使用 snapshot(profile=fields)。complete_source 表示来源覆盖，分页仍以 next_offset 为准。
 - 上传完成后读回原 input 的 FileList 数量，files_set 不再直接回显请求数量；数量不符或节点脱离时报告 file_count_not_retained、已派发且结果未知。派发或读回异常均保留未知结果，不自动补发。非空路径返回 method=native、events_trusted=null；清空返回 method=dom、events_trusted=false；两者 application_result=not_checked，不声称事件送达、组件登记或上传完成。

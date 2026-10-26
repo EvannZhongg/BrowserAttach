@@ -5,6 +5,23 @@ import { renderAX, snapshotOptions, snapshotPage } from '../extension/snapshot.j
 const node = (nodeId, role, name = '', childIds = [], extra = {}) =>
   ({ nodeId, role: { value: role }, name: { value: name }, childIds, ...extra });
 
+test('popup semantics preserve browser-resolved idrefs without inventing ownership or changing ref identity', () => {
+  const nodes = [node('category', 'menuitem', 'Category', [], { backendDOMNodeId: 2, properties: [
+    { name: 'hasPopup', value: { value: 'menu' } }, { name: 'expanded', value: { value: false } },
+    { name: 'controls', value: { value: 'popup missing', relatedNodes: [{ backendDOMNodeId: 3, idref: 'popup' }, { idref: 'popup' }, { backendDOMNodeId: 4 }] } },
+    { name: 'owns', value: { relatedNodes: [{ idref: 'owned' }] } },
+  ] }), node('leaf', 'menuitem', 'Leaf', [], { backendDOMNodeId: 5 })];
+  for (const profile of ['full', 'interactive']) {
+    const refs = new Map();
+    const entries = renderAX(nodes, 'popup', refs, 'child', 's1', snapshotOptions({ profile, query: 'Category', text: false }));
+    assert.match(entries[0].line, /expanded=false hasPopup="menu" controls=\["popup"\] owns=\["owned"\]/);
+    assert.doesNotMatch(entries[0].line, /missing|backendDOMNodeId|undefined/);
+    assert.equal(refs.size, 1); assert.deepEqual(refs.get('popup:1'), { backendNodeId: 2, frameId: 'child', sessionId: 's1', role: 'menuitem', name: 'Category' });
+  }
+  const leaf = renderAX(nodes, 'leaf', new Map(), 'main', undefined, snapshotOptions({ query: 'Leaf' }));
+  assert.doesNotMatch(leaf[0].line, /hasPopup|controls|owns/);
+});
+
 test('interactive view removes prose with refs but preserves control ancestors, disabled and custom controls', () => {
   const nodes = [node('root', 'RootWebArea', 'Page', ['main']), node('main', 'main', '', ['prose', 'group']),
     node('prose', 'paragraph', '', ['body'], { backendDOMNodeId: 1 }), node('body', 'StaticText', 'Read me'),
