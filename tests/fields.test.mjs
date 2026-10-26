@@ -168,3 +168,19 @@ test('document changes during a DOM capture cannot resurrect refs; changed child
     }
   }
 });
+
+test('fields snapshot retries a replaced main document with a new DOM capture', async () => {
+  const f = fixture(); withFields(f); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  let captures = 0;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'DOMSnapshot.captureSnapshot' && ++captures === 1) f.api.debugger.onEvent.emit(target, 'DOM.documentUpdated');
+    return result;
+  };
+  const result = await f.exec('snapshot', { profile: 'fields', query: 'Main' });
+  assert.equal(captures, 2);
+  assert.equal(result.fields.length, 1);
+  assert.equal(result.fields[0].ax.name, 'Main');
+  await f.exec('fill', { ref: result.fields[0].ref, text: 'current', mode: 'dom' });
+});

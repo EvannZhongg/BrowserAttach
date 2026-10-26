@@ -1,5 +1,7 @@
 // One deadline covers preparation, waiting, dispatch and verification. Only
 // preparation is retried; once input is sent its outcome must be observed.
+const INPUT_RECOVERY = 'Browser UI may be capturing input; if a native menu is open, press Escape to dismiss it. Observe browser_snapshot before deciding what to do. If page focus is unavailable, explicitly call browser_tab_control({tab_handle, action:"activate", focus_window:true}), then browser_snapshot and re-resolve the target. Activation does not prove non-delivery; retry only if observation confirms the action is still needed. Never automatically replay or fall back.';
+
 export function deadline(timeout_ms = 5000, phase = 'input', parentEnd = Infinity) {
   if (!Number.isInteger(timeout_ms) || timeout_ms < 100 || timeout_ms > 30000) throw new Error('timeout_ms must be 100..30000');
   const end = Math.min(Date.now() + timeout_ms, parentEnd);
@@ -15,8 +17,9 @@ export function deadline(timeout_ms = 5000, phase = 'input', parentEnd = Infinit
     if (phase === 'fetch') return new Error(`Fetch did not finish within ${timeout_ms} ms; the temporary tab will be closed. Do not automatically replay the request.`);
     if (phase === 'wait') return Object.assign(new Error(`Condition was not satisfied within ${timeout_ms} ms`), { input_dispatched: false });
     if (phase === 'observation') return Object.assign(new Error(`Navigation observation timed out within ${timeout_ms} ms; navigation already succeeded. Take a new snapshot.`), { outcome_unknown: true });
+    if (phase === 'snapshot') return Object.assign(new Error(`Snapshot observation timed out within ${timeout_ms} ms. Take a new browser_snapshot.`), { input_dispatched: false, diagnostics: { reason: 'snapshot_timeout' } });
     const result = new Error(dispatched
-      ? `Input did not finish with verified delivery within ${timeout_ms} ms. Outcome is unknown. Browser UI may be capturing input; press Esc to dismiss a native menu. Observe before retrying; never automatically replay or fall back.`
+      ? `Input did not finish with verified delivery within ${timeout_ms} ms. Outcome is unknown. ${INPUT_RECOVERY}`
       : `Target did not become actionable within ${timeout_ms} ms${waiting ? `; waiting for ${waiting}` : ''}; no input was dispatched.`);
     result.input_dispatched = dispatched;
     result.outcome_unknown = dispatched;
@@ -93,7 +96,7 @@ export function inspectTarget(editable) {
 export async function delivery(operation, ms = 1250) {
   let timer;
   try { return await Promise.race([operation, new Promise((resolve, reject) => {
-    timer = setTimeout(() => reject(Object.assign(new Error('Native input has no verified receipt. Outcome is unknown. Browser UI may be capturing input; press Esc to dismiss a native menu, then observe. Never automatically replay or fall back.'), {
+    timer = setTimeout(() => reject(Object.assign(new Error(`Native input has no verified receipt. Outcome is unknown. ${INPUT_RECOVERY}`), {
       outcome_unknown: true, diagnostics: { reason: 'delivery_unverified' },
     })), ms);
   })]); } finally { clearTimeout(timer); }

@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.24.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.24.1**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -89,6 +89,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **ref 失效诊断**：controller 每标签保留最近至多 1000 个已清理 ref 的 cause/frame_id，不保留 DOM 对象、字段值或替代定位信息。新观察、文档/frame 变化及对话框清理记录各自原因；解析时单独报告节点脱离、session 或 AX 身份变化。释放、断连、关闭和 detach 清空历史，淘汰后返回 unknown_ref。
 - **双预算**：`max_nodes` 限制节点数，`max_chars` 限制每行序列化后的累计字符数；两者独立，任一耗尽都会返回 `next_cursor`。
 - **续读**：续读沿用同一份 `state`（`entries`、`refs`、`nextOffset`），所以 refs 在分页过程中保持有效。单个节点放不进预算时直接报错要求提高预算，避免静默截断尾部。
+- **观察恢复**：普通新 snapshot 使用 30 秒总预算，full/interactive/fields 遇主文档变化或导航上下文失效时最多完整重读一次，间隔 50 ms，两次共享 deadline；与 navigate 的观察共用 retryObservation，导航本身不重发。每次采集使用独立 refs、entries 与字段读取器，发布前校验文档版本及同一 claim。超时的底层读取迟到不能继续发布，控制权结束不重试；cursor 续读不重采集。
 - **frame 失效**：主文档导航或文档更新清空整份观察；子 frame 导航、移除或 session detach 只使该子树失效，并把受影响 frame 写入 `omitted_frames`。
 - **OOPIF**：`Target.setAutoAttach` 以 `flatten: true` 递归附着 iframe target，每个 session 独立 enable Runtime / Log / Network / Page / DOM / Accessibility，frame 与 session 的映射由 `sessions.js` 维护。
 
@@ -105,6 +106,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 
 - **type 与 fill**：fill 替换文字，type 保留选区，逐字符复用原生按键与 keydown 回执；字符之间可延迟，不把 insertText 伪装成键盘序列。浏览器处理 keypress/input 及 preventDefault，非 ASCII 不模拟系统 IME。fill 对 input/textarea 精确核验 value；native 在 insertText 前另核对替换选区与焦点，丢失则停止，避免已知失效选区造成追加。contenteditable 的 native 核验临时选中内容并读取浏览器 Selection.toString，finally 恢复原选区及方向；复用浏览器对编辑占位 br/div 的纯文本语义，不实现 HTML 解析器。此过程可能触发 selectionchange，不插入额外文本。dom 使用 innerText setter 生成可见 br，再核验 innerText，无 HTML sink、不主动聚焦。两者统一 CRLF/CR 为 LF，两种模式均仅允许请求中的普通空格在同位置以 NBSP 保留；不合并空白或空行，不等待异步保存，差异仍报告结果未知。
 - **焦点输入与语义定位**：type 的 focused=true 与 ref/selector 互斥，复用 press_key 的 frame/开放 Shadow DOM 焦点解析，固定最初可编辑元素并逐字检查，不重新聚焦。selector_type 的 label/placeholder 在隔离世界按真实 HTML 关联/属性查询，role/name 每次读取所选 frame 的 AX 树并严格匹配，以 AX 树顺序支持 nth；统一返回原有节点结构，继续复用输入、命中核验及 batch 流程，无组件库适配器。
+- **定位与输入恢复提示**：非法 CSS 附原生语法及 role/label/placeholder 提示，不实现 Playwright 兼容层。role 准备失败仅在错误路径复用最后一次 AX 树，给出有界名称建议，不额外查询、不改变匹配或自动操作。原生回执未知时提示显式 activate 后重新观察，并保留禁止自动重放的边界；fill_selection_lost 提示可显式选择键盘编辑路径，不自动补发。
 - **只重试准备**：等待阶段可以反复轮询，但一旦派发就不再重试。超时分为"未派发"和"已派发、结果未知"两种错误文本。
 - **原生指针就绪检查**：准备前和派发前各做一次至多 500 ms 的有界检查；要求未冻结/丢弃的 tab 与未最小化的窗口。无修饰键的左键单击可在非活动标签尝试执行；hover、drag、其他按钮、双击及带修饰键的点击仍要求活动标签。检查失败以 TAB_NOT_READY 明确报告当前指针输入未派发，并提示 tab_control(action=activate) → snapshot → 所请求动作。click/hover 成功结果的 page_state.tab_active 记录派发前检查观察到的活动状态。普通操作不主动激活；仅显式 tab_control(action=activate) 在 focus_window=true 时请求窗口聚焦和 Page.bringToFront。
 - **焦点信号边界**：OS 窗口失焦、遮挡或 document.visibilityState=hidden 不一定阻止 CDP 输入；document.hasFocus() 在 iframe 导航后也可能为 false。这些值作为 page_state 诊断，不独立拒绝点击。实际送达仍由隔离世界的可信事件回执校验；没有回执时不自动重放。

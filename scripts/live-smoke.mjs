@@ -237,6 +237,55 @@ try {
   const handle = { tab_handle: claim.tab_handle };
   const evaluate = (expression, args = {}) => call('evaluate', { ...handle, expression, ...args });
   await evaluate(`(() => {
+    const link = document.createElement('a'); link.id = 'diagnostic-link'; link.href = '#claim'; link.textContent = 'Diagnostic claim';
+    window.diagnosticClicks = 0; link.onclick = event => { event.preventDefault(); diagnosticClicks++; };
+    document.body.append(link);
+  })()`);
+  for (const target of [{ selector: 'Diagnostic claim' }, { selector: 'button', name: 'Diagnostic claim' }]) {
+    const result = await rawCall('click', { ...handle, selector_type: 'role', ...target, timeout_ms: 300 });
+    assert.equal(result.isError, true);
+    const failure = JSON.parse(result.content[0].text);
+    assert.equal(failure.input_dispatched, false); assert.equal(failure.diagnostics.reason, 'selector_not_found');
+    assert.ok(failure.diagnostics.suggestions.some(item => item.role === 'link' && item.name === 'Diagnostic claim'));
+    assert.match(failure.error, /selector is the actual AX role.*diagnostic only/);
+  }
+  const invalidCss = await rawCall('click', { ...handle, selector: 'button:has-text("Diagnostic claim")' });
+  assert.equal(invalidCss.isError, true);
+  assert.equal(JSON.parse(invalidCss.content[0].text).diagnostics.reason, 'selector_invalid');
+  assert.match(JSON.parse(invalidCss.content[0].text).diagnostics.hint, /browser-native CSS.*Playwright.*selector_type="role"/);
+  assert.equal((await evaluate('diagnosticClicks')).value, 0);
+  const diagnosticSnapshot = await call('snapshot', { ...handle, query: 'Diagnostic claim' });
+  assert.match(diagnosticSnapshot.snapshot, /link "Diagnostic claim"/);
+  const diagnosticClick = await call('click', { ...handle, selector_type: 'role', selector: 'link', name: 'Diagnostic claim', mode: 'dom' });
+  assert.equal(diagnosticClick.application_result, 'not_checked'); assert.equal(diagnosticClick.events_trusted, false);
+  assert.equal((await evaluate('diagnosticClicks')).value, 1);
+  await evaluate(`document.querySelector('#diagnostic-link').remove()`);
+  checks.push('role name/role mistakes return actual link suggestions; invalid Playwright CSS retains diagnostics across stdio; no fallback clicks');
+  await evaluate(`(() => {
+    const button = document.createElement('button'); button.id = 'snapshot-race'; button.textContent = 'Snapshot race before'; document.body.append(button);
+    window.snapshotRaceReads = 0;
+    const title = Object.getOwnPropertyDescriptor(Document.prototype, 'title');
+    // Change history when snapshot reads metadata, after its first AX capture.
+    Object.defineProperty(document, 'title', { configurable: true, get() {
+      if (++snapshotRaceReads === 1) {
+        button.textContent = 'Snapshot race after'; history.pushState({}, '', '#snapshot-race');
+      }
+      return title.get.call(this);
+    } });
+  })()`);
+  const raceSnapshot = await call('snapshot', { ...handle, query: 'Snapshot race' });
+  assert.match(raceSnapshot.snapshot, /button "Snapshot race after"/);
+  assert.doesNotMatch(raceSnapshot.snapshot, /Snapshot race before/);
+  assert.ok(raceSnapshot.url.endsWith('#snapshot-race'));
+  assert.equal((await evaluate('snapshotRaceReads')).value, 2);
+  const raceCleanup = await rawCall('evaluate', { ...handle,
+    expression: `(() => { delete document.title; document.querySelector('#snapshot-race').remove(); history.replaceState({}, '', ${JSON.stringify(url)}); })()` });
+  // Same-document navigation may discard the evaluation result; observe cleanup without replaying it.
+  if (raceCleanup.isError) assert.match(JSON.parse(raceCleanup.content[0].text).error, /Document or claim changed during evaluation/);
+  const cleanedRace = await call('snapshot', { ...handle, query: 'Snapshot race' });
+  assert.equal(cleanedRace.url, url); assert.equal(cleanedRace.node_count, 0);
+  checks.push('same-document navigation during snapshot metadata invalidates the first AX capture; one fresh read returns the changed control and URL');
+  await evaluate(`(() => {
     const section = document.createElement('section'); section.id = 'popup-probe';
     section.innerHTML = '<input id="popup-search" role="combobox" aria-label="Popup search" aria-haspopup="listbox" aria-expanded="true" aria-controls="portal-options"><div role="menu"><div role="menuitem" aria-label="Popup category" aria-haspopup="menu" aria-expanded="false" aria-controls="portal-submenu">Category</div></div>';
     document.body.append(section);
@@ -717,10 +766,15 @@ try {
   const lostSelection = await rawCall('fill', { ...handle, selector: '#editor', text: 'must not append' });
   assert.equal(lostSelection.isError, true);
   assert.equal(JSON.parse(lostSelection.content[0].text).diagnostics.reason, 'fill_selection_lost');
+  assert.match(JSON.parse(lostSelection.content[0].text).error, /browser_click.*Control\+A.*browser_type focused=true.*Do not automatically/);
   assert.equal((await evaluate(`document.querySelector('#editor').innerText`)).value, 'a\n\nb');
   assert.equal((await evaluate(`document.querySelector('#editor').dataset.inputs`)).value, '0');
+  await call('click', { ...handle, selector: '#editor' });
+  await call('press_key', { ...handle, key: 'Control+A' });
+  await call('type', { ...handle, focused: true, text: 'explicit recovery' });
+  assert.equal((await call('read_text', { ...handle, selector: '#editor', mode: 'value' })).text, 'explicit recovery');
   checks.push('Trusted Types blocks innerHTML; native/DOM multiline replacement succeeds without HTML sinks; DOM keeps focus; type newline error names Enter');
-  checks.push('page collapses replacement selection after focus: fill_selection_lost before insertText, no append and zero input events');
+  checks.push('page collapses replacement selection after focus: fill_selection_lost before insertText, no append or input events; explicit click/Control+A/focused type recovery verified');
   await call('tab_control', { ...handle, action: 'release' });
   }
   const report = { date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()), family: values.family, user_agent: browsers[0].user_agent, extension_version: VERSION, checks, calls: calls.length, results: calls };

@@ -10,7 +10,7 @@
 
 [![M8ven Score](https://m8ven.ai/badge/mcp/evannzhongg-browserattach-kisqie?v=ad2528ebe8a0fa35e3cf933630840bac)](https://m8ven.ai/mcp/evannzhongg-browserattach-kisqie?s=readme) [![BrowserAttach MCP server – quality and maintenance score on Glama](https://glama.ai/mcp/servers/EvannZhongg/BrowserAttach/badges/score.svg)](https://glama.ai/mcp/servers/EvannZhongg/BrowserAttach)
 
-[![npm version](https://img.shields.io/npm/v/@evan_zhong/browser-attach)](https://www.npmjs.com/package/@evan_zhong/browser-attach) [![npm monthly downloads](https://img.shields.io/npm/dm/@evan_zhong/browser-attach)](https://www.npmjs.com/package/@evan_zhong/browser-attach) [![license](https://img.shields.io/npm/l/@evan_zhong/browser-attach)](LICENSE)
+[![npm version](https://img.shields.io/npm/v/@evan_zhong/browser-attach)](https://www.npmjs.com/package/@evan_zhong/browser-attach) [![license](https://img.shields.io/npm/l/@evan_zhong/browser-attach)](LICENSE)
 
 让 MCP 客户端操作你已经打开、已经登录的 Chrome / Edge 标签页。BrowserAttach 通过本机配对扩展连接浏览器，保留现有登录状态，不需要启动远程调试端口或单独的自动化浏览器。
 

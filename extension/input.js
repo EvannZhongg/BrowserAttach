@@ -134,7 +134,7 @@ export function createInput(cdp, value, sessions) {
     if (mode === 'native') {
       const selected = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
         functionDeclaration: verifyReplacementSelection.toString() }));
-      if (selected !== true) throw Object.assign(new Error('Fill replacement selection was lost before text insertion; no replacement text was inserted. Observe the field before continuing.'), {
+      if (selected !== true) throw Object.assign(new Error('Fill replacement selection was lost before text insertion; no replacement text was inserted. Observe the field before continuing. For an editor that manages its own selection, an explicit alternative is browser_click on the editable surface, browser_press_key key="Control+A", then browser_type focused=true for printable text. Verify the editor content afterward; use browser_press_key Enter/Tab for control keys. Do not automatically switch modes or replay this sequence.'), {
         outcome_unknown: true, diagnostics: { reason: 'fill_selection_lost', frame_id: node.frameId },
       });
       await send('Input.insertText', { text: args.text });

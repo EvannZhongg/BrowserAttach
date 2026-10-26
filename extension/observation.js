@@ -1,5 +1,17 @@
 import { renderAX, snapshotOptions, snapshotPage } from './snapshot.js';
 import { createFieldReader } from './fields.js';
+import { deadline } from './actionability.js';
+
+export async function retryObservation(read, budget) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try { return await read(); }
+    catch (error) {
+      const transient = error.diagnostics?.reason === 'document_changed' || /context.*(destroyed|not found)|cannot find (?:default execution )?context|document (changed|updated)|inspected target navigated|no frame with given id/i.test(error.message);
+      if (attempt || error.deadline_exceeded || budget.remaining() <= 100 || !transient) throw error;
+      await budget.run(() => new Promise(resolve => setTimeout(resolve, 50)));
+    }
+  }
+}
 
 // Observation identity is separate from debugger session ownership.
 export function createObservations(cdp, value, sessions, viewport, currentClaim, changed) {
@@ -112,20 +124,29 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     if (state) state.nextCursor = null;
   }
 
-  async function snapshot(tabId, args = {}, budget) {
-    const send = (...params) => budget ? budget.run(() => cdp(...params)) : cdp(...params);
+  async function snapshot(tabId, args = {}, budget = deadline(30000, 'snapshot')) {
     if (args.cursor != null) {
       const state = snapshots.get(tabId);
       if (!state) throw new Error('Snapshot cursor is stale or unknown. Take a new browser_snapshot.');
       return snapshotPage(state, args);
     }
     const options = snapshotOptions(args);
+    const claim = currentClaim(tabId);
     invalidateSnapshot(tabId, 'snapshot_replaced');
+    return await retryObservation(() => captureSnapshot(tabId, args, options, budget, claim), budget);
+  }
+
+  async function captureSnapshot(tabId, args, options, budget, claim) {
+    const assertClaim = () => {
+      if (!claim || currentClaim(tabId) !== claim) throw Object.assign(new Error('Tab control ended while reading the snapshot; no refs were published.'), { diagnostics: { reason: 'control_changed' } });
+    };
+    assertClaim();
+    const send = (...params) => budget.run(() => cdp(...params));
     const documentVersion = documents.get(tabId);
     const versions = new Map(frameStates.get(tabId)?.versions);
-    await (budget ? budget.run(() => sessions.settle(tabId)) : sessions.settle(tabId));
+    await budget.run(() => sessions.settle(tabId));
     for (const target of sessions.targets(tabId)) await send(target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach' });
-    const frames = await (budget ? budget.run(() => sessions.frames(tabId, send)) : sessions.frames(tabId, send));
+    const frames = await budget.run(() => sessions.frames(tabId, send));
     const mainId = frameStates.get(tabId).mainId;
     for (const frame of frames) if (frame.parentId) frameStates.get(tabId).parents.set(frame.id, frame.parentId);
     const knownFrames = new Set(frames.map(frame => frame.id));
@@ -177,15 +198,19 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
       expression: '({title: document.title, url: location.href})', returnByValue: true,
     }));
     const state = { id: token, options, refs, entries, invalidFrames: new Set(), totalNodes: entries.filter(entry => entry.node).length,
-      metadata: { title: metadata.title, url: metadata.url, viewport: await (budget ? budget.run(() => viewport(tabId)) : viewport(tabId)), omitted_frames: omittedFrames,
+      metadata: { title: metadata.title, url: metadata.url, viewport: await budget.run(() => viewport(tabId)), omitted_frames: omittedFrames,
         ...(readFields ? { frames: frames.map(frame => ({ frame_id: frame.id, url: frame.url })) } : {}) } };
-    if (documentVersion !== documents.get(tabId)) throw new Error('Document changed while reading the snapshot. Take a new browser_snapshot.');
+    assertClaim();
+    if (documentVersion !== documents.get(tabId)) throw Object.assign(new Error('Document changed while reading the snapshot. Take a new browser_snapshot.'), { diagnostics: { reason: 'document_changed' } });
     for (const frame of frames) if (versions.get(frame.id) !== frameStates.get(tabId)?.versions.get(frame.id)) {
       omitFrame(tabId, state, frame.id, 'Frame changed while reading the snapshot; take a new snapshot to observe it');
     }
-    const page = snapshotPage(state, args);
-    snapshots.set(tabId, state);
-    return page;
+    return await budget.run(() => {
+      assertClaim();
+      const page = snapshotPage(state, args);
+      snapshots.set(tabId, state);
+      return page;
+    });
   }
 
 

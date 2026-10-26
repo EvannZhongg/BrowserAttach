@@ -174,9 +174,11 @@ test('native fill does not insert text after losing the replacement selection', 
   await assert.rejects(f.exec('fill', { selector: '#editor', text: 'replacement' }), error => {
     assert.equal(error.diagnostics.reason, 'fill_selection_lost');
     assert.match(error.message, /no replacement text was inserted/);
+    assert.match(error.message, /browser_click.*Control\+A.*browser_type focused=true.*Verify the editor content.*Do not automatically/);
     return true;
   });
   assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, 0);
+  assert.equal(f.calls.filter(call => call.method === 'Input.dispatchKeyEvent' || call.method === 'Input.dispatchMouseEvent' || call.method === 'tabs.update').length, 0);
 });
 
 test('DOM click invokes HTML activation once without native input, rejects coordinates and disabled targets', async () => {
@@ -213,6 +215,7 @@ test('swallowed keyboard events and forged page-world receipts cannot report del
   const keys = f.calls.filter(call => call.method === 'Input.dispatchKeyEvent');
   assert.deepEqual(keys.map(call => call.args.type), ['rawKeyDown', 'char', 'keyUp']);
   assert.equal(f.calls.filter(call => call.method === 'Runtime.removeBinding').length, 1);
+  assert.equal(f.calls.filter(call => ['tabs.update', 'windows.update', 'Page.bringToFront'].includes(call.method)).length, 0);
   assert.ok((await f.exec('snapshot')).snapshot);
   await f.exec('release_tab');
 });

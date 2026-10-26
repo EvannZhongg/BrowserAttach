@@ -40,7 +40,8 @@ export function queryElement(selector, type = 'css', nth, waitForMatch = false) 
       count = elements.length; at = index => elements[index];
     }
   } catch (error) {
-    throw failure(error.message, 'selector_invalid');
+    const hint = type === 'css' ? 'Use browser-native CSS, not Playwright selectors such as :has-text(). For accessible names use selector_type="role", selector="<actual AX role>", name="<exact accessible name>"; label matches associated HTML labels and placeholder matches the exact placeholder attribute. Inspect browser_snapshot query to find the actual role/name.' : null;
+    throw failure(`${error.message}${hint ? ` ${hint}` : ''}`, 'selector_invalid', hint ? { hint } : {});
   }
   if (waitForMatch && (count === 0 || (nth != null && nth >= count))) return null;
   if (nth == null && count !== 1) {
@@ -68,28 +69,39 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
   const send = (method, params) => budget.run(() => cdp(target, method, params));
   const role = args.selector_type === 'role';
   const context = role ? null : await send('Page.createIsolatedWorld', { frameId, worldName: 'browser-attach-locator' });
-  let backendNodeId;
-  while (true) {
-    if (role) {
-      const { nodes } = await send('Accessibility.getFullAXTree', { frameId });
-      backendNodeId = matchRole(nodes, args)?.backendDOMNodeId;
-    } else {
-      const result = await send('Runtime.evaluate', { contextId: context.executionContextId, objectGroup: 'browser-attach',
-        expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},true)` });
-      await checkedValue(result, send, value);
-      if (result.result?.subtype !== 'null') {
-        if (!result.result?.objectId) throw Object.assign(new Error('Selector did not resolve to an element'), {
-          diagnostics: { reason: 'selector_not_element', frame_id: frameId },
-        });
-        const { node } = await send('DOM.describeNode', { objectId: result.result.objectId });
-        backendNodeId = node.backendNodeId;
+  let backendNodeId, roleNodes;
+  try {
+    while (true) {
+      if (role) {
+        const { nodes } = await send('Accessibility.getFullAXTree', { frameId });
+        roleNodes = nodes;
+        backendNodeId = matchRole(nodes, args)?.backendDOMNodeId;
+      } else {
+        const result = await send('Runtime.evaluate', { contextId: context.executionContextId, objectGroup: 'browser-attach',
+          expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},true)` });
+        await checkedValue(result, send, value);
+        if (result.result?.subtype !== 'null') {
+          if (!result.result?.objectId) throw Object.assign(new Error('Selector did not resolve to an element'), {
+            diagnostics: { reason: 'selector_not_element', frame_id: frameId },
+          });
+          const { node } = await send('DOM.describeNode', { objectId: result.result.objectId });
+          backendNodeId = node.backendNodeId;
+        }
       }
+      if (backendNodeId != null) break;
+      if (!wait) return null;
+      budget.describe?.(`selector ${JSON.stringify(args.selector)}${args.name == null ? '' : ` name=${JSON.stringify(args.name)}`}${args.nth == null ? '' : ` nth=${args.nth}`} to appear; current=no matching element`,
+        { reason: 'selector_not_found', selector_type: args.selector_type ?? 'css', frame_id: frameId, ...(args.nth == null ? {} : { nth: args.nth }) });
+      await budget.run(() => new Promise(resolve => setTimeout(resolve, 20)));
     }
-    if (backendNodeId != null) break;
-    if (!wait) return null;
-    budget.describe?.(`selector ${JSON.stringify(args.selector)}${args.name == null ? '' : ` name=${JSON.stringify(args.name)}`}${args.nth == null ? '' : ` nth=${args.nth}`} to appear; current=no matching element`,
-      { reason: 'selector_not_found', selector_type: args.selector_type ?? 'css', frame_id: frameId, ...(args.nth == null ? {} : { nth: args.nth }) });
-    await budget.run(() => new Promise(resolve => setTimeout(resolve, 20)));
+  } catch (error) {
+    if (role && error.diagnostics?.reason === 'selector_not_found' && !budget.has_dispatched()) {
+      const hint = 'For selector_type="role", selector is the actual AX role (e.g. "link"), and name is the exact accessible name (e.g. "Claim"). Suggestions are diagnostic only; inspect browser_snapshot query before choosing a target.';
+      const suggestions = roleSuggestions(roleNodes || [], args);
+      error.diagnostics = { ...error.diagnostics, ...suggestions, hint };
+      error.message += ` ${hint} Name suggestions: ${JSON.stringify(suggestions.suggestions)}${suggestions.omitted_suggestions ? ` (${suggestions.omitted_suggestions} more omitted)` : ''}`;
+    }
+    throw error;
   }
   // Hit-test refs resolve in the default world too. CDP forbids passing object
   // arguments between worlds, even when both wrappers refer to the same node.
@@ -98,6 +110,19 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
     diagnostics: { reason: 'element_detached', frame_id: frameId },
   });
   return { target, frameId, objectId: resolved.object.objectId, backendNodeId };
+}
+
+function roleSuggestions(nodes, args) {
+  const query = (args.name ?? args.selector).trim().toLowerCase();
+  const matches = new Map();
+  if (query) for (const node of nodes) {
+    const name = String(node.name?.value || '');
+    if (node.ignored || !node.backendDOMNodeId || !node.role?.value || !name.toLowerCase().includes(query) || matches.has(node.backendDOMNodeId)) continue;
+    matches.set(node.backendDOMNodeId, { role: node.role.value, name, exact: name.toLowerCase() === query });
+  }
+  const candidates = [...matches.values()].sort((a, b) => Number(b.exact) - Number(a.exact));
+  return { suggestions: candidates.slice(0, 10).map(({ role, name }) => ({ role, name: name.slice(0, 120), ...(name.length > 120 ? { name_truncated: true } : {}) })),
+    omitted_suggestions: Math.max(0, candidates.length - 10) };
 }
 
 export function matchRole(nodes, args) {

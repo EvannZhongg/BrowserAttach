@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.24.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.24.1**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -82,6 +82,7 @@
 | `selector_invalid` / `selector_not_element` | 选择器解析失败 / 结果不是元素 |
 | `value_not_retained` | fill 后实际文本与请求不一致；不回显请求值或实际值，不推断是格式化还是输入被吞 |
 | `delivery_unverified` | 可信输入事件回执未在回执预算内完成 |
+| `document_changed` / `snapshot_timeout` | snapshot 两次采集仍遇文档变化 / 观察总预算耗尽，不能使用失败采集的 refs |
 | `target_changed` | click/hover 派发期间的目标核验被拒绝，可能已有前序输入送达 |
 | `preparation_timeout` / `input_timeout` | 无更具体准备原因的超时 / 已进入派发阶段后操作超时 |
 | `scroll_search_stopped` | 滚动查找停止，stop_reason 和进度证据见 browser_scroll |
@@ -91,6 +92,8 @@
 ### 结果未知时
 
 超时、回执丢失或派发中断可能发生在动作生效之后。先用快照、截图或日志观察，再决定下一步；不要自动重放或换模式补发。导航和异步 JavaScript 也可能在超时后继续。
+
+如果页面焦点不可用，可显式调用 `browser_tab_control({tab_handle, action:"activate", focus_window:true})`，然后重新 snapshot、定位并核对操作是否仍需要执行。activate 本身不证明之前未送达：只有 `input_dispatched:false` 的准备失败可以在恢复后直接重试；派发后的未知结果仍须先观察。原生菜单确实打开时才用 Escape 关闭。
 
 不确定错误可能附带结构化 `post_action`：delivery=unknown、dialog/dialogs、navigation_observed、frame_navigation_observed、current_url、frame_id、dom_changed。observations.tab/dom 分别报告 available 和不可用时的 error；dom_changed=null 表示 DOM 观察不可用。assessment=observable_effects 表示已有变化证据，即使部分观察不可用也保留；只有标签与 DOM 观察均可用且未发现变化时才返回 no_observable_effects，否则为 observation_unavailable。三者都不证明业务成功或没有派发。DOM 观察未必覆盖字段属性、其他 frame 或服务端变化。`input_dispatched=true` 表示已进入派发阶段，不证明事件送达或脚本完成；false 表示尚未派发，字段缺失则没有确定证据。
 
@@ -158,6 +161,8 @@ full/interactive 查询在当前视图中匹配完整名称/value/context，再�
 ```
 
 `next_cursor` 继续同一份观察，保留 refs。续读可省略 profile/text/text_limit/query/include_hidden；显式提供时须与原观察一致。单个节点或字段放不进预算会报出所需大小。主 frame、同进程 iframe 和跨进程 iframe（OOPIF）均可覆盖；未能读取或期间变化的 frame 见 omitted_frames。
+
+新建 snapshot 的采集总预算为 30 秒；遇文档变化或导航造成的上下文失效时，最多间隔 50 ms 完整重读一次，两次共享预算。失败采集的 refs 不会发布；控制权结束、非导航错误及预算耗尽不重试。cursor 续读始终读取原观察，失效时明确报错，不自动切换成新快照。navigate 附带的 snapshot 沿用导航观察的独立预算。
 
 | 事件 | ref / 快照分页的影响 |
 |---|---|
@@ -227,6 +232,10 @@ selector 每次重新解析，省略 nth 时必须唯一；歧义立即报错并
 | `role` | 浏览器 AX role，可另传 `name` 精确匹配 accessible name；包括浏览器提供的隐式角色 |
 
 `name` 仅适用于 role。`nth` 从 0 开始，按 DOM 顺序选择，role 则按 AX 树顺序；准备阶段可等待目标出现。重复匹配应缩小范围或显式 nth，不按可见性猜选。label 不推断兄弟 div 的标签关系，ARIA 命名可通过 role/name 定位。
+
+role 应写为 `selector_type:"role", selector:"link", name:"Claim"`，而不是把 Claim 写入 selector，也不能根据外观假定 role=button。role 准备超时的 selector_not_found 在最后一次成功读取的 AX 树中，按 name（未提供时按 selector）给出不区分大小写的名称子串建议：同名优先，最多 10 项，名称最多 120 字符，截断时标记 name_truncated，omitted_suggestions 表示省略数。suggestions 只辅助重新观察，不改变精确匹配，不自动使用候选。
+
+CSS 使用浏览器原生语法，不支持 Playwright 的 `button:has-text("Claim")`。非法 CSS 的 selector_invalid 附带 hint，可先用 `browser_snapshot({tab_handle, query:"Claim"})` 确认实际 role/name，再用 role 定位；表单也可按真实 HTML label 或 placeholder 精确定位。不自动翻译选择器。
 
 Portal 弹层可组合现有工具定位：先用 snapshot 读取触发字段的 controls/owns，确认唯一且对应当前所需弹层的 DOM ID，再将选项查询限定到该 ID；例如 ID 为 school-options 时，用 XPath `//*[@id='school-options']//*[@role='option' and normalize-space(.)='Southeast University']`。CSS 中的特殊字符应经 CSS.escape 转义；ID 不是现成的选择器。仍须满足唯一匹配，不使用全局 option 的 nth 猜测。关联缺失、多个目标或弹层重建时重新观察；Shadow DOM 中的 ID 不能直接当作 document 根查询，可用 evaluate 返回单个元素 ref。此组合不自动打开弹层或提交选项，也不推断缺失的关联。
 
@@ -353,6 +362,8 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 input/textarea 按 value 精确比较。contenteditable 的 native 模式在插入前确认替换选区仍覆盖字段，选区丢失时以 fill_selection_lost 停止，不插入文本；插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
 
 contenteditable 比较将 CRLF/CR 视为 LF；两种模式均允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）。不裁剪首尾空白、不合并空格或空行。节点替换、失焦、页面格式化或异步重建仍可能导致结果未知；不回显字段内容，不自动重放，也不等待编辑器保存。read_text 的 visible/value 仍是 innerText，不是浏览器所选纯文本。
+
+fill 不提供编辑器模型写入。遇编辑器管理选区导致的 fill_selection_lost，先观察并确认可编辑表面，可显式改用 click → press_key(Control+A) → type(focused=true) 输入可打印文本，换行/Tab 分别用 press_key Enter/Tab；随后读取编辑器内容核验。此路径不保证适用于所有编辑器，也不会自动执行或切换模式。普通 textarea/contenteditable 的多行替换可直接使用 fill。
 
 工具不自动 blur 或按 Enter。需要失焦校验时显式 Tab 或点击其他目标；自定义下拉须在输入过滤后点击具体选项。
 

@@ -332,7 +332,128 @@ test('a document change during an AX read cannot resurrect invalidated refs and 
     if (method === 'Accessibility.getFullAXTree') f.api.debugger.onEvent.emit(target, 'DOM.documentUpdated');
     return result;
   };
-  await assert.rejects(f.exec('snapshot'), /Document changed/);
+  await assert.rejects(f.exec('snapshot'), error => {
+    assert.match(error.message, /Document changed/);
+    assert.equal(error.diagnostics.reason, 'document_changed'); return true;
+  });
+  assert.equal(f.calls.filter(call => call.method === 'Accessibility.getFullAXTree').length, 2);
+  await assert.rejects(f.exec('snapshot', { cursor: 'failed@1' }), /stale/);
+});
+
+test('a new snapshot retries one document race with fresh refs and preserves query/profile/pagination', async () => {
+  for (const profile of ['full', 'interactive']) {
+    const f = fixture(); await f.claim();
+    const old = f.ref(await f.exec('snapshot'));
+    const send = f.api.debugger.sendCommand;
+    let reads = 0;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      const result = await send(target, method, args);
+      if (method === 'Accessibility.getFullAXTree' && ++reads === 1) {
+        f.api.debugger.onEvent.emit(target, 'Page.navigatedWithinDocument', { frameId: 'main' });
+        f.nodes([0, 1].map(i => ({ nodeId: `current-${i}`, backendDOMNodeId: 20 + i, role: { value: 'button' }, name: { value: `Current ${i}` } })));
+      }
+      return result;
+    };
+    const first = await f.exec('snapshot', { profile, query: 'current', max_nodes: 1, verbose: true });
+    assert.equal(reads, 2); assert.equal(first.profile, profile);
+    assert.match(first.snapshot, /Current 0/); assert.doesNotMatch(first.snapshot, /Submit/);
+    assert.equal(first.total_node_count, 2);
+    const next = await f.exec('snapshot', { cursor: first.next_cursor, verbose: true });
+    assert.equal(reads, 2); assert.equal(next.snapshot_id, first.snapshot_id);
+    assert.match(next.snapshot, /Current 1/);
+    await assert.rejects(f.exec('click', { ref: old }), /stale/);
+    await f.exec('click', { ref: f.ref(first) });
+    f.api.debugger.onEvent.emit({ tabId: 9 }, 'DOM.documentUpdated');
+    await assert.rejects(f.exec('snapshot', { cursor: first.next_cursor }), /stale/);
+    assert.equal(reads, 2);
+  }
+});
+
+test('snapshot retries navigation context failures once but does not retry unrelated errors or navigation itself', async () => {
+  for (const command of ['snapshot', 'navigate']) for (const transient of [true, false]) {
+    const f = fixture(); await f.claim();
+    const send = f.api.debugger.sendCommand;
+    let reads = 0;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      if (method === 'Accessibility.getFullAXTree' && ++reads === 1) throw new Error(transient ? 'Cannot find context with specified id' : 'Accessibility is unavailable');
+      return send(target, method, args);
+    };
+    const operation = f.exec(command, command === 'navigate' ? { url: 'http://localhost:8000/new' } : {});
+    if (transient) assert.ok((await operation).snapshot);
+    else if (command === 'snapshot') await assert.rejects(operation, /Accessibility is unavailable/);
+    else assert.match((await operation).observation_error, /Accessibility is unavailable/);
+    assert.equal(reads, transient ? 2 : 1);
+    assert.equal(f.calls.filter(call => call.method === 'Page.navigate').length, command === 'navigate' ? 1 : 0);
+  }
+});
+
+test('snapshot never publishes refs or retries after control ends during capture', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'Runtime.evaluate' && args.expression.includes('width: innerWidth')) f.api.debugger.onDetach.emit(target);
+    return result;
+  };
+  await assert.rejects(f.exec('snapshot'), error => {
+    assert.equal(error.diagnostics.reason, 'control_changed'); return true;
+  });
+  assert.equal(f.calls.filter(call => call.method === 'Accessibility.getFullAXTree').length, 1);
+  f.api.debugger.sendCommand = send;
+  await f.claim();
+  await assert.rejects(f.exec('snapshot', { cursor: 'detached@1' }), /stale/);
+});
+
+test('navigate shares the observation retry cap and retries metadata without sending navigation again', async () => {
+  for (const include_snapshot of [true, false]) {
+    const f = fixture(); await f.claim();
+    const send = f.api.debugger.sendCommand;
+    let reads = 0;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      const observing = include_snapshot ? method === 'Accessibility.getFullAXTree'
+        : method === 'Runtime.evaluate' && args.expression.includes('title: document.title');
+      if (observing) {
+        reads++;
+        if (include_snapshot || reads === 1) throw new Error('Cannot find context with specified id');
+      }
+      return send(target, method, args);
+    };
+    const result = await f.exec('navigate', { url: 'http://localhost:8000/new', include_snapshot });
+    assert.equal(reads, 2);
+    if (include_snapshot) assert.match(result.observation_error, /Cannot find context/);
+    else { assert.equal(result.title, 'Destination'); assert.equal(result.observation_error, undefined); }
+    assert.equal(f.calls.filter(call => call.method === 'Page.navigate').length, 1);
+  }
+});
+
+test('ordinary snapshot has one shared 30s budget and a late capture cannot publish refs', async t => {
+  const f = fixture(); await f.claim();
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const send = f.api.debugger.sendCommand;
+  let finish, reads = 0;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Accessibility.getFullAXTree') {
+      reads++;
+      if (reads === 1) {
+        t.mock.timers.tick(29000);
+        throw new Error('Cannot find context with specified id');
+      }
+      await new Promise(resolve => { finish = resolve; });
+    }
+    return send(target, method, args);
+  };
+  const pending = f.exec('snapshot');
+  const rejected = assert.rejects(pending, error => {
+    assert.equal(error.diagnostics.reason, 'snapshot_timeout');
+    assert.equal(error.input_dispatched, false); return true;
+  });
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(50); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(reads, 2);
+  t.mock.timers.tick(950); await rejected;
+  finish(); await new Promise(resolve => setImmediate(resolve));
+  await assert.rejects(f.exec('snapshot', { cursor: 'late@1' }), /stale/);
+  assert.equal(reads, 2);
 });
 
 test('iframe navigation preserves main refs, invalidates descendant refs and scopes chooser cleanup', async () => {

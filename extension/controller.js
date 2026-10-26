@@ -1,7 +1,7 @@
 // Browser operations live here; the WebSocket transport never exposes raw CDP.
 import { createVisuals } from './visuals.js';
 import { createClickVisuals } from './click-visuals.js';
-import { createObservations } from './observation.js';
+import { createObservations, retryObservation } from './observation.js';
 import { createNavigation } from './navigation.js';
 import { createClick, clickOptions } from './click.js';
 import { createPointer } from './pointer.js';
@@ -256,20 +256,16 @@ export function createController(api, notify = () => {}) {
       uploads.forget(tabId);
       const { document: navigationDocument, ...result } = await navigation.navigate(tabId, url, args);
       const budget = deadline(NAVIGATION_OBSERVATION_TIMEOUT_MS, 'observation');
-      for (let attempt = 0; attempt < 2; attempt++) try {
+      try {
         if (args.include_snapshot === false) {
-          const metadata = value(await budget.run(() => cdp(tabId, 'Runtime.evaluate', {
+          const metadata = await retryObservation(async () => value(await budget.run(() => cdp(tabId, 'Runtime.evaluate', {
             expression: '({title: document.title, url: location.href})', returnByValue: true,
-          })));
+          }))), budget);
           return { ...result, ...metadata };
         }
         return { ...result, ...await observations.snapshot(tabId, {}, budget) };
       } catch (error) {
         observations.invalidate(tabId, 'observation_failed');
-        if (attempt === 0 && budget.remaining() > 100 && /context.*(destroyed|not found)|cannot find context|document (changed|updated)|inspected target navigated|no frame with given id/i.test(error.message)) {
-          await new Promise(resolve => setTimeout(resolve, 50));
-          continue;
-        }
         return { ...result, observation_error: error.message, observe_again: true };
       }
     }

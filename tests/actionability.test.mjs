@@ -57,7 +57,7 @@ test('a timed out preparation cannot dispatch when its CDP reply eventually arri
   finish(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(dispatched, 0);
   const sent = deadline(100); sent.dispatch();
-  await assert.rejects(sent.run(() => new Promise(() => {})), /Outcome is unknown.*never automatically replay/);
+  await assert.rejects(sent.run(() => new Promise(() => {})), /Outcome is unknown.*never automatically replay/i);
 });
 
 test('input timeouts distinguish preparation, dispatch and missing receipts without stale preparation reasons', async () => {
@@ -68,10 +68,12 @@ test('input timeouts distinguish preparation, dispatch and missing receipts with
   const sent = deadline(100);
   sent.describe('waiting for element', { reason: 'selector_not_found' }); sent.dispatch();
   await assert.rejects(sent.run(() => new Promise(() => {})), error => {
-    assert.equal(error.diagnostics.reason, 'input_timeout'); assert.equal(error.input_dispatched, true); assert.equal(error.outcome_unknown, true); return true;
+    assert.equal(error.diagnostics.reason, 'input_timeout'); assert.equal(error.input_dispatched, true); assert.equal(error.outcome_unknown, true);
+    assert.match(error.message, /browser_tab_control\(\{tab_handle, action:"activate", focus_window:true\}\).*browser_snapshot.*Activation does not prove non-delivery.*Never automatically replay/); return true;
   });
   await assert.rejects(delivery(new Promise(() => {}), 10), error => {
-    assert.equal(error.diagnostics.reason, 'delivery_unverified'); assert.equal(error.outcome_unknown, true); return true;
+    assert.equal(error.diagnostics.reason, 'delivery_unverified'); assert.equal(error.outcome_unknown, true);
+    assert.match(error.message, /browser_tab_control\(\{tab_handle, action:"activate", focus_window:true\}\).*browser_snapshot.*Activation does not prove non-delivery.*Never automatically replay/); return true;
   });
 });
 

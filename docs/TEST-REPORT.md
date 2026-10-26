@@ -1,8 +1,20 @@
 # 验证报告
 
-当前版本 **0.24.0**（2026-10-26）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.24.1**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- role 精确定位失败时，复用最后一次 AX 树生成最多 10 项名称建议，回显实际 role；同名优先、去重并标记长名称截断，不解析或操作建议目标。非法 CSS 的原始解析错误保留，附带原生 CSS 与 role/label/placeholder 替代提示。
+- 原生回执丢失及派发超时提示显式 activate → snapshot → 重新定位，并明确激活不证明之前未送达，不能自动重放；fill_selection_lost 提示可显式选择 click/Control+A/focused type，仍在插入前停止，不自动改用键盘或 DOM 模式。
+- full/interactive/fields 新观察共享 30 秒总预算，文档或导航上下文竞态最多重读一次，与 navigate 元数据观察共用有界重试；导航本身不重发，cursor 不重采集。发布 refs 前检查同一 claim 和文档身份；持续变化、控制结束、预算耗尽及迟到读取均不发布失败采集的 refs。
+- npm test：301 项通过。覆盖 role 误填名称、错误角色、候选去重/数量/长度/空名称；CSS 原始错误和替代提示；未知输入不激活或补发；观察重试上限、共享预算、分页、fields 重新采集、控制结束和迟到读取，以及导航观察不重发。
+- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 420 次调用、40 项检查通过。新增真实 link 被误填为 button/selector 名称时的诊断、Playwright CSS 提示传递且无补点；采集 AX 后的同文档导航触发一次完整重读，返回变化后的控件和 URL；选区丢失后显式 click/Control+A/focused type 恢复并读回核验。保留 12,000 节点大页面、OOPIF、原生回执及多行 fill 等回归。记录见 test-results/npm-live-chromium.json、npm-live-edge.json。
+- npm run test:package：62 个发布文件、23 个 stdio MCP 工具；包外安装及独立扩展目录通过，不含生成的配对密钥。
+- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.1 / ready；稳定扩展目录 F:/.nosis/browser-attach/extension 的 manifest 版本与身份一致，其余 43 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
+- 本次为可靠性与诊断修复，版本递增至 0.24.1；无新增工具、输入参数、依赖或权限。新增 diagnostics.hint/suggestions/omitted_suggestions 及观察错误原因，现有精确定位和输入结果语义保持。
+- 剩余边界：持续导航或超过预算仍可能观察失败，名称建议不证明目标唯一；激活与送达回执均不证明业务成功。编辑器模型写入、CM6 模型读取和 type 控制字符输入未扩展；键盘恢复需调用方明确选择并核验内容。本轮不操作真实业务账户。
+
+## 0.24.0 验证
 
 - 独立验证：在 0.23.6 临时 Profile 上，Chromium 156 与 Edge 155 各通过 3 组基线：sticky 遮挡经显式居中后可点击、06 已被页面保留为 6 但默认 fill 核验失败、明确 controls ID 可限定根部 portal 的重复选项。记录见 test-results/preparation-baseline-*.json。
 - pointer.prepare 在本次输入尚未派发时，遇到元素或祖先 frame 遮挡可额外即时居中一次，复用总预算并对同一节点重查命中及 frame 边界。持续遮挡仍失败；坐标、只读 actionable 和拖拽按下后的目的端不执行居中补救。

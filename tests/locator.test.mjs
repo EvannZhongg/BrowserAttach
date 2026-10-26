@@ -41,6 +41,55 @@ test('ambiguity previews bound candidate count and text without losing total mat
   });
 });
 
+test('invalid CSS preserves the parser failure and provides semantic alternatives without translating the selector', () => {
+  const queries = [];
+  const query = vm.runInNewContext(`(${queryElement.toString()})`, { document: {
+    querySelectorAll: selector => { queries.push(selector); throw new Error('Invalid selector syntax'); },
+    evaluate: () => { throw new Error('Invalid XPath'); },
+  }, XPathResult: { ORDERED_NODE_SNAPSHOT_TYPE: 7 } });
+  assert.throws(() => query('button:has-text("Claim")'), error => {
+    assert.equal(error.diagnostics.reason, 'selector_invalid');
+    assert.match(error.message, /Invalid selector syntax.*browser-native CSS.*Playwright.*selector_type="role".*actual AX role.*label.*placeholder/);
+    assert.match(error.diagnostics.hint, /browser_snapshot/); return true;
+  });
+  assert.deepEqual(queries, ['button:has-text("Claim")']);
+  assert.throws(() => query('bad xpath', 'xpath'), error => {
+    assert.equal(error.message, 'Invalid XPath'); assert.equal(error.diagnostics.hint, undefined); return true;
+  });
+});
+
+test('role failure suggests bounded accessible-name matches without resolving or acting on them', async () => {
+  const nodes = [
+    { nodeId: 'partial', backendDOMNodeId: 1, role: { value: 'button' }, name: { value: 'Claim reward' } },
+    { nodeId: 'exact', backendDOMNodeId: 2, role: { value: 'link' }, name: { value: 'Claim' } },
+    { nodeId: 'hidden', backendDOMNodeId: 3, ignored: true, role: { value: 'link' }, name: { value: 'Claim hidden' } },
+    { nodeId: 'no-dom', role: { value: 'link' }, name: { value: 'Claim no DOM' } },
+    { nodeId: 'duplicate', backendDOMNodeId: 2, role: { value: 'link' }, name: { value: 'Claim' } },
+    ...Array.from({ length: 15 }, (_, i) => ({ nodeId: `long-${i}`, backendDOMNodeId: 10 + i, role: { value: 'link' }, name: { value: `Claim ${'x'.repeat(200)}${i}` } })),
+  ];
+  const sessions = { frames: async () => [{ id: 'child' }], target: () => ({ tabId: 1 }) };
+  const calls = [];
+  const cdp = async (target, method) => { calls.push(method); return { nodes }; };
+  for (const args of [{ selector: 'Claim' }, { selector: 'button', name: 'cLaIm' }]) {
+    await assert.rejects(resolveSelector(cdp, r => r.result?.value, sessions, 1, { selector_type: 'role', ...args }, deadline(100)), error => {
+      assert.equal(error.input_dispatched, false);
+      assert.equal(error.diagnostics.reason, 'selector_not_found');
+      assert.equal(error.diagnostics.frame_id, 'child');
+      assert.equal(error.diagnostics.suggestions.length, 10);
+      assert.equal(error.diagnostics.omitted_suggestions, 7);
+      assert.deepEqual(error.diagnostics.suggestions[0], { role: 'link', name: 'Claim' });
+      assert.equal(error.diagnostics.suggestions[2].name.length, 120);
+      assert.equal(error.diagnostics.suggestions[2].name_truncated, true);
+      assert.match(error.message, /selector is the actual AX role.*name is the exact accessible name.*diagnostic only/);
+      return true;
+    });
+  }
+  await assert.rejects(resolveSelector(cdp, r => r.result?.value, sessions, 1, { selector_type: 'role', selector: 'button', name: '' }, deadline(100)), error => {
+    assert.deepEqual(error.diagnostics.suggestions, []); return true;
+  });
+  assert.ok(calls.length > 0 && calls.every(method => method === 'Accessibility.getFullAXTree'));
+});
+
 test('selector preparation waits for a later-rendered option, but never retries ambiguity or dispatches input', async () => {
   let samples = 0;
   const calls = [];
