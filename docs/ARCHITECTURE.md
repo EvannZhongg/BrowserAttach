@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.23.6**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.24.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -113,12 +113,14 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **可选输入参数**：显式 offset 在元素 content quad 上插值后沿用命中与 OOPIF 边界检查；settle_ms 在 click/drag 首次派发前等待并复查就绪。drag trajectory 只替换既有插值段，采用法向控制点、平滑进度及随机间隔权重；type 的 delay_ms 可逐间隔独立区间采样。所有等待共用总预算，超时后没有继续派发的链；省略参数时不使用随机数，沿用既有确定性路径。不新增 tab 级历史、冷却、自动激活或重放路径。
 - **条件等待**：wait 复用严格 selector、可操作性和命中检查，支持出现、无匹配、可见、可操作、字段值精确相等、checked/selected/expanded、文本/URL 子串及网络空闲。控件优先读取明确的原生属性，否则读取对应 ARIA 属性；缺失/无效状态保持 unavailable，不当作 false。字段值不回显；文本使用 innerText，比较在 500 字符预览截取前完成。每次只读轮询重新解析 selector，可在节点替换时重读，歧义立即失败；AX 无匹配不证明 DOM 移除。单步与 batch 共享条件 schema 和参数校验，等待超时不改变前序动作的派发事实。
 - **可操作性诊断**：区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only 和 unstable_geometry；无可见落点单独返回 no_visible_click_point。失败时最多采集 8 层 composed 祖先的样式、滚动方向和 transition 属性/时长，成功路径保留原有几何就绪语义；不以 opacity=0 拒绝输入，不自动 hover、移除遮挡或等待推断出的组件状态。
+- **派发前居中**：pointer.prepare 在 obstructed/frame_obstructed 且预算尚未派发输入时，对同一元素额外 scrollIntoView({block:center,inline:nearest,behavior:instant}) 一次，复用原预算并重跑完整准备与 frame 命中检查，不递归尝试。scroll=false、坐标输入和拖拽按下后的目的端不使用该补救；原有滚入视口与输入回执边界不变。
+- **显式保留值**：fill 可用 expected_value 替代 text 作为现有文本核验函数的输入，prepareFill/insertText 仍使用 text。verification_basis 区分来源，不回显内容；不增加格式猜测、异步等待或 blur。fillOptions 统一校验单步、MCP 与 batch 预检，未指定时保持原有精确比较及 contenteditable 容差。
 - **原生下拉**：select_option 不要求可见或稳定几何，先只读核对节点、禁用/inert 祖先与唯一选项，再在一次派发中复查并用 selectedIndex setter 和合成 input/change 设置，核验保留结果并返回 events_trusted=false。单步和 batch 共用实现。native click 的 select 命中（含 UA shadow 内部节点和关联 label）在派发前拒绝。
 - **命中提示**：普通命中保留实际 hit node，沿父元素、Shadow host、slot 查找最近的 HTML/ARIA 可点击候选，返回 clickable_target；hint=false 表示未识别候选，不代表无法响应事件。CSSPseudoElement 先解析为事件所属的 originating element，提示标记 pseudo_element=true，并使用该元素安装事件校验。语义候选不会被用于替换点击目标。
 - **遮挡失败诊断**：当前 frame 的遮挡直接复用已读取的 hit_target；祖先 frame 遮挡额外用至多 200 ms 读取命中描述，诊断节点消失时保留原遮挡错误与 backend node ID。命中元素与最近可点击祖先均附 tag/id/classes，classes 至多 8 项、每项 100 字符，只作当次身份线索，不生成唯一 selector 或替换目标。错误包含命中点和受阻 frame。根据共享预算的派发状态区分“未派发”和“结果未知”，避免 drag 按住后准备目的节点时误报零输入。
 - **滚动查找诊断**：until 未命中或中断时保留 isError，以 scroll_search_stopped 和 stop_reason 区分预算、步数、文档/frame/控制权变化及其他异常；记录已确认的滚动次数、最后结果和是否有未确认调用。一次无位移只作为 boundary_observed 证据，继续只读等待列表增长，不声明数据到底。超时后不接续循环或重发滚动。
 - **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
-- **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。value_verified 表示字段文本写入；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
+- **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。value_verified 表示字段保留文本与核验预期一致；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
 - **有限多步输入**：batch 在现有标签队列内执行 1–20 步 click/fill/type/press_key/hover/scroll/select_option/wait，共享至多 30 秒预算，每步可另设更短超时；不增加后台任务、循环或脚本引擎；元素目标使用每步重新解析的 selector，type 也接受 focused=true。所有参数先验证，selector 每步重解析，尚未出现的目标只在准备阶段等待；歧义立即报错。首个失败、主文档变化或接管结束后停止，返回此前结果与失败索引；不回滚、不重放、不自动激活或切换输入模式。start_at 显式跳过已完成前缀，返回 failed_step、next_unattempted_step、retry_failed_step_safe；没有后台作业或自动选择续跑点。
 - **OOPIF 坐标**：点击从顶层派发。逐层用 `DOM.getBoxModel` 把坐标换算到祖先文档，并用 `DOM.getNodeForLocation` 确认该位置确实落在 frame owner 上，防止祖先页面的遮挡被跳过。
 - **命中对象**：伪元素先解析 originating Element；ShadowRoot 通过其 elementFromPoint 重新取得实际命中 Element，同进程子 frame 先把 session 坐标映射到所属文档视口。不将 ShadowRoot 直接当 Element 或无条件改成 host。后续身份、遮挡和事件回执检查保持一致；命中描述附带 frame-local rect 和样式诊断。

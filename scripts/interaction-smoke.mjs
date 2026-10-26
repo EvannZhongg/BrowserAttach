@@ -14,7 +14,7 @@ import { startHub } from '../src/hub.mjs';
 import { AttachClient } from '../src/client.mjs';
 import { normalizeHit } from '../extension/pointer.js';
 
-const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
 if (!values.executable) throw new Error('Pass --executable PATH to a browser that permits --load-extension');
 const dir = await mkdtemp(join(tmpdir(), 'attach-interaction-'));
 const rows = Array.from({ length: 200 }, (_, i) => `<li>Row ${i+1}: alpha beta gamma delta epsilon</li>`).join('');
@@ -88,7 +88,71 @@ try {
  const focus = () => evaluate(`chrome.windows.getAll({populate:true}).then(w=>w.map(x=>({id:x.id,focused:x.focused,state:x.state,active:x.tabs.filter(t=>t.active).map(t=>t.id)})).sort((a,b)=>a.id-b.id))`);
  await evaluate(`chrome.tabs.update(${cover.id},{active:true})`);await pause(250);
  const operationsFocus=await focus();
- if (values.issues) {
+ if (values.preparation) {
+  const call=(method,args={})=>client.call(method,{...h,...args});
+  await page(`(() => {
+    const section=document.createElement('section');section.id='preparation';
+    section.innerHTML='<div style="height:1000px"></div><button id="prep-target" style="width:160px;height:40px">Preparation submit</button><div style="height:1000px"></div><div id="prep-footer" style="position:fixed;bottom:0;left:0;right:0;height:180px;z-index:9999;background:gray">Sticky footer</div>';
+    document.body.append(section);window.prepClicks=[];
+    document.querySelector('#prep-target').onclick=e=>prepClicks.push(e.isTrusted);
+    const r=document.querySelector('#prep-target').getBoundingClientRect();scrollTo({top:scrollY+r.top-innerHeight+60,behavior:'instant'});
+  })()`);
+  assert.equal((await call('click',{selector:'#prep-target'})).delivery_verified,true);
+  assert.deepEqual(await page('prepClicks'),[true]);
+  const targetRef=(await call('snapshot',{query:'Preparation submit'})).snapshot.match(/\[([^\]]+)\] button/)[1];
+  await page(`(() => { const r=document.querySelector('#prep-target').getBoundingClientRect();scrollTo({top:scrollY+r.top-innerHeight+60,behavior:'instant'}); })()`);
+  assert.equal((await call('click',{ref:targetRef})).delivery_verified,true);
+  assert.deepEqual(await page('prepClicks'),[true,true]);
+  await page(`(() => { const cover=document.createElement('div');cover.id='prep-cover';cover.style='position:fixed;inset:0;z-index:10000';document.body.append(cover); })()`);
+  await assert.rejects(call('click',{selector:'#prep-target'}),error=>error.input_dispatched===false&&error.diagnostics.reason==='obstructed');
+  assert.deepEqual(await page('prepClicks'),[true,true]);
+  await page(`document.querySelector('#prep-cover').remove()`);
+  results.cases.push({scenario:'bounded_center_before_selector_and_ref_click_full_overlay_still_blocks',clicks:await page('prepClicks')});
+  await page(`document.querySelector('#preparation').remove()`);
+
+  await page(`(() => {
+    const wrapper=document.createElement('div');wrapper.id='prep-wrapper';wrapper.style='position:fixed;top:100px;left:400px;width:350px;height:240px';
+    wrapper.innerHTML='<div id="prep-nested" style="height:240px;overflow:auto"><div style="height:500px"></div><button id="prep-inner" style="height:40px">Nested submit</button><div style="height:500px"></div></div><div style="position:absolute;bottom:0;width:100%;height:100px;z-index:9;background:gray">Nested footer</div>';
+    document.body.append(wrapper);window.nestedClicks=0;document.querySelector('#prep-inner').onclick=()=>nestedClicks++;
+    document.querySelector('#prep-nested').scrollTop=300;
+  })()`);
+  await call('click',{selector:'#prep-inner'});assert.equal(await page('nestedClicks'),1);
+  assert.ok(await page('document.querySelector("#prep-nested").scrollTop>300'));
+  results.cases.push({scenario:'nested_container_center_avoids_footer',clicks:await page('nestedClicks')});
+  await page(`document.querySelector('#prep-wrapper').remove()`);
+
+  await page(`(() => {
+    const input=document.createElement('input');input.id='prep-format';input.setAttribute('aria-label','Preparation month');document.body.append(input);
+    window.prepInputs=0;input.oninput=()=>{prepInputs++;input.value=String(Number(input.value))};
+  })()`);
+  await assert.rejects(call('fill',{selector:'#prep-format',text:'06'}),error=>error.diagnostics.reason==='value_not_retained');
+  assert.equal(await page('document.querySelector("#prep-format").value'),'6');assert.equal(await page('prepInputs'),1);
+  for(const mode of ['native','dom']){
+    const filled=await call('fill',{selector:'#prep-format',text:'06',expected_value:'6',mode});
+    assert.equal(filled.value_verified,true);assert.equal(filled.verification_basis,'expected_value');
+  }
+  const formattedBatch=await call('batch',{steps:[{action:'fill',selector:'#prep-format',text:'06',expected_value:'6'},{action:'wait',selector:'#prep-format',condition:'value',expected:'6'}]});
+  assert.equal(formattedBatch.completed,true);
+  await assert.rejects(call('fill',{selector:'#prep-format',text:'06',expected_value:'7'}),error=>error.diagnostics.reason==='value_not_retained'&&error.diagnostics.verification_basis==='expected_value');
+  assert.equal(await page('prepInputs'),5);
+  await page(`document.querySelector('#prep-format').oninput=()=>prepInputs++`);
+  const exact=await call('fill',{selector:'#prep-format',text:'06'});assert.equal(exact.verification_basis,'text');
+  assert.equal(await page('document.querySelector("#prep-format").value'),'06');
+  results.cases.push({scenario:'explicit_expected_value_native_dom_batch_mismatch_no_replay_default_leading_zeros',inputs:await page('prepInputs')});
+  await page(`document.querySelector('#prep-format').remove()`);
+
+  await page(`(() => {
+    const section=document.createElement('section');section.id='prep-related';
+    section.innerHTML='<input role="combobox" aria-label="Preparation source" aria-expanded="true" aria-controls="prep:portal"><div id="prep:other" role="listbox"><button role="option">China</button></div><div id="prep:portal" role="listbox"><button role="option">China</button></div>';
+    document.body.append(section);window.prepPicked=[];for(const b of section.querySelectorAll('button'))b.onclick=()=>prepPicked.push(b.parentElement.id);
+  })()`);
+  await assert.rejects(call('click',{selector:'[role="option"]'}),error=>error.diagnostics.reason==='selector_ambiguous');
+  const field=(await call('snapshot',{profile:'fields',query:'Preparation source'})).fields[0];
+  assert.deepEqual(field.ax.controls,['prep:portal']);
+  const scoped=await page(`'#'+CSS.escape(${JSON.stringify(field.ax.controls[0])})+' [role="option"]'`);
+  await call('click',{selector:scoped});assert.deepEqual(await page('prepPicked'),['prep:portal']);
+  results.cases.push({scenario:'explicit_portal_id_scopes_duplicate_options_with_existing_tools',selector:scoped});
+ } else if (values.issues) {
   await client.call('activate_tab',h);
   const call=(method,args={})=>client.call(method,{...h,...args});
   const shadow=await call('click',{selector_type:'role',selector:'button',name:'Shadow submit'});
@@ -832,13 +896,13 @@ try {
  assert.equal(fragment.same_document,true);assert.equal(fragment.snapshot,undefined);assert.equal(fragment.url,base+'/slow#fragment');
  }
  results.browser=browserInfo.user_agent;results.extension_version=browserInfo.extension_version;
- console.log(JSON.stringify({issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
+ console.log(JSON.stringify({preparation:values.preparation?results.cases:undefined,issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
   hover:results.cases.find(c=>c.scenario==='hover_shift_30px'),navigation:results.navigation}));
  if(claim)await client.call('release_tab',{tab_handle:claim.tab_handle});claim=null;
 } finally {
  if(claim)await client?.call('release_tab',{tab_handle:claim.tab_handle}).catch(()=>{});
  await client?.close();await closeBrowser?.().catch(()=>{});ws?.terminate();browser.kill();await hub.close();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));
  await mkdir(join(ROOT,'test-results'),{recursive:true});
-  await writeFile(join(ROOT,'test-results',`${values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
+  await writeFile(join(ROOT,'test-results',`${values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
  await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100}).catch(()=>{});
 }

@@ -431,8 +431,18 @@ try {
   assert.equal(formatError.diagnostics.reason, 'value_not_retained');
   assert.equal(formatError.input_dispatched, true); assert.equal(formatError.post_action.delivery, 'unknown');
   assert.equal((await evaluate(`document.querySelector('#format-probe').dataset.inputs`)).value, '1');
+  for (const mode of ['native', 'dom']) {
+    const retained = await call('fill', { ...handle, selector: '#format-probe', text: '1234', expected_value: '1,234', mode });
+    assert.equal(retained.value_verified, true); assert.equal(retained.verification_basis, 'expected_value');
+  }
+  const retainedBatch = await call('batch', { ...handle, steps: [
+    { action: 'fill', selector: '#format-probe', text: '1234', expected_value: '1,234' },
+    { action: 'wait', selector: '#format-probe', condition: 'value', expected: '1,234' },
+  ] });
+  assert.equal(retainedBatch.completed, true);
+  assert.equal((await evaluate(`document.querySelector('#format-probe').dataset.inputs`)).value, '4');
   await evaluate(`document.querySelector('#format-probe').remove()`);
-  checks.push('native fill formatting mismatch reports value_not_retained with unknown-outcome evidence and one input event');
+  checks.push('fill default mismatch never replays; explicit expected_value verifies native/DOM/batch formatting through stdio MCP');
   await evaluate(`(()=>{const e=document.createElement('div');e.id='rich-fill-probe';e.contentEditable='true';e.setAttribute('role','textbox');e.style='white-space:normal;min-height:30px';e.oninput=event=>{e.dataset.inputs=String(Number(e.dataset.inputs||0)+1);e.dataset.trusted=String(event.isTrusted)};document.body.append(e)})()`);
   for (const text of [' leading and trailing ', 'first\r\nsecond', 'first\rsecond', '中文🙂\n第二行', 'Line one\n\nLine two', 'a\n\n\nb', 'a\n', '\na', '\n\n', '', 'replacement']) {
     await evaluate(`document.querySelector('#rich-fill-probe').dataset.inputs='0'`);

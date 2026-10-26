@@ -1,8 +1,21 @@
 # 验证报告
 
-当前版本 **0.23.6**（2026-10-26）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.24.0**（2026-10-26）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 独立验证：在 0.23.6 临时 Profile 上，Chromium 156 与 Edge 155 各通过 3 组基线：sticky 遮挡经显式居中后可点击、06 已被页面保留为 6 但默认 fill 核验失败、明确 controls ID 可限定根部 portal 的重复选项。记录见 test-results/preparation-baseline-*.json。
+- pointer.prepare 在本次输入尚未派发时，遇到元素或祖先 frame 遮挡可额外即时居中一次，复用总预算并对同一节点重查命中及 frame 边界。持续遮挡仍失败；坐标、只读 actionable 和拖拽按下后的目的端不执行居中补救。
+- fill 和 batch fill 增加 expected_value，写入仍使用 text，核验复用现有函数；verification_basis 区分 text/expected_value，不自动归一化、不 blur、不等待异步格式化，失败不补发。默认字段和 contenteditable 容差保持原状。
+- 弹层定位沿用 controls/owns ID 与严格 CSS/XPath/元素 ref 的组合；补充定位示例及特殊 ID 转义、歧义和重新观察的边界。
+- npm test：293 项通过。覆盖居中次数上限、scroll=false、已派发阶段、持续遮挡、节点脱离、超时迟到不接续；显式预期值/空字符串、默认比较、不回显值、不重放和 batch 完整预检；MCP 单步及 batch 参数透传。
+- Chromium 156 与 Edge 155 headless preparation 专项各 4 组通过：selector/ref 的 sticky 遮挡、嵌套滚动容器、整页覆盖层仍拦截、native/DOM/batch 的格式化核验与错误预期、默认保留前导零，以及重复 portal 选项的明确关联定位。记录见 test-results/preparation-*.json。
+- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 402 次调用、38 项检查通过；增加 expected_value 在真实 native/DOM/batch 填写中的参数透传和保留值核验，保留 OOPIF 遮挡、原生回执和已有输入回归。
+- npm run test:package：包外安装与 stdio MCP 通过，62 个发布文件、23 个工具，无生成配对密钥；新增可选参数与返回字段，现有未指定 expected_value 的调用保持原有核验规则。工具能力扩展按次版本递增至 0.24.0。
+- 本机部署：按本次交付要求 stop/start 重启 Hub，Hub 与 Chrome/Edge 扩展均为 0.24.0 / ready；稳定扩展目录的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
+- 剩余边界：一次居中无法解决所有遮挡；expected_value 验证当时保留文本，不证明输入送达、blur 校验或业务保存；关联缺失、多个目标或重建时仍需重新观察。未操作真实业务表单。
+
+## 0.23.6 验证
 
 - 快照 full/interactive 与 fields 共用弹层语义提取：保留浏览器提供的 hasPopup、expanded 和已解析 controls/owns DOM idrefs，不猜测归属或增加 ref。
 - 上传将命令回执与 FileList 读回分层：assignment_acknowledged、requested_count、observed_count、count_verified；同步消费/重置不再当作赋值失败，读回不可用附 observation_error，赋值本身超时仍报未知结果且不补发。

@@ -31,6 +31,23 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     } finally { clearTimeout(timer); }
   }
   async function prepare(tabId, node, args) {
+    const budget = args.budget || deadline(args.timeout_ms);
+    try { return await prepareOnce(tabId, node, { ...args, budget }); }
+    catch (error) {
+      if (!node || args.scroll === false || budget.has_dispatched() || error.input_dispatched !== false ||
+          !['obstructed', 'frame_obstructed'].includes(error.diagnostics?.reason)) throw error;
+      // Chromium may leave a visible target behind a sticky overlay. Recenter
+      // once before input, then repeat every hit/frame check on the same node.
+      budget.describe?.('one bounded centering scroll', { reason: 'preparation_timeout', frame_id: node.frameId });
+      value(await budget.run(() => cdp(node.target, 'Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
+        functionDeclaration: `function() {
+          if (!this.isConnected) throw new Error('Element detached before centering; no input was dispatched.');
+          this.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
+        }` })));
+      return prepareOnce(tabId, node, { ...args, budget, scroll: false });
+    }
+  }
+  async function prepareOnce(tabId, node, args) {
     offsetOption(args);
     if (!!node === (args.x != null || args.y != null)) throw new Error('Provide either ref/selector or x/y');
     if (args.coordinate_space != null && !['viewport', 'document'].includes(args.coordinate_space)) throw new Error('coordinate_space must be viewport or document');

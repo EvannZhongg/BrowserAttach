@@ -10,6 +10,12 @@ export function inputMode(args) {
   return mode;
 }
 
+export function fillOptions(args) {
+  if (typeof args.text !== 'string') throw new Error('fill requires text');
+  if (args.expected_value !== undefined && typeof args.expected_value !== 'string') throw new Error('expected_value must be a string');
+  return inputMode(args);
+}
+
 async function bounded(operation, message, ms = 5000) {
   let timer;
   try { return await Promise.race([operation, new Promise((resolve, reject) => {
@@ -116,8 +122,9 @@ export function createInput(cdp, value, sessions) {
   }
 
   async function fill(tabId, node, args) {
-    if (!node || typeof args.text !== 'string') throw new Error('fill requires ref or selector, and text');
-    const mode = inputMode(args);
+    const mode = fillOptions(args);
+    if (!node) throw new Error('fill requires ref or selector');
+    const expected = args.expected_value ?? args.text, basis = args.expected_value == null ? 'text' : 'expected_value';
     const budget = args.budget || deadline(args.timeout_ms), target = node.target;
     const send = (method, params) => budget.run(() => cdp(target, method, params));
     await waitForTarget(cdp, value, target, node, budget, { editable: true });
@@ -133,11 +140,11 @@ export function createInput(cdp, value, sessions) {
       await send('Input.insertText', { text: args.text });
     }
     const matches = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
-      functionDeclaration: verifyFill.toString(), arguments: [{ value: args.text }, { value: mode }] }));
-    if (matches !== true) throw Object.assign(new Error(`Fill did not retain the requested text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Outcome is unknown. ${BUSY}`), {
-      outcome_unknown: true, diagnostics: { reason: 'value_not_retained', frame_id: node.frameId },
+      functionDeclaration: verifyFill.toString(), arguments: [{ value: expected }, { value: mode }] }));
+    if (matches !== true) throw Object.assign(new Error(`Fill did not retain the expected text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Outcome is unknown. ${BUSY}`), {
+      outcome_unknown: true, diagnostics: { reason: 'value_not_retained', frame_id: node.frameId, verification_basis: basis },
     });
-    return { filled: true, method: mode, value_verified: true, ...(mode === 'dom' ? { events_trusted: false } : {}), application_result: 'not_checked', observe_again: true };
+    return { filled: true, method: mode, value_verified: true, verification_basis: basis, ...(mode === 'dom' ? { events_trusted: false } : {}), application_result: 'not_checked', observe_again: true };
   }
 
   async function domClick(tabId, node, args) {

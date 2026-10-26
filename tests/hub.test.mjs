@@ -313,6 +313,12 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
     assert.ok(!(await call(name,{tab_handle:handle,...input})).isError);
     assert.ok(f.requests.some(r=>r.command===name));
   }
+  for (const expected_value of ['6', '']) {
+    await call('fill', { tab_handle: handle, selector: '#month', text: '06', expected_value });
+    assert.equal(f.requests.at(-1).arguments.expected_value, expected_value);
+    await call('batch', { tab_handle: handle, steps: [{ action: 'fill', selector: '#month', text: '06', expected_value }] });
+    assert.equal(f.requests.at(-1).arguments.steps[0].expected_value, expected_value);
+  }
   for(const input of [{text:'bad\nline',selector:'input'},{text:'x',selector:'input',delay_ms:-1}])assert.equal((await call('type',{tab_handle:handle,...input})).isError,true);
   for (const [name, input] of [
     ['click', { selector: '#go', offset: { x_ratio: .25, y_ratio: .75 }, settle_ms: [80, 250] }],

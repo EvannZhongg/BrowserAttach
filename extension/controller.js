@@ -5,7 +5,7 @@ import { createObservations } from './observation.js';
 import { createNavigation } from './navigation.js';
 import { createClick, clickOptions } from './click.js';
 import { createPointer } from './pointer.js';
-import { createInput, inputMode, selectOptions, typeOptions } from './input.js';
+import { createInput, inputMode, fillOptions, selectOptions, typeOptions } from './input.js';
 import { createEvaluations } from './evaluate.js';
 import { targetOptions, resolveSelector, resolveFrame } from './locator.js';
 import { readText } from './text.js';
@@ -274,7 +274,8 @@ export function createController(api, notify = () => {}) {
       }
     }
     // Re-resolve backend identity for every action; document/frame events expire refs.
-    if (command === 'click' || command === 'fill') inputMode(args);
+    if (command === 'click') inputMode(args);
+    if (command === 'fill') fillOptions(args);
     if (command === 'select_option') selectOptions(args);
     if (command === 'type') typeOptions(args);
     if (command === 'scroll') scrollOptions(args);

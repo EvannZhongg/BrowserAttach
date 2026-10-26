@@ -8,7 +8,7 @@ import { validateFiles } from './upload.mjs';
 import { dragOptions } from '../extension/drag.js';
 import { waitOptions, WAIT_CONDITIONS } from '../extension/wait.js';
 import { scrollOptions } from '../extension/scroll.js';
-import { selectOptions, typeOptions } from '../extension/input.js';
+import { fillOptions, selectOptions, typeOptions } from '../extension/input.js';
 import { targetOptions } from '../extension/locator.js';
 import { fetchOptions } from '../extension/fetch.js';
 import { clickOptions } from '../extension/click.js';
@@ -139,7 +139,7 @@ export function createMcp(client) {
     if (args.kind === 'network' && args.level != null) throw new Error('level is only valid for kind=console');
     return args;
   });
-  tool('click', 'Click one ref, selector or x/y; element targets auto-scroll. An unmodified left single click may target an inactive tab. Native target_verified=true requires an explicit element target; coordinates return null and verify trusted delivery to the coordinate hit only. native select hits require select_option.', {
+  tool('click', 'Click one ref, selector or x/y; element targets auto-scroll. Native element preparation may center once if covered, before any input, then recheck all hits; persistent overlays still fail. An unmodified left single click may target an inactive tab. Native target_verified=true requires an explicit element target; coordinates return null and verify trusted delivery to the coordinate hit only. native select hits require select_option.', {
     ...offset, ...settle,
     ...handle, ...inputTimeout, ...target, button: z.enum(['left', 'middle', 'right']).default('left'), click_count: z.union([z.literal(1), z.literal(2)]).default(1), modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).default([]), x: z.number().optional(), y: z.number().optional(), coordinate_space: z.enum(['viewport', 'document']).optional().describe('Coordinates only; document scrolls the top-level page first.'), mode: z.enum(['native', 'dom']).default('native').describe('DOM click requires an element target and a left single click without modifiers.'),
   }, null, args => {
@@ -166,7 +166,8 @@ export function createMcp(client) {
   }, null, args => { targetOptions(args); selectOptions(args); return args; });
   const focused = { focused: z.literal(true).optional().describe('Alternative to ref/selector: pin the currently focused editable element without refocusing it. Stops if focus changes.') };
   tool('type', 'Type printable characters at the current selection using trusted key events, without clearing the field. Choose ref, selector or focused=true. Stops on lost focus or detachment.', { ...handle, ...inputTimeout, ...target, ...focused, text: z.string().max(10000), delay_ms: typeDelay }, null, args => { targetOptions(args, { focused: true }); typeOptions(args); return args; });
-  tool('fill', 'Replace input/textarea/contenteditable text. Native mode focuses/selects and inserts text without character keydown; DOM mode sets text with visible line breaks without focus and emits input/change. Native contenteditable verification temporarily selects its contents, reads browser-selected plain text and restores the selection; DOM verifies innerText. CRLF/CR count as LF; NBSP may retain a requested space in either mode. Does not blur or commit dropdown selections.', { ...handle, ...inputTimeout, ...target, text: z.string(), mode: z.enum(['native', 'dom']).default('native') }, null, args => { targetOptions(args); return args; });
+  const expectedValue = { expected_value: z.string().optional().describe('Explicit expected retained text after page formatting; default is text. Changes verification only, never the inserted text. No automatic numeric/date normalization or waiting for blur/async formatting.') };
+  tool('fill', 'Replace input/textarea/contenteditable text. Native mode focuses/selects and inserts text without character keydown; DOM mode sets text with visible line breaks without focus and emits input/change. Verifies expected_value when supplied, otherwise text; verification_basis reports which. Native contenteditable verification temporarily selects its contents, reads browser-selected plain text and restores the selection; DOM verifies innerText. CRLF/CR count as LF; NBSP may retain a requested space in either mode. Does not blur or commit dropdown selections.', { ...handle, ...inputTimeout, ...target, text: z.string(), ...expectedValue, mode: z.enum(['native', 'dom']).default('native') }, null, args => { targetOptions(args); fillOptions(args); return args; });
   const batchTarget = { ...selector, selector: z.string().min(1).max(10000), ...frameScope, nth: target.nth };
   const scrollFields = { until: z.object({ text: z.string().min(1).max(2000), selector: z.string().min(1).optional() }).strict().optional(), max_steps: integerRange('max_steps', 1, 500).default(100), mode: z.enum(['dom', 'wheel']).default('dom'), delta_y: z.number().optional().describe('Positive scrolls down.'), delta_x: z.number().default(0), x: z.number().optional(), y: z.number().optional() };
   const stepOptions = { timeout_ms: integerRange('step timeout_ms', 100, 30000).optional(), dialog_policy: z.enum(['ask', 'accept', 'dismiss']).optional() };
@@ -176,7 +177,7 @@ export function createMcp(client) {
       z.object({ action: z.literal('click'), ...stepOptions, ...batchTarget, mode: z.enum(['native', 'dom']).default('native'),
         ...offset, ...settle,
         button: z.enum(['left', 'middle', 'right']).default('left'), click_count: z.union([z.literal(1), z.literal(2)]).default(1), modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).default([]) }).strict(),
-      z.object({ action: z.literal('fill'), ...stepOptions, ...batchTarget, text: z.string(), mode: z.enum(['native', 'dom']).default('native') }).strict(),
+      z.object({ action: z.literal('fill'), ...stepOptions, ...batchTarget, text: z.string(), ...expectedValue, mode: z.enum(['native', 'dom']).default('native') }).strict(),
       z.object({ action: z.literal('type'), ...stepOptions, ...batchTarget, selector: selector.selector, ...focused, text: z.string().max(10000), delay_ms: typeDelay }).strict(),
       z.object({ action: z.literal('hover'), ...stepOptions, ...batchTarget, ...offset }).strict(),
       z.object({ action: z.literal('select_option'), ...stepOptions, ...batchTarget, value: z.string().optional(), label: z.string().optional(), index: integerRange('index', 0, Number.MAX_SAFE_INTEGER).optional() }).strict(),

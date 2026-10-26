@@ -1,6 +1,6 @@
 import { targetOptions, frameOptions } from './locator.js';
 import { clickOptions } from './click.js';
-import { inputMode, keyParameters, selectOptions, typeOptions } from './input.js';
+import { inputMode, fillOptions, keyParameters, selectOptions, typeOptions } from './input.js';
 import { scrollOptions } from './scroll.js';
 import { waitOptions } from './wait.js';
 import { offsetOption } from './motion.js';
@@ -23,10 +23,10 @@ export function validateSteps(steps, startAt = 0) {
     } else {
       if ((!step.selector && !(step.action === 'type' && step.focused === true)) || step.ref != null) throw new Error('Batch element actions require selector; type also accepts focused=true');
       targetOptions(step, { focused: step.action === 'type' });
-      if (['click', 'fill'].includes(step.action)) inputMode(step);
+      if (step.action === 'click') inputMode(step);
       if (step.action === 'click') clickOptions(step);
       if (step.action === 'hover') offsetOption(step);
-      if (step.action === 'fill' && typeof step.text !== 'string') throw new Error('Batch fill requires text');
+      if (step.action === 'fill') fillOptions(step);
       if (step.action === 'type') typeOptions(step);
       if (step.action === 'select_option') selectOptions(step);
     }

@@ -35,6 +35,42 @@ test('fill uses a resolved node and text input; raw CDP remains unavailable', as
   await assert.rejects(f.exec('send_cdp', { method: 'Runtime.evaluate' }), /Unknown operation/);
 });
 
+test('fill verifies an explicit retained value without changing the inserted text, echoing values or replaying', async () => {
+  for (const mode of ['native', 'dom']) for (const expected of [undefined, '6', '7', '']) {
+    const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+    const retained = expected === '' ? '' : '6';
+    let inserted, writes = 0;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      if (method === 'Input.insertText') inserted = args.text;
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function prepareFill')) {
+        writes++; assert.equal(args.arguments[1].value, '06');
+      }
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function verifyFill')) return { result: { value:
+        vm.runInNewContext(`(${args.functionDeclaration})`).call({ isConnected: true, value: retained }, ...args.arguments.map(arg => arg.value)) } };
+      return send(target, method, args);
+    };
+    const operation = f.exec('fill', { selector: '#month', text: '06', mode, ...(expected === undefined ? {} : { expected_value: expected }) });
+    if (expected === '6' || expected === '') {
+      const result = await operation; assert.equal(result.verification_basis, 'expected_value'); assert.equal(result.value_verified, true);
+      assert.equal(result.application_result, 'not_checked');
+    } else await assert.rejects(operation, error => {
+      assert.equal(error.diagnostics.reason, 'value_not_retained'); assert.equal(error.input_dispatched, true);
+      assert.equal(error.diagnostics.verification_basis, expected === undefined ? 'text' : 'expected_value');
+      assert.ok(!error.message.includes('06')); return true;
+    });
+    assert.equal(inserted, mode === 'native' ? '06' : undefined); assert.equal(writes, 1);
+  }
+});
+
+test('invalid fill expected_value fails batch preflight before any earlier input', async () => {
+  const f = fixture(); await f.claim();
+  for (const expected_value of [null, 6, false, {}]) {
+    await assert.rejects(f.exec('fill', { selector: '#month', text: '06', expected_value }), /expected_value must be a string/);
+    await assert.rejects(f.exec('batch', { steps: [{ action: 'click', selector: '#go' }, { action: 'fill', selector: '#month', text: '06', expected_value }] }), /expected_value must be a string/);
+  }
+  assert.ok(!f.calls.some(call => call.method.startsWith('Input.') || call.args?.functionDeclaration?.includes('function prepareFill')));
+});
+
 test('DOM fill bypasses native input and focus, notifies the page and verifies the retained value', async () => {
   const f = fixture(); await f.claim();
   const events = [];

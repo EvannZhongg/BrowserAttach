@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.23.6**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.24.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -66,7 +66,7 @@
 | `target_verified` | true 表示可信鼠标事件命中显式 ref/selector 目标；纯坐标调用为 null，没有提供期望元素 |
 | `target_verification` | basis 为 element 或 coordinate_hit；hit_relation 为准备时的 same_node / composed_descendant，纯坐标为 null |
 | `delivery_verified` | 已核验工具对应的可信输入事件 |
-| `value_verified` | 字段文本或选项与设置结果一致 |
+| `value_verified` | 字段保留文本与核验预期一致，或选项与设置结果一致 |
 | `assignment_acknowledged` | 文件赋值/清空命令已获得回执，不证明事件送达或上传完成 |
 | `count_verified` | 上传后当前 FileList 数量与 requested_count 是否一致；不可读取时为 null |
 | `application_result: "not_checked"` | 尚未检查应用是否接受、提交或保存 |
@@ -228,6 +228,8 @@ selector 每次重新解析，省略 nth 时必须唯一；歧义立即报错并
 
 `name` 仅适用于 role。`nth` 从 0 开始，按 DOM 顺序选择，role 则按 AX 树顺序；准备阶段可等待目标出现。重复匹配应缩小范围或显式 nth，不按可见性猜选。label 不推断兄弟 div 的标签关系，ARIA 命名可通过 role/name 定位。
 
+Portal 弹层可组合现有工具定位：先用 snapshot 读取触发字段的 controls/owns，确认唯一且对应当前所需弹层的 DOM ID，再将选项查询限定到该 ID；例如 ID 为 school-options 时，用 XPath `//*[@id='school-options']//*[@role='option' and normalize-space(.)='Southeast University']`。CSS 中的特殊字符应经 CSS.escape 转义；ID 不是现成的选择器。仍须满足唯一匹配，不使用全局 option 的 nth 猜测。关联缺失、多个目标或弹层重建时重新观察；Shadow DOM 中的 ID 不能直接当作 document 根查询，可用 evaluate 返回单个元素 ref。此组合不自动打开弹层或提交选项，也不推断缺失的关联。
+
 ```js
 browser_fill({tab_handle, selector_type:"label", selector:"工作职责", text:"填写内容"})
 browser_click({tab_handle, selector_type:"role", selector:"option", name:"2026"})
@@ -248,6 +250,8 @@ frame.url/title 精确匹配子 frame，path 是逐层且每层唯一的 CSS ifr
 click/hover/fill/type 的输入准备会检查可见、启用、非 inert 和几何稳定；fill 还要求可编辑且非只读。select_option 不要求可见几何。timeout_ms 默认 5000，范围 100–30000，覆盖准备、派发和校验；click/hover/press_key 的派发及回执另有 1250 ms 上限，清理最多 250 ms，长 timeout 主要用于等待目标。
 
 准备失败的 diagnostics.reason 区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only、unstable_geometry 和 no_visible_click_point；遮挡仍使用 obstructed/frame_obstructed。不可操作时附当前矩形及至多 8 层 composed 祖先（含目标）的 display、visibility、opacity、pointer-events、overflow、可滚动方向及 transition 属性/时长，ancestors_truncated 表示更深信息未采集。这些是当前样式证据，不推断 hover 触发条件或动画是否即将结束；opacity=0 不单独拒绝输入。
+
+原生元素指针准备在首次命中检查发现遮挡时，可在同一 timeout_ms 内额外执行一次垂直居中、水平最近的即时滚动，再对同一节点重新检查稳定性、命中与所有 frame 边界。仍被遮挡则失败；不会点击覆盖层、切换 DOM 或激活标签。此补救只发生在尚未派发任何输入时：不用于纯坐标、只读 actionable 等待，或已经按下鼠标的拖拽目的端。
 
 原生 click/hover/drag 要求未冻结/丢弃的标签与未最小化窗口，准备前及派发前各检查一次，单次最多 500 ms。无修饰键的左键单击（button=left、click_count=1、modifiers=[]，均为默认值）可在非活动标签尝试执行，支持 ref、selector 及坐标目标；hover、drag、其他按钮、双击及带修饰键的点击仍要求活动标签。普通点击不会自动激活标签，后台事件送达和网站业务成功仍需分别核验，不能据此假设依赖悬停展开的流程也可后台执行。
 
@@ -344,7 +348,9 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 
 支持文本类 input（text/search/email/password/tel/url）、textarea 和 contenteditable。native（默认）聚焦、选中并插入文本，不产生逐字 keydown；dom 写入值并派发合成 input/change，不主动聚焦。
 
-两种模式均核对写入后的文本，返回 value_verified=true。input/textarea 按 value 精确比较。contenteditable 的 native 模式在插入前确认替换选区仍覆盖字段，选区丢失时以 fill_selection_lost 停止，不插入文本；插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
+两种模式均核对写入后的文本，返回 value_verified=true。默认预期为 text；可显式传 expected_value 指定页面格式化后的保留值，例如 `{text:"06", expected_value:"6"}`。expected_value 只改变核验内容，实际仍写入 text；允许显式空字符串，单步和 batch 使用相同规则。verification_basis=text/expected_value 说明比较依据；不回显字段内容或预期值，也不据此声称输入事件送达或业务成功。不自动按数字/日期归一化，不等待异步格式化或主动 blur。
+
+input/textarea 按 value 精确比较。contenteditable 的 native 模式在插入前确认替换选区仍覆盖字段，选区丢失时以 fill_selection_lost 停止，不插入文本；插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
 
 contenteditable 比较将 CRLF/CR 视为 LF；两种模式均允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）。不裁剪首尾空白、不合并空格或空行。节点替换、失焦、页面格式化或异步重建仍可能导致结果未知；不回显字段内容，不自动重放，也不等待编辑器保存。read_text 的 visible/value 仍是 innerText，不是浏览器所选纯文本。
 

@@ -162,6 +162,7 @@ test('ShadowRoot preparation uses frame-local hit coordinates and still rejects 
       if (method === 'Runtime.evaluate') return { result: { value: { width: 200, height: 200 } } };
       if (method === 'DOM.describeNode') return { node: { backendNodeId: 99 } };
       if (method === 'Runtime.callFunctionOn') {
+        if (args.functionDeclaration.includes('this.scrollIntoView(')) return { result: {} };
         if (args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true } } };
         if (args.functionDeclaration.includes('function normalizeHit')) {
           const element = { nodeType: 1 };
@@ -197,6 +198,42 @@ test('offscreen geometry has its own failure reason and preserves earlier gestur
       assert.equal(error.input_dispatched, dispatched); assert.equal(error.diagnostics.reason, 'no_visible_click_point'); return true;
     });
     assert.ok(!calls.some(method => method.startsWith('Input.')));
+  }
+});
+
+test('obstruction centering is bounded, respects scroll=false and earlier dispatch, and cannot resume after timeout', async () => {
+  for (const scenario of ['clear', 'covered', 'no_scroll', 'dispatched', 'timeout', 'detached']) {
+    let centers = 0, quads = 0, finish;
+    const cdp = async (target, method, args) => {
+      if (method === 'Runtime.callFunctionOn') {
+        if (args.functionDeclaration.includes('this.scrollIntoView(')) {
+          centers++;
+          if (scenario === 'timeout') return new Promise(resolve => { finish = () => resolve({ result: {} }); });
+          return { result: {} };
+        }
+        if (args.functionDeclaration.includes('function inspectTarget')) return { result: { value: centers && scenario === 'detached' ? { detached: true } : { ready: true } } };
+        if (args.functionDeclaration.includes('function describeHit')) return { result: { value: { tag: 'div', position: 'fixed' } } };
+        if (args.functionDeclaration.includes('function hitRelation')) return { result: { value: centers && scenario === 'clear' ? 'same_node' : null } };
+      }
+      if (method === 'DOM.getContentQuads') { quads++; return { quads: [[0, 0, 50, 0, 50, 50, 0, 50]] }; }
+      if (method === 'DOM.getNodeForLocation') return { backendNodeId: 2, frameId: 'main' };
+      if (method === 'DOM.resolveNode') return { object: { objectId: 'hit' } };
+      return {};
+    };
+    const pointer = createPointer(cdp, r => r.result.value, async () => ({ width: 100, height: 100, scroll_x: 0, scroll_y: 0 }), null, {});
+    const budget = deadline(scenario === 'timeout' ? 120 : 500);
+    if (scenario === 'dispatched') budget.dispatch();
+    const operation = pointer.prepare(1, { target: { tabId: 1 }, objectId: 'target', backendNodeId: 1, frameId: 'main' }, { budget, scroll: scenario !== 'no_scroll' });
+    if (scenario === 'clear') assert.equal((await operation).relation, 'same_node');
+    else await assert.rejects(operation, error => {
+      assert.equal(error.input_dispatched, scenario === 'dispatched');
+      assert.equal(error.diagnostics.reason, scenario === 'timeout' ? 'preparation_timeout' : scenario === 'detached' ? 'element_detached' : 'obstructed');
+      return true;
+    });
+    const expectedCenters = ['no_scroll', 'dispatched'].includes(scenario) ? 0 : 1;
+    assert.equal(centers, expectedCenters);
+    const before = quads; finish?.(); await new Promise(resolve => setImmediate(resolve));
+    assert.equal(quads, before); assert.equal(centers, expectedCenters);
   }
 });
 
