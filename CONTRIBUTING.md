@@ -19,6 +19,8 @@ npm pack --dry-run
 
 `server.json` 用于发布 MCP 官方 Registry 元数据；其中 `name` 与 `package.json.mcpName` 必须完全一致，`packages[0].identifier` 与 npm 包名一致，包版本填写准确版本。先发布包含 `mcpName` 的 npm 包，再执行 `mcp-publisher login github` 和 `mcp-publisher publish`。`npm run test:package` 会检查名称、版本和发布文件的一致性。
 
+根目录 `mcp-config.json` 用于 npx 快速试用，skill 的 `assets/mcp-config.example.json` 用于固定本机路径和配对的稳定配置。两者的启动方式不同；修改包名、CLI 参数或配对规则时需一并检查，`test:package` 会校验这两种配置的共用约定。
+
 ## 提交内容
 
 - 说明实际问题、修改后的行为和相关验证。

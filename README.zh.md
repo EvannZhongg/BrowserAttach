@@ -74,7 +74,9 @@ Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局�
 
 `@latest` 在启动时选择包版本；升级已有配对会在启动时协调。首次加载扩展，以及仍停留在更旧协议的配对，需要手动重载一次扩展，详见[本机数据与升级](#本机数据与升级)。
 
-各宿主的装配步骤见 [Agent 集成](docs/AGENT-INTEGRATION.md)；其他客户端直接使用上面的 stdio 配置。
+各宿主的接入入口见 [Agent 集成](docs/AGENT-INTEGRATION.md)，连接参数、JSON/TOML 示例与验证步骤在 [Setup reference](skills/browser-attach/references/setup.md)；其他客户端直接使用上面的 stdio 配置。
+
+npm 包附带可选的 [browser-attach skill](skills/browser-attach/SKILL.md)，提供配置、恢复和跨站点操作配方。按需将整个 `skills/browser-attach` 目录复制到宿主的 skill 目录；npm 安装不会向宿主注册它。
 
 ### 3. 开始操作
 
@@ -156,7 +158,7 @@ node bin/browser-attach.mjs setup --extension-dir ./extension
 node bin/browser-attach.mjs mcp
 ```
 
-开发模式有意使用仓库扩展路径。一般安装请使用不带 `--extension-dir` 的 setup，确保移动仓库后仍可运行。Windows 也可运行 `./scripts/install.ps1`。
+开发模式有意使用仓库扩展路径。一般安装请使用不带 `--extension-dir` 的 setup，确保移动仓库后仍可运行。
 
 真实浏览器测试需要一个允许命令行加载扩展的 Chromium / Edge 可执行文件，路径由开发者传入：
 

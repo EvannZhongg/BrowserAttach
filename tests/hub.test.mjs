@@ -10,7 +10,7 @@ import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js'
 import { startHub } from '../src/hub.mjs';
 import { AttachClient } from '../src/client.mjs';
 import { ROOT, VERSION, writeJson } from '../src/config.mjs';
-import { setup, configureNosis } from '../src/setup.mjs';
+import { setup } from '../src/setup.mjs';
 import { validateFiles } from '../src/upload.mjs';
 import { fixture as controllerFixture } from './helpers/controller-fixture.mjs';
 import { errorData } from '../extension/errors.js';
@@ -577,19 +577,4 @@ test('setup preserves pairing and the Hub installs the stable extension while ho
   t.after(() => hub.close());
   assert.ok((await readFile(join(a.extensionDir, 'config.generated.js'), 'utf8')).includes(a.config.token));
   assert.equal(JSON.parse(await readFile(join(a.extensionDir, 'manifest.json'), 'utf8')).version, VERSION);
-});
-
-test('Nosis configuration uses the current server schema and preserves unrelated servers', async t => {
-  const temp = await mkdtemp(join(tmpdir(), 'attach-nosis-'));
-  t.after(() => rm(temp, { recursive: true, force: true }));
-  const path = join(temp, 'agent_config.json');
-  await writeFile(path, JSON.stringify({ mcp: { servers: { other: { command: 'other-server' } } } }));
-  await configureNosis(temp);
-  const config = JSON.parse(await readFile(path, 'utf8'));
-  assert.deepEqual(config.mcp.servers.other, { command: 'other-server' });
-  assert.equal(config.mcp.servers.browser_attach.command, process.execPath);
-  assert.equal(config.mcp.servers.browser_attach.args[0], join(ROOT, 'bin/browser-attach.mjs'));
-  assert.ok(config.mcp.servers.browser_attach.args.includes('--config'));
-  assert.ok(config.mcp.servers.browser_attach.env.BROWSER_ATTACH_HOME);
-  assert.ok(!('scope' in config.mcp.servers.browser_attach));
 });

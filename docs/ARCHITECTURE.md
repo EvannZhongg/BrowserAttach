@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.25.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.25.1**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -17,7 +17,7 @@ MCP 客户端
 |---|---|
 | `bin/browser-attach.mjs` | `setup` / `mcp` / `hub` / `status` / `stop` 入口 |
 | `src/config.mjs` | 数据目录、配对文件校验、版本常量 |
-| `src/setup.mjs` | 生成配对密钥、暂存并替换稳定扩展目录、写 Nosis 配置 |
+| `src/setup.mjs` | 生成配对配置、暂存并替换稳定扩展目录 |
 | `src/hub.mjs` | 浏览器与会话注册、独占 claim、每标签串行队列、超时 |
 | `src/client.mjs` | MCP 到 Hub 的 WebSocket 请求、回执与断连处理 |
 | `src/hub-runtime.mjs` | Hub 启动、升级协调与扩展就绪检查 |

@@ -74,7 +74,9 @@ On Windows clients that require a full command extension, use `npx.cmd`. With a 
 
 `@latest` selects the package at launch; upgrading an existing pair is coordinated at startup. The first extension load, and pairs still on an older protocol, need one manual extension reload — see [local data and upgrades](#local-data-and-upgrades).
 
-Assembly steps for supported hosts are in [agent integration](docs/AGENT-INTEGRATION.md); other clients use the stdio entry above.
+Host entry points are collected in [agent integration](docs/AGENT-INTEGRATION.md), and the connection parameters, JSON/TOML examples and verification steps are in the [setup reference](skills/browser-attach/references/setup.md); other clients use the stdio entry above.
+
+The npm package includes an optional [browser-attach skill](skills/browser-attach/SKILL.md) with setup, recovery and cross-site recipes. Copy the whole `skills/browser-attach` directory to your host's skill location if desired; npm installation does not register it with the host.
 
 ### 3. Start driving
 
@@ -156,7 +158,7 @@ node bin/browser-attach.mjs setup --extension-dir ./extension
 node bin/browser-attach.mjs mcp
 ```
 
-Development mode deliberately uses the repository extension path. For normal installs, use `setup` without `--extension-dir` so it keeps working after the repository moves. On Windows you can also run `./scripts/install.ps1`.
+Development mode deliberately uses the repository extension path. For normal installs, use `setup` without `--extension-dir` so it keeps working after the repository moves.
 
 Real-browser tests need a Chromium / Edge executable that allows loading extensions from the command line; the path is supplied by the developer:
 

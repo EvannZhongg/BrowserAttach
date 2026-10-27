@@ -1,8 +1,19 @@
 # 验证报告
 
-当前版本 **0.25.0**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.25.1**（2026-10-28）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 随 npm 包分发 `skills/browser-attach/`：75 行主干、setup/recovery/recipes 三份按需参考及 MCP JSON 模板。description 按 Agent 触发场景编写；正文首段说明 MCP、Hub 与配对扩展的运行前提。frontmatter 的 name 与目录一致，description/compatibility 长度和 metadata 版本检查通过，目录内链接及 JSON/TOML 示例有效。
+- Setup reference 以通用 stdio 启动参数和 JSON/TOML 配置为主，不逐宿主展开配置流程；SKILL.md 按安装、配对或连接配置任务引导阅读。Agent 集成文档改为入口和仓库验证说明，README 增加可选 skill 入口。未增加宿主自动注册或 Claude 插件外壳。
+- 移除 `scripts/install.ps1`、Nosis 专用 CLI 选项、配置辅助代码及验证脚本；通用 setup、配对文件与扩展同步保留。`--help` 已不列出 `--nosis`，传入旧选项会在读取配对前被参数解析拒绝。
+- `node --test tests/config.test.mjs tests/hub.test.mjs`：20 项通过（config 3、Hub 17），覆盖配对路径、Hub 控制权、setup 及真实 stdio MCP。此前记录的 22 项包括本次移除的两项 Nosis 配置测试，不是 12 项。6 个配方 JSON 示例此前通过内存 MCP 的 schema 与参数转换校验，未调用真实浏览器。
+- `npm run test:package`：67 个发布文件、包外安装及 23 个 stdio 工具检查通过；安装后的 5 个 skill 文件与源文件逐字节一致，不含生成的配对密钥。
+- skill 保留未知结果先观察、明确前台操作等策略；ref/分页、定位语法、就绪条件与诊断名称的细节转向工具描述，减少重复维护。setup 补充 MIT 开源包来源及安装/配对的实际行为；两份 MCP 示例保持不同用途，打包检查同时核对包名、CLI 和显式配对路径约定。
+- 本机 Hub 使用现有 `F:\.nosis\browser-attach\config.json` 完成 stop/start；Hub 和两个扩展均为 0.25.1 / ready。稳定扩展副本的 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 一致。原 MCP 连接需重连并重新接管。
+- 本次为 skill 文档与分发调整，版本递增至 0.25.1，MCP 工具能力、依赖和权限不变。未重跑浏览器交互全集，未修改实际宿主配置；JSON 模板及 TOML 示例语法验证通过，TOML 配置格式已核对 Codex 官方文档。
+
+## 0.25.0 验证
 
 - `browser_open_tab` 新增 claim（默认 false）；claim=true 直接用本次创建的准确 tab_id 复用接管流程，单次 MCP 调用取得 tab_handle，不枚举标签、不更改已有发现记录。初始 URL 观察最多 15 秒，允许重定向，不等待页面加载完成。
 - 创建后的接管错误返回 open_tab 阶段及已知标签身份；接管超时/浏览器断连报告 claimed=null、outcome_unknown=true，禁止自动重开。初始化清理失败且仍保留控制时返回恢复句柄。Hub 与扩展在初始化前预留控制权，覆盖初始 URL 等待、attach 中断连和 detach 后迟到回执；不静默移交控制权。

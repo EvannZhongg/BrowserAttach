@@ -1,11 +1,10 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
-import { mkdtemp, mkdir, rm, writeFile, readFile } from 'node:fs/promises';
+import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir, homedir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { DEFAULT_CONFIG, ROOT, loadConfig } from '../src/config.mjs';
-import { configureNosis, mcpSettings } from '../src/setup.mjs';
+import { join } from 'node:path';
+import { ROOT, loadConfig } from '../src/config.mjs';
 
 const configModule = new URL('../src/config.mjs', import.meta.url).href;
 function resolveInChild(env, cwd) {
@@ -38,27 +37,6 @@ test('absolute shared home wins across process environments; relative home is re
     error.stderr.toString().includes('BROWSER_ATTACH_HOME must be an absolute directory'));
   if (process.platform === 'win32') assert.throws(() => resolveInChild({ BROWSER_ATTACH_HOME: '\\drive-relative' }, temp), error =>
     error.stderr.toString().includes('BROWSER_ATTACH_HOME must be an absolute directory'));
-});
-
-test('generated MCP pins Node, CLI and the exact pairing file; Nosis custom config is backed up', async t => {
-  const temp = await mkdtemp(join(tmpdir(), 'attach-nosis-path-'));
-  t.after(() => rm(temp, { recursive: true, force: true }));
-  const configPath = join(temp, 'shared data', 'pairing.json');
-  const launch = mcpSettings(configPath);
-  assert.deepEqual(launch, { command: process.execPath,
-    args: [join(ROOT, 'bin/browser-attach.mjs'), 'mcp', '--config', configPath],
-    env: { BROWSER_ATTACH_HOME: dirname(configPath) } });
-  assert.equal(mcpSettings().args.at(-1), DEFAULT_CONFIG);
-  const path = join(temp, 'agent_config.json');
-  const original = { model: 'unchanged', mcp: { servers: { other: { command: 'other' } } } };
-  await writeFile(path, JSON.stringify(original));
-  const result = await configureNosis(temp, { configPath });
-  assert.deepEqual(JSON.parse(await readFile(result.backup, 'utf8')), original);
-  const updated = JSON.parse(await readFile(path, 'utf8'));
-  assert.equal(updated.model, original.model);
-  assert.deepEqual(updated.mcp.servers.other, original.mcp.servers.other);
-  assert.deepEqual(updated.mcp.servers.browser_attach.args, launch.args);
-  assert.deepEqual(updated.mcp.servers.browser_attach.env, launch.env);
 });
 
 test('legacy pairing without extension_dir defaults to the sibling extension directory', async t => {

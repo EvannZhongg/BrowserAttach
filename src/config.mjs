@@ -15,7 +15,7 @@ export const DATA_DIR = configuredHome
   : process.platform === 'win32' ? join(homedir(), '.browser-attach')
     : join(process.env.XDG_DATA_HOME || join(homedir(), '.local', 'share'), 'browser-attach');
 export const DEFAULT_CONFIG = join(DATA_DIR, 'config.json');
-export const VERSION = '0.25.0';
+export const VERSION = '0.25.1';
 
 export async function loadConfig(path = DEFAULT_CONFIG) {
   let config;

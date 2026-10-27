@@ -17,6 +17,21 @@ const result = JSON.parse(execFileSync(npm, ['pack', '--dry-run', '--ignore-scri
 }))[0];
 const names = result.files.map(file => file.path);
 if (!names.includes('server.json')) throw new Error('Package is missing server.json');
+for (const path of ['SKILL.md', 'references/setup.md', 'references/recovery.md', 'references/recipes.md', 'assets/mcp-config.example.json']) {
+  const entry = `skills/browser-attach/${path}`;
+  if (!names.includes(entry)) throw new Error(`Package is missing ${entry}`);
+}
+const skill = await readFile(new URL('../skills/browser-attach/SKILL.md', import.meta.url), 'utf8');
+if (!skill.includes(`  version: "${VERSION}"`)) throw new Error('Skill version mismatch');
+const quickConfig = JSON.parse(await readFile(new URL('../mcp-config.json', import.meta.url), 'utf8')).mcpServers.browser_attach;
+const stableConfig = JSON.parse(await readFile(new URL('../skills/browser-attach/assets/mcp-config.example.json', import.meta.url), 'utf8')).mcpServers.browser_attach;
+const [[cliName, cliPath]] = Object.entries(packageJson.bin);
+if (quickConfig.command !== 'npx' || JSON.stringify(quickConfig.args) !== JSON.stringify(['--yes', `--package=${packageJson.name}@latest`, cliName, 'mcp']))
+  throw new Error('Quick-start MCP config differs from the package CLI');
+if (stableConfig.type !== 'stdio' || !stableConfig.args?.[0]?.endsWith(`/${cliPath}`) ||
+    stableConfig.args.length !== 4 || stableConfig.args[1] !== 'mcp' || stableConfig.args[2] !== '--config' ||
+    stableConfig.args[3] !== `${stableConfig.env?.BROWSER_ATTACH_HOME}/config.json`)
+  throw new Error('Stable MCP config must launch the CLI with the shared pairing file');
 for (const path of names) {
   if (/config\.generated\.js|(^|\/)(\.local|\.venv|test-results|node_modules)\//.test(path)) throw new Error(`Private file included in package: ${path}`);
 }

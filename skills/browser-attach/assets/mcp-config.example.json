@@ -1,0 +1,17 @@
+{
+  "mcpServers": {
+    "browser_attach": {
+      "type": "stdio",
+      "command": "/absolute/path/to/node",
+      "args": [
+        "/absolute/path/to/browser-attach/bin/browser-attach.mjs",
+        "mcp",
+        "--config",
+        "/absolute/shared/config.json"
+      ],
+      "env": {
+        "BROWSER_ATTACH_HOME": "/absolute/shared"
+      }
+    }
+  }
+}

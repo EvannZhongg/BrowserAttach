@@ -19,6 +19,10 @@ try {
   const prefix = join(temp, 'global install');
   npm(['install', '--global', '--prefix', prefix, archive, '--ignore-scripts']);
   const installed = process.platform === 'win32' ? join(prefix, 'node_modules/@evan_zhong/browser-attach') : join(prefix, 'lib/node_modules/@evan_zhong/browser-attach');
+  for (const path of ['SKILL.md', 'references/setup.md', 'references/recovery.md', 'references/recipes.md', 'assets/mcp-config.example.json']) {
+    const relative = join('skills/browser-attach', path);
+    assert.deepEqual(await readFile(join(installed, relative)), await readFile(join(ROOT, relative)));
+  }
   const home = join(temp, 'user data'), env = { ...process.env, BROWSER_ATTACH_HOME: home };
   // This setup must use the INSTALLED package, never the source checkout.
   execFileSync(process.execPath, [join(installed, 'bin/browser-attach.mjs'), '--help'], { cwd: temp, env, stdio: 'pipe' });
