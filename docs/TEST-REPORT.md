@@ -1,8 +1,17 @@
 # 验证报告
 
-当前版本 **0.24.1**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.24.2**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 精简 MCP instructions、工具及参数描述；batch 公共定位说明集中在 steps，分支保留模式、选项选择和 wait 条件。补清 ref/selector/focused 选择、frame 至少一个条件及互斥、wait 条件必填、scroll until/delta_y、截图目标/full_page 互斥，以及 batch 已完成前缀仍预检等已实现约束。
+- 实际初始化及 tools/list 元数据由 56,638 降为 51,605 字符，减少 5,033（8.9%）；instructions 与全部 description 合计由 23,937 降为 19,213（19.7%）。字符数按紧凑 JSON 统计，不等于 token 数。
+- 去除 description 后，23 个工具的发布定义逐项完全一致，包含 required、default、枚举、范围及 oneOf 分支；20 组有效/无效 MCP 调用契约检查通过，验证目标互斥、frame、wait、scroll、DOM batch click、选项选择及组合步骤。fetch cursor 续读未注入 url/format/wait_until/timeout_ms 默认值。
+- 相关现有测试：hub/config/primitives/input/locator 共 41 项通过，含真实 stdio MCP 的工具发现、参数校验与 Hub 透传；npm run test:package 通过，包外安装发布 62 个文件、23 个 stdio 工具，无生成配对密钥。本次无浏览器执行实现变更，未重复运行整套浏览器交互测试。
+- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.2 / ready；稳定扩展目录 manifest 版本和身份一致，其余 43 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连，重新加载说明并发现、接管标签。
+- 本次仅修正说明及共享描述组织，版本递增至 0.24.2；工具数量、参数、校验逻辑、执行语义、依赖与权限不变。
+
+## 0.24.1 验证
 
 - role 精确定位失败时，复用最后一次 AX 树生成最多 10 项名称建议，回显实际 role；同名优先、去重并标记长名称截断，不解析或操作建议目标。非法 CSS 的原始解析错误保留，附带原生 CSS 与 role/label/placeholder 替代提示。
 - 原生回执丢失及派发超时提示显式 activate → snapshot → 重新定位，并明确激活不证明之前未送达，不能自动重放；fill_selection_lost 提示可显式选择 click/Control+A/focused type，仍在插入前停止，不自动改用键盘或 DOM 模式。
