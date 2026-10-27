@@ -334,24 +334,35 @@ export function createController(api, notify = () => {}) {
 
   async function attach(tabId, owner, args, tab, budget) {
     const run = operation => budget ? budget.run(operation) : operation();
-    await run(() => api.debugger.attach({ tabId }, '1.3'));
+    const claim = claims.get(tabId) ?? { owner, handle: args.tab_handle };
+    if (claim.owner !== owner || claim.handle !== args.tab_handle) throw new Error('Tab is already controlled by another session');
+    claims.set(tabId, claim);
+    let attached = false;
     try {
+      await run(() => api.debugger.attach({ tabId }, '1.3'));
+      attached = true;
+      if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
       network.start(tabId);
       diagnostics.start(tabId);
       await run(() => sessions.start(tabId));
       const { frameTree } = await run(() => cdp(tabId, 'Page.getFrameTree'));
+      if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
       observations.initialize(tabId, frameTree);
-      claims.set(tabId, { owner, handle: args.tab_handle });
       let visualWarning;
       try { if (!fetchPages.has(tabId)) await visuals.install(tabId); }
       catch (error) { visualWarning = error.message; }
+      if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
       return { claimed: true, activation_requested: false, title: tab.title, url: tab.url,
         ...(visualWarning ? { visual_warning: visualWarning } : {}) };
     } catch (error) {
-      diagnostics.forget(tabId);
-      network.forget(tabId);
-      sessions.forget(tabId);
-      if (!fetchPages.has(tabId)) await api.debugger.detach({ tabId });
+      if (attached && claims.get(tabId) === claim && !fetchPages.has(tabId)) {
+        try { await release(tabId); }
+        catch (cleanup) {
+          error.message += `; claim cleanup failed: ${cleanup.message}`;
+          if (claims.get(tabId) === claim) error.diagnostics = { ...error.diagnostics, control_retained: true };
+          throw error;
+        }
+      } else if (claims.get(tabId) === claim && !fetchPages.has(tabId)) forget(tabId);
       throw error;
     }
   }
@@ -362,8 +373,7 @@ export function createController(api, notify = () => {}) {
       const url = httpUrl(args.url);
       if (args.active != null && typeof args.active !== 'boolean') throw new Error('active must be a boolean');
       const tab = await api.tabs.create({ url, active: args.active ?? false });
-      return { opened: true, tab_id: tab.id, window_id: tab.windowId, active: tab.active,
-        note: 'List tabs after loading, then claim tab_id with optional exact URL/title guards before controlling this tab.' };
+      return { opened: true, tab_id: tab.id, window_id: tab.windowId, active: tab.active };
     }
     if (command === 'list_tabs') {
       const tabs = (await api.tabs.query({})).filter(tab => !fetchPages.has(tab.id));
@@ -381,15 +391,30 @@ export function createController(api, notify = () => {}) {
     return await queued(tabId, async () => {
       if (command === 'claim_tab') {
         if (fetchPages.has(tabId)) throw new Error('Tab is already controlled by a fetch operation');
-        const tab = await api.tabs.get(tabId);
-        if ((args.expected_url != null && tab.url !== args.expected_url) || (args.expected_title != null && tab.title !== args.expected_title)) throw new Error('Tab title/URL changed. List tabs again or omit optional identity guards to claim by tab_id.');
-        await controlUrl(tab.url);
         const existing = claims.get(tabId);
-        if (existing) {
-          if (existing.owner === owner && existing.handle === args.tab_handle) return { claimed: true };
-          throw new Error('Tab is already controlled by another session');
+        if (existing && (existing.owner !== owner || existing.handle !== args.tab_handle)) throw new Error('Tab is already controlled by another session');
+        const claim = existing ?? { owner, handle: args.tab_handle };
+        claims.set(tabId, claim);
+        try {
+          const budget = args.wait_for_page ? deadline(15000, 'claim') : null;
+          let tab = await (budget ? budget.run(() => api.tabs.get(tabId)) : api.tabs.get(tabId));
+          if (args.wait_for_page) {
+            // tabs.create may resolve before the initial URL has committed. Never navigate again.
+            while (!tab.url || tab.url === 'about:blank') {
+              if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
+              await budget.run(() => new Promise(resolve => setTimeout(resolve, 50)));
+              tab = await budget.run(() => api.tabs.get(tabId));
+            }
+          }
+          if ((args.expected_url != null && tab.url !== args.expected_url) || (args.expected_title != null && tab.title !== args.expected_title)) throw new Error('Tab title/URL changed. List tabs again or omit optional identity guards to claim by tab_id.');
+          await controlUrl(tab.url);
+          if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
+          if (existing) return { claimed: true };
+          return await attach(tabId, owner, args, tab);
+        } catch (error) {
+          if (!existing && claims.get(tabId) === claim && !error.diagnostics?.control_retained) forget(tabId);
+          throw error;
         }
-        return await attach(tabId, owner, args, tab);
       }
       const claim = claims.get(tabId);
       if (!claim || claim.owner !== owner || claim.handle !== args.tab_handle) throw new Error('Tab is not claimed by this connection');

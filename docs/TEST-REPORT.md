@@ -1,8 +1,17 @@
 # 验证报告
 
-当前版本 **0.24.3**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.25.0**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- `browser_open_tab` 新增 claim（默认 false）；claim=true 直接用本次创建的准确 tab_id 复用接管流程，单次 MCP 调用取得 tab_handle，不枚举标签、不更改已有发现记录。初始 URL 观察最多 15 秒，允许重定向，不等待页面加载完成。
+- 创建后的接管错误返回 open_tab 阶段及已知标签身份；接管超时/浏览器断连报告 claimed=null、outcome_unknown=true，禁止自动重开。初始化清理失败且仍保留控制时返回恢复句柄。Hub 与扩展在初始化前预留控制权，覆盖初始 URL 等待、attach 中断连和 detach 后迟到回执；不静默移交控制权。
+- 全量 313 项测试通过，覆盖真实 Hub/模拟扩展的跨连接隔离、创建与接管之间的竞争、失败保留页面、发现记录隔离、清理失败恢复、超时后释放及迟到回执失效；真实 stdio MCP 验证新增 schema、成功句柄与结构化错误传递。未知结果字段调整后 Hub 18 项复验通过。
+- Chromium 156、Edge 155 各通过 `live-smoke --tabs` 的 20 次 stdio MCP 调用和 4 组检查：重定向后句柄可用、后台打开保持活动标签、跨 owner 拒绝、释放/重新接管/关闭、加载持续阻塞时仍可接管、claim=false 仍需发现、断连后保留页面并释放控制。全部使用临时 Profile 和本地测试页面。
+- `npm run test:package` 通过：62 个发布文件、包外安装、独立扩展副本及 23 个 stdio 工具。版本递增至 0.25.0，无新增依赖或权限。
+- 本机 Hub 已用现有 `F:\.nosis\browser-attach\config.json` stop/start 重启；Hub 和两个连接扩展均为 0.25.0 / ready。稳定扩展副本共 44 个文件，manifest 版本与身份一致（仅换行符与工作副本不同），其余 43 个文件逐字节一致。现有 MCP 客户端需重连，旧句柄失效。创建与接管不承诺原子性，其他 owner 先取得控制时明确返回冲突。
+
+## 0.24.3 验证
 
 - 修复 fields 对 DOMSnapshot 原生 input/textarea 空值字符串索引 -1 的解码：显式返回 `dom.value=""` 并保留 value_source。未采集值仍省略 value，密码值仍不输出，不推断自绘控件的展示值或填写状态。
 - 测试 fixture 使用真实空值编码；新增回归覆盖 input/textarea 空值及 JSON 序列化、缺失值、非空值和空密码脱敏。新测试在旧实现上失败，修复后 fields/snapshot/controller-observation 相关 52 项测试通过。

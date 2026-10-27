@@ -1,4 +1,4 @@
-const fields = ['input_dispatched', 'post_action', 'diagnostics'];
+const fields = ['input_dispatched', 'post_action', 'diagnostics', 'open_tab'];
 
 export function errorData(error) {
   const data = { error: error.message || String(error) };

@@ -16,9 +16,10 @@ import { ROOT, DEFAULT_CONFIG, VERSION, loadConfig } from '../src/config.mjs';
 import { startHub } from '../src/hub.mjs';
 import { AttachClient } from '../src/client.mjs';
 
-const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, connected: { type: 'boolean', default: false }, files: { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, connected: { type: 'boolean', default: false }, files: { type: 'boolean', default: false }, tabs: { type: 'boolean', default: false } } });
 if (!values.executable) throw new Error('Pass --executable PATH to a Chromium/Edge browser that permits --load-extension');
 if (values.files && values.connected) throw new Error('--files requires a disposable browser profile');
+if (values.tabs && (values.connected || values.files)) throw new Error('--tabs requires a disposable browser profile and cannot combine with --files');
 const temp = await mkdtemp(join(tmpdir(), 'attach-live-'));
 const checks = [], calls = [];
 let browser, hub, cdp, mcp, command;
@@ -48,6 +49,7 @@ document.querySelector('#name').oninput=sync;sync();</script>`;
 let fetchVisits = 0, crawled = 0;
 const fixture = http.createServer((request, response) => {
   const port = fixture.address().port;
+  if (request.url === '/open/redirect') { response.writeHead(302, { Location: '/?opened' }); response.end(); return; }
   if (request.url === '/editor-tt') {
     response.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Content-Security-Policy': "require-trusted-types-for 'script'" });
     response.end('<!doctype html><title>Trusted Types editor</title><div id="editor" role="textbox" aria-label="Editor" contenteditable="true" style="white-space:normal;min-height:30px">Old<div><span>paragraph</span></div></div><input id="other">'); return;
@@ -162,9 +164,10 @@ try {
   }, 'extension connection');
   assert.ok(browsers[0].capabilities.includes('upload_file'));
   const browserId = browsers[0].browser_id;
+  if (!values.files) await checkOpenTabs({ browserId, call, rawCall, configPath });
   if (values.files) {
     await checkFiles({ browserId, call, rawCall, configPath });
-  } else {
+  } else if (!values.tabs) {
   const fetchArgs = { browser_id: browserId };
   const activeBefore = (await call('discover', { kind: 'tabs', browser_id: browserId })).tabs.filter(t => t.active).map(t => t.tab_id);
   let fetched = await call('fetch', { ...fetchArgs, url: url + 'fetch/redirect', wait_until: 'network_idle', max_chars: 5 });
@@ -784,7 +787,7 @@ try {
   }
   const report = { date: new Intl.DateTimeFormat('en-CA', { timeZone: 'Asia/Shanghai' }).format(new Date()), family: values.family, user_agent: browsers[0].user_agent, extension_version: VERSION, checks, calls: calls.length, results: calls };
   const out = resolve(ROOT, 'test-results'); await mkdir(out, { recursive: true });
-  await writeFile(join(out, `npm-live-${values.family}${values.files ? '-files' : ''}.json`), JSON.stringify(report, null, 2));
+  await writeFile(join(out, `npm-live-${values.family}${values.files ? '-files' : values.tabs ? '-tabs' : ''}.json`), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ ...report, results: undefined }, null, 2));
 } finally {
   await mcp?.close().catch(() => {});
@@ -805,6 +808,51 @@ try {
   await new Promise(resolve => fixture.close(resolve));
   // Browser teardown may hold profile files briefly on Windows.
   await rm(temp, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 }).catch(() => {});
+}
+
+async function checkOpenTabs({ browserId, call, rawCall, configPath }) {
+  const config = await loadConfig(configPath), other = new AttachClient(config);
+  const list = async () => (await call('discover', { kind: 'tabs', browser_id: browserId })).tabs;
+  const activeBefore = (await list()).filter(t => t.active).map(t => t.tab_id);
+  try {
+    const created = await call('open_tab', { browser_id: browserId, url: url + 'open/redirect', claim: true });
+    assert.equal(created.opened, true); assert.equal(created.claimed, true);
+    assert.equal(created.active, false); assert.equal(created.activation_requested, false); assert.ok(created.tab_handle);
+    const h = { tab_handle: created.tab_handle };
+    await call('wait', { ...h, selector: '#name', condition: 'visible' });
+    assert.equal((await call('snapshot', h)).url, url + '?opened');
+    assert.deepEqual((await list()).filter(t => t.active).map(t => t.tab_id), activeBefore);
+    await assert.rejects(other.call('snapshot', h), /belongs to another/);
+    await other.call('list_tabs', { browser_id: browserId });
+    await assert.rejects(other.call('claim_tab', { browser_id: browserId, tab_id: created.tab_id }), /another MCP/);
+    await call('tab_control', { ...h, action: 'release' });
+    const next = await other.call('claim_tab', { browser_id: browserId, tab_id: created.tab_id });
+    await other.call('close_tab', { tab_handle: next.tab_handle });
+    checks.push('open_tab(claim=true) returns a usable connection-local handle without discovery; redirect, background focus, cross-owner rejection, release/reclaim/close');
+
+    const loading = await call('open_tab', { browser_id: browserId, url: url + 'fetch/stall', claim: true });
+    await call('wait', { tab_handle: loading.tab_handle, selector: 'h1', condition: 'visible' });
+    const readiness = await call('evaluate', { tab_handle: loading.tab_handle, expression: 'document.readyState' });
+    assert.notEqual(readiness.value, 'complete');
+    await call('tab_control', { tab_handle: loading.tab_handle, action: 'close' });
+    checks.push('open claim succeeds while document load is stalled; page readiness remains separate');
+
+    const plain = await call('open_tab', { browser_id: browserId, url });
+    assert.equal(plain.claimed, false); assert.equal(plain.tab_handle, undefined);
+    const undiscovered = await rawCall('claim_tab', { browser_id: browserId, tab_id: plain.tab_id });
+    assert.equal(undiscovered.isError, true); assert.match(undiscovered.content[0].text, /latest/);
+    await list();
+    const plainClaim = await call('claim_tab', { browser_id: browserId, tab_id: plain.tab_id });
+    await call('tab_control', { tab_handle: plainClaim.tab_handle, action: 'close' });
+    checks.push('claim=false keeps creation separate and does not implicitly record a tab discovery');
+
+    const disconnected = await other.call('open_tab', { browser_id: browserId, url, claim: true });
+    await other.close();
+    await until(async () => (await list()).some(t => t.tab_id === disconnected.tab_id && t.control === 'available'), 'new-tab disconnect release');
+    const recovered = await call('claim_tab', { browser_id: browserId, tab_id: disconnected.tab_id });
+    await call('tab_control', { tab_handle: recovered.tab_handle, action: 'close' });
+    checks.push('disconnect releases a newly created claimed tab for another connection without closing it');
+  } finally { await other.close(); }
 }
 
 async function checkFiles({ browserId, call, rawCall, configPath }) {

@@ -47,6 +47,29 @@ export async function startHub(config, { port = config.port, operationTimeout = 
       send(browser.ws, { id, owner, command, arguments: args });
     });
   }
+  function claimTab(browser, owner, tab, args) {
+    const key = keyFor(browser.id, tab.tab_id);
+    return queued(key, async () => {
+      const existing = tabClaims.get(key);
+      if (existing) {
+        if (claims.get(existing).owner !== owner) throw new Error('Tab is controlled by another MCP session');
+        return { claimed: true, activation_requested: false, tab_handle: existing, browser_id: browser.id, tab_id: tab.tab_id, title: tab.title, url: tab.url };
+      }
+      const handle = randomUUID(), claim = { owner, browser_id: browser.id, tab_id: tab.tab_id };
+      // Reserve before dispatch so detach notifications cannot be overwritten by a late reply.
+      claims.set(handle, claim);
+      tabClaims.set(key, handle);
+      try {
+        const result = await requestBrowser(browser, owner, 'claim_tab', { ...args, tab_id: tab.tab_id, tab_handle: handle });
+        if (browsers.get(browser.id) !== browser || claims.get(handle) !== claim) throw new Error('Tab detached or browser disconnected during claim');
+        return { ...result, tab_handle: handle, browser_id: browser.id, tab_id: tab.tab_id, title: result.title ?? tab.title, url: result.url ?? tab.url };
+      } catch (error) {
+        if (!(error instanceof OperationTimeout) && !error.diagnostics?.control_retained) forget(handle);
+        if (error.diagnostics?.control_retained) error.diagnostics = { ...error.diagnostics, tab_handle: handle };
+        throw error;
+      }
+    });
+  }
   async function execute(owner, observed, method, args) {
     if (method === 'list_browsers') return {
       browsers: [...browsers.values()].filter(browser => browser.ready).map(browser => ({ browser_id: browser.id, ...browser.info, capabilities: CAPABILITIES })),
@@ -56,7 +79,22 @@ export async function startHub(config, { port = config.port, operationTimeout = 
     if (method === 'list_tabs' || method === 'claim_tab' || method === 'open_tab' || method === 'fetch') {
       const browser = browsers.get(args.browser_id);
       if (!browser?.ready) throw new Error('Browser is not connected; call browser_discover kind=browsers again');
-      if (method === 'open_tab' || method === 'fetch') return await requestBrowser(browser, owner, method, args);
+      if (method === 'fetch') return await requestBrowser(browser, owner, method, args);
+      if (method === 'open_tab') {
+        if (args.claim != null && typeof args.claim !== 'boolean') throw new Error('claim must be a boolean');
+        const opened = await requestBrowser(browser, owner, method, { url: args.url, active: args.active });
+        if (!args.claim) return { ...opened, claimed: false };
+        try {
+          const claimed = await claimTab(browser, owner, opened, { wait_for_page: true });
+          return { ...opened, ...claimed };
+        } catch (error) {
+          const unknown = error instanceof OperationTimeout || browsers.get(browser.id) !== browser;
+          error.open_tab = { ...opened, browser_id: browser.id, claimed: unknown ? null : false, phase: 'claim',
+            ...(unknown ? { outcome_unknown: true } : {}),
+            ...(error.diagnostics?.control_retained ? { control_retained: true, tab_handle: error.diagnostics.tab_handle } : {}) };
+          throw error;
+        }
+      }
       if (method === 'list_tabs') {
         const result = await requestBrowser(browser, owner, method, {});
         for (const [key, tab] of observed) if (tab.browser_id === browser.id) observed.delete(key);
@@ -71,19 +109,7 @@ export async function startHub(config, { port = config.port, operationTimeout = 
       const key = keyFor(browser.id, args.tab_id), tab = observed.get(key);
       if (!tab || (args.expected_url != null && tab.url !== args.expected_url) || (args.expected_title != null && tab.title !== args.expected_title))
         throw new Error("Claim requires a tab_id from this session's latest browser_discover kind=tabs result; optional expected_url/title must match exactly");
-      return queued(key, async () => {
-        const existing = tabClaims.get(key);
-        if (existing) {
-          if (claims.get(existing).owner !== owner) throw new Error('Tab is controlled by another MCP session');
-          return { claimed: true, activation_requested: false, tab_handle: existing, browser_id: browser.id, tab_id: args.tab_id, title: tab.title, url: tab.url };
-        }
-        const handle = randomUUID();
-        const result = await requestBrowser(browser, owner, method, { ...args, tab_handle: handle });
-        if (browsers.get(browser.id) !== browser) throw new Error('Browser disconnected during claim');
-        claims.set(handle, { owner, browser_id: browser.id, tab_id: args.tab_id });
-        tabClaims.set(key, handle);
-        return { ...result, tab_handle: handle, browser_id: browser.id, tab_id: args.tab_id, title: result.title ?? tab.title, url: result.url ?? tab.url };
-      });
+      return claimTab(browser, owner, tab, { expected_url: args.expected_url, expected_title: args.expected_title });
     }
     if (!OPERATIONS.has(method)) throw new Error(`Unknown browser operation: ${method}`);
     const handle = args.tab_handle, claim = claims.get(handle);

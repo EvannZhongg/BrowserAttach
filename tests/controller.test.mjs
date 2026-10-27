@@ -324,6 +324,65 @@ test('tab lifecycle is explicit, HTTP(S)-only and requires ownership to activate
   await assert.rejects(f.exec('read_text'), /not claimed/);
 });
 
+test('new-tab claim waits for its initial URL, accepts redirects and never navigates again', async () => {
+  const f = fixture();
+  const opened = await f.exec('open_tab', { url: 'https://requested.test/' });
+  f.tabs.get(opened.tab_id).url = 'about:blank';
+  const claim = f.exec('claim_tab', { tab_id: opened.tab_id, wait_for_page: true });
+  setTimeout(() => { f.tabs.get(opened.tab_id).url = 'https://redirected.test/'; }, 10);
+  assert.equal((await claim).url, 'https://redirected.test/');
+  assert.equal(f.calls.filter(c => c.method === 'tabs.create').length, 1);
+  assert.ok(!f.calls.some(c => c.method === 'Page.navigate'));
+});
+
+test('new-tab initial URL wait is bounded and restricted destinations remain unclaimable', async t => {
+  const f = fixture();
+  f.tabs.get(9).url = 'about:blank';
+  t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });
+  const rejected = assert.rejects(f.exec('claim_tab', { wait_for_page: true }), /within 15000 ms/);
+  await new Promise(resolve => setImmediate(resolve));
+  t.mock.timers.tick(15000);
+  await rejected;
+  assert.equal(f.controller.claimedCount(), 0);
+  f.tabs.get(9).url = 'chrome://settings/';
+  await assert.rejects(f.exec('claim_tab', { wait_for_page: true }), /Only http/);
+  assert.ok(!f.calls.some(c => c.method === 'attach'));
+});
+
+test('disconnect during debugger attachment queues release and cannot resurrect a claim after detach', async () => {
+  const f = fixture();
+  let finish, entered;
+  const waiting = new Promise(resolve => { entered = resolve; });
+  f.api.debugger.attach = async () => { entered(); await new Promise(resolve => { finish = resolve; }); };
+  const claim = f.claim();
+  await waiting;
+  const release = f.exec('release_owner');
+  finish(); await claim; await release;
+  assert.equal(f.controller.claimedCount(), 0);
+  assert.ok(f.calls.some(c => c.method === 'detach'));
+
+  const detached = fixture(), send = detached.api.debugger.sendCommand;
+  detached.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'Page.getFrameTree') detached.api.debugger.onDetach.emit(target);
+    return result;
+  };
+  await assert.rejects(detached.claim(), /detached during claim/);
+  assert.equal(detached.controller.claimedCount(), 0);
+});
+
+test('disconnect during the initial URL wait releases its reserved claim after preparation', async () => {
+  const f = fixture();
+  f.tabs.get(9).url = 'about:blank';
+  const claim = f.exec('claim_tab', { wait_for_page: true });
+  await new Promise(resolve => setImmediate(resolve));
+  const release = f.exec('release_owner');
+  f.tabs.get(9).url = 'https://ready.test/';
+  await claim; await release;
+  assert.equal(f.controller.claimedCount(), 0);
+  assert.ok(f.calls.some(c => c.method === 'detach'));
+});
+
 test('39 seconds of navigation plus 7 seconds of observation fits the transport budget', async t => {
   const f = fixture(); await f.claim();
   t.mock.timers.enable({ apis: ['setTimeout', 'Date'] });

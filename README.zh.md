@@ -93,7 +93,7 @@ Windows 客户端若要求完整命令扩展名，使用 `npx.cmd`。已全局�
 | --- | --- |
 | `browser_discover` | `kind=browsers/tabs`，发现浏览器配置、标签身份及控制状态 |
 | `browser_claim_tab` | 独占接管已发现的标签 |
-| `browser_open_tab` / `browser_tab_control` | 创建标签；显式 `release/activate/close` 释放控制、激活或关闭已接管的标签 |
+| `browser_open_tab` / `browser_tab_control` | 创建标签，可用 `claim:true` 同时接管；显式 `release/activate/close` 释放控制、激活或关闭已接管的标签 |
 | `browser_fetch` | 在临时后台标签中复用登录态读取一个 HTTP(S) URL；支持 `text`/`html`/`json`、可选 HTTP 状态和游标续读 |
 | `browser_snapshot` / `browser_read_text` | AX 快照、按字面名称/value 查询及可操作引用、正文 |
 | `browser_wait` | 只读等待元素、文本、URL 或网络空闲 |

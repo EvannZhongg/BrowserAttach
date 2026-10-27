@@ -3,7 +3,7 @@
   "name": "io.github.EvannZhongg/browser-attach",
   "title": "BrowserAttach",
   "description": "Control existing signed-in Chrome and Edge tabs through a locally paired extension.",
-  "version": "0.24.3",
+  "version": "0.25.0",
   "repository": {
     "url": "https://github.com/EvannZhongg/BrowserAttach",
     "source": "github"
@@ -13,7 +13,7 @@
     {
       "registryType": "npm",
       "identifier": "@evan_zhong/browser-attach",
-      "version": "0.24.3",
+      "version": "0.25.0",
       "transport": {
         "type": "stdio"
       },

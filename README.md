@@ -93,7 +93,7 @@ Claiming and ordinary input never activate a tab or window; call `browser_tab_co
 | --- | --- |
 | `browser_discover` | `kind=browsers/tabs`; discover browser profiles, tab identity and control status |
 | `browser_claim_tab` | Exclusively claim a discovered tab |
-| `browser_open_tab` / `browser_tab_control` | Create a tab; explicit `release/activate/close` of a claimed tab |
+| `browser_open_tab` / `browser_tab_control` | Create a tab, optionally claim it with `claim:true`; explicit `release/activate/close` |
 | `browser_fetch` | Read one HTTP(S) URL in a temporary background tab using the profile's sign-in; `text`/`html`/`json`, optional HTTP status and cursor continuation |
 | `browser_snapshot` / `browser_read_text` | AX snapshot, literal name/value query with actionable refs, and page text |
 | `browser_wait` | Read-only wait for presence/absence, visibility, actionability, rendered text, exact field value, checked/selected/expanded state, URL or network idle |

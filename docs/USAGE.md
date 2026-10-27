@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.24.3**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.25.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -16,7 +16,11 @@
 
 普通 `file://` 页面使用相同流程：先在浏览器中打开文件，在 Chrome / Edge 的扩展详情中为 BrowserAttach 开启“允许访问文件网址”，再发现并接管。发现结果的 `controllable` 包含该开关检查；接管、每次操作以及导航到本地文件前都会重新检查，释放控制不受该检查阻塞。改变开关可能重载扩展并作废旧连接与句柄，此时重新发现浏览器及标签再接管。AX、截图、输入、导航和 ref 失效规则与 HTTP(S) 页面一致。内置 PDF 查看器的正文 AX 和截图能力不在本次支持保证内，仍受浏览器限制；不会开放浏览器内部页或任意扩展页。
 
-`browser_open_tab({browser_id, url, active:false})` 默认后台打开 HTTP(S) 标签，返回 tab_id；加载后仍需发现并接管。`browser_tab_control` 的 action 必填：
+`browser_open_tab({browser_id, url, active:false, claim:true})` 在指定配置中后台打开 HTTP(S) 标签，并直接返回本连接的 `tab_handle`，无需再次发现标签。`claim` 默认 false，此时只返回打开结果和 `claimed:false`，后续控制仍需发现并接管。`active` 默认 false，与是否接管独立。
+
+`claim:true` 最多等待 15 秒让初始 URL 可用，再按创建返回的准确 tab_id 接管；允许正常重定向，不等待页面加载完成。取得句柄后仍应 snapshot/按需 wait，核对当前页面。创建和接管不是可回滚事务：接管失败保留已打开标签，错误中的 `open_tab` 包含 `opened:true`、`claimed:false`、`phase:"claim"`、browser_id、tab_id 等已知创建信息。接管超时或浏览器断连时，`claimed:null`、`outcome_unknown:true` 表示接管结果未知。清理失败且仍保留控制时还返回 `control_retained:true` 和可用于 release 的 tab_handle；排除故障后释放，再发现接管。先观察，不能自动重放 open_tab。
+
+`browser_tab_control` 的 action 必填：
 
 | action | 行为 |
 |---|---|
@@ -31,7 +35,7 @@
 | 工具 | 用途 |
 |---|---|
 | `browser_discover` | 列出浏览器配置或标签及控制状态 |
-| `browser_open_tab` | 在指定配置中打开 HTTP(S) 标签 |
+| `browser_open_tab` | 打开 HTTP(S) 标签，可用 claim=true 同时取得控制句柄 |
 | `browser_claim_tab` | 独占接管已发现的标签 |
 | `browser_tab_control` | 释放、激活或关闭标签 |
 | `browser_snapshot` | AX 语义树或结构化字段数组、元素 ref、查询与 frame 覆盖 |

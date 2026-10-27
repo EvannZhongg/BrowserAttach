@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.24.3**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.25.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -58,15 +58,17 @@ MCP 层将 `discover(kind=browsers/tabs)` 映射为内部 `list_browsers/list_ta
 
 ## 控制模型
 
-1. **发现**：`discover(kind="tabs")` 的结果被 Hub 记为本次连接的观察快照。
+1. **发现**：已有标签使用 `discover(kind="tabs")` 的本连接观察快照。`open_tab(claim=true)` 以本次创建返回的准确标签身份作为接管依据，不枚举标签，也不更改已有发现记录。
 2. **校验身份**：`claim_tab` 必须使用本连接列出的 tab_id；可选 expected_url / expected_title 在 Hub 与扩展侧逐字符校验。省略标题校验可容忍标题漂移；省略全部校验表示明确按 ID 接管，返回当前身份。
-3. **独占**：Hub 为每个 `(browser_id, tab_id)` 维护唯一 owner；同一标签第二次 claim 会返回已有的 `tab_handle`（同 owner）或报错（其他 owner）。
+3. **独占**：Hub 为每个 `(browser_id, tab_id)` 维护唯一 owner；同一标签第二次 claim 会返回已有的 `tab_handle`（同 owner）或报错（其他 owner）。Hub 在请求扩展接管前预留句柄，扩展在 debugger attach 前预留 owner；初始化中的释放会排在同一标签队列中，detach 通知后的迟到结果不能恢复句柄。初始化清理时 detach 失败保留控制权。
 4. **句柄**：`tab_handle` 是 Hub 生成的随机 UUID，只在当前 MCP 连接内有效；跨连接不共享。
 5. **串行**：Hub 与扩展都对每个标签维护 Promise 队列，动作不会并发穿插。
 6. **超时**：Hub 单次浏览器操作 60 秒，客户端等待 65 秒。Hub 超时会关闭该客户端连接并释放它的 claim，错误文本明确提示"结果可能未知"。
 7. **清理**：`tab_control(action="release")` 先移除可视标记，再 `debugger.detach`，最后才忘记 claim——detach 失败不会静默把标签交给别人。断连、标签关闭、浏览器重启、用户停止调试都会清理状态。
 
 claim 与普通输入都不激活标签或窗口，也不移动系统鼠标；需要前台渲染时显式调用 `tab_control(action="activate")`。
+
+`open_tab` 的 claim 默认 false。为 true 时，Hub 在创建成功后复用同一个 claim 流程，扩展在标签队列内最多等待 15 秒让初始 URL 可用，再执行当前 URL 权限检查和 attach。该等待只观察，不重发导航，也不要求最终 URL 与请求 URL 相等；已有标签的可选精确身份校验不变。创建到接管之间不承诺原子性，其他 owner 先取得控制时返回冲突。成功只证明已接管，不证明加载完成；接管失败保留页面并在错误的 open_tab 字段报告已知创建结果。清理失败时提供保留控制的恢复句柄；Hub 超时仍沿用断连及 release_owner 清理，未知创建结果不自动重放。
 
 普通 file:// 文档复用同一套 claim、队列、CDP session、观察与输入流程。page-url.js 统一 HTTP(S)/file URL 及凭据校验，controller 通过 chrome.extension.isAllowedFileSchemeAccess 检查用户文件授权；发现结果反映该开关，接管、普通操作和 batch 每一步重新检查。navigation 对 URL 及历史目标调用同一个校验器，检查计入派发前的准备预算；权限检查迟到不会触发导航。释放、关闭和显式激活不受文件权限校验阻塞，detach 失败仍保留控制权。open_tab 与 fetch 保持 HTTP(S) 范围，不新增 host 权限或本地文件读取接口。内置 PDF 内容仍受浏览器调试边界约束，不承诺其 AX 或截图覆盖。
 

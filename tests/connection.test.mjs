@@ -51,7 +51,8 @@ async function fixture(t) {
 
 test('extension replies preserve only supported structured error evidence', async t => {
   const f = await fixture(t);
-  const evidence = { input_dispatched: true, post_action: { delivery: 'unknown', navigation_observed: true }, diagnostics: { reason: 'obstructed' } };
+  const evidence = { input_dispatched: true, post_action: { delivery: 'unknown', navigation_observed: true }, diagnostics: { reason: 'obstructed' },
+    open_tab: { opened: true, claimed: false, tab_id: 10, phase: 'claim' } };
   f.controller.execute = async () => { throw Object.assign(new Error('Receipt lost'), evidence, { private_state: 'not transported' }); };
   const result = await f.command('click');
   assert.deepEqual(result, { id: result.id, error: 'Receipt lost', ...evidence });

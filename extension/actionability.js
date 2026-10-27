@@ -15,6 +15,7 @@ export function deadline(timeout_ms = 5000, phase = 'input', parentEnd = Infinit
   function timeoutError() {
     if (phase === 'evaluation') return Object.assign(new Error(dispatched ? 'JavaScript evaluation timed out. Page effects may already have occurred. Observe before continuing. Do not replay automatically.' : 'Evaluation preparation timed out; no expression was executed.'), { input_dispatched: dispatched, outcome_unknown: dispatched });
     if (phase === 'fetch') return new Error(`Fetch did not finish within ${timeout_ms} ms; the temporary tab will be closed. Do not automatically replay the request.`);
+    if (phase === 'claim') return new Error(`Initial tab URL did not become available within ${timeout_ms} ms. The tab may still be loading; discover it before continuing. Do not repeat open_tab automatically.`);
     if (phase === 'wait') return Object.assign(new Error(`Condition was not satisfied within ${timeout_ms} ms`), { input_dispatched: false });
     if (phase === 'observation') return Object.assign(new Error(`Navigation observation timed out within ${timeout_ms} ms; navigation already succeeded. Take a new snapshot.`), { outcome_unknown: true });
     if (phase === 'snapshot') return Object.assign(new Error(`Snapshot observation timed out within ${timeout_ms} ms. Take a new browser_snapshot.`), { input_dispatched: false, diagnostics: { reason: 'snapshot_timeout' } });
