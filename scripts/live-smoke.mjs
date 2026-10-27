@@ -355,6 +355,7 @@ try {
     const section=document.createElement('section');section.id='field-observation-fixture';
     section.innerHTML='<label for="observed-fee">签证费</label><input id="observed-fee" name="TEXTS28" value="1,234.00" readonly>'+
       '<label>签证费<input id="observed-other" name="TEXTS29" value="0"></label>'+
+      '<label>空输入<input id="observed-empty-input"></label><label>空文本<textarea id="observed-empty-textarea"></textarea></label>'+
       '<input name="rawFee" type="hidden" value="1234">'+
       '<label>多选<select id="observed-select" multiple><option value="cn" selected>中国</option><option value="us" selected>美国</option></select></label>'+
       '<label>同意<input id="observed-check" type="checkbox"></label>'+
@@ -374,6 +375,10 @@ try {
   const fee = fieldView.fields.find(field => field.dom?.name === 'TEXTS28');
   assert.ok(fee?.ref); assert.equal(fee.dom.value, '1,234.00'); assert.equal(fee.ax.readonly, true);
   assert.ok(fee.labels.includes('签证费'), JSON.stringify(fee));
+  for (const [id, source] of [['observed-empty-input', 'input_value'], ['observed-empty-textarea', 'textarea_value']]) {
+    const empty = fieldView.fields.find(field => field.dom?.id === id);
+    assert.equal(empty.dom.value, ''); assert.equal(empty.dom.value_source, source);
+  }
   assert.equal(fieldView.fields.filter(field => field.labels.includes('签证费')).length, 2);
   assert.ok(!fieldView.fields.some(field => field.dom?.name === 'rawFee'));
   assert.ok(!JSON.stringify(fieldView).includes('field-observation-secret'));

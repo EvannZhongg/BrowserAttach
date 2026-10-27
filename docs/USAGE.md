@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.24.2**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.24.3**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -199,7 +199,7 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 ```
 
 - `ax` 是浏览器提供的名称、角色、值及 disabled/readonly/required/invalid/checked/selected/expanded/multiselectable 状态；缺失属性不推断为 false。`labels` 来自浏览器 AX 名称的真实 HTML label 来源，context 则是现有有界附近文本，两者不改写 AX name。
-- `dom.id/name/type/placeholder` 来自原生 DOM 快照属性；input 缺少 type 时记录 text。`dom.value` 的 value_source 区分 input_value、textarea_value、selected_option、text_content。select 附 multiple 和 selected_options 的值/标签；checkbox/radio 附原生 checked，AX checked=mixed 另行保留。contenteditable/output 的值是捕获的 textContent，不声称为编辑器完整模型。
+- `dom.id/name/type/placeholder` 来自原生 DOM 快照属性；input 缺少 type 时记录 text。`dom.value` 的 value_source 区分 input_value、textarea_value、selected_option、text_content。input/textarea 捕获到的空值保留为 `value:""`；未捕获到值时省略 value，不视为空值。select 附 multiple 和 selected_options 的值/标签；checkbox/radio 附原生 checked，AX checked=mixed 另行保留。contenteditable/output 的值是捕获的 textContent，不声称为编辑器完整模型。
 - 默认包括暴露到 AX 的原生 input/textarea/select/output/contenteditable，以及 AX 字段角色的自定义控件；不把普通按钮当字段。文件 input 即使 AX 角色是 button 也识别为字段。include_hidden=true 才额外包括未暴露到 AX 的原生字段；此类行 ax/ref 可为 null，只提供可观察的 DOM 事实。密码字段省略 DOM 与 AX 值，返回 value_redacted=true。
 - 文件 input 的 `dom.files={available,count,names}` 只报告隔离世界读取时的当前本地选择，不读取文件内容，不代表服务端附件数量或接受结果；读取失败为 available=false。上传后组件清空 input 时 count 可为 0。
 - query 在 AX 名称/值、labels/context、DOM id/name/placeholder/value 和选中选项值/标签上作字面子串匹配。text/text_limit 只控制正文，不截断字段值。分页续读不重新采集；要核对当前值应发起新的字段观察。

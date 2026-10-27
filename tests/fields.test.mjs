@@ -67,6 +67,27 @@ test('native states and selected options preserve raw values while hidden and pa
   assert.equal(render(nodes, dom, { query: 'United States' }).entries.length, 1);
 });
 
+test('native empty string sentinels remain explicit values without inventing missing or password values', () => {
+  const dom = [
+    { tag: 'input', backend: 1, value: '' }, { tag: 'textarea', backend: 2, value: '' },
+    { tag: 'input', backend: 3 }, { tag: 'textarea', backend: 4 },
+    { tag: 'input', backend: 5, value: '0' }, { tag: 'textarea', backend: 6, value: 'notes' },
+    { tag: 'input', backend: 7, attrs: { type: 'password' }, value: '' },
+  ];
+  const fields = render(dom.map(node => axField(node.backend, `Field ${node.backend}`)), dom).entries.map(entry => entry.field);
+  const serialized = JSON.parse(JSON.stringify(fields));
+  for (const [index, source] of [[0, 'input_value'], [1, 'textarea_value']]) {
+    assert.equal(fields[index].dom.value, ''); assert.equal(serialized[index].dom.value, '');
+    assert.equal(fields[index].dom.value_source, source);
+  }
+  for (const index of [2, 3, 6]) {
+    assert.equal(Object.hasOwn(fields[index].dom, 'value'), false);
+    assert.equal(Object.hasOwn(fields[index].dom, 'value_source'), false);
+  }
+  assert.equal(fields[4].dom.value, '0'); assert.equal(fields[5].dom.value, 'notes');
+  assert.equal(fields[6].dom.value_redacted, true);
+});
+
 test('custom controls use observed AX facts, native outputs/editors use text content, and missing DOM identity is never guessed', () => {
   const nodes = [axField(2, 'Custom', 'combobox', { value: { value: 'shown' } }), axField(3, 'Editor'), axField(4, 'Total', 'status'),
     axField(5, 'Removed', 'textbox', { value: { value: 'unclassified-value' } }), axField(6, 'Save', 'button')];

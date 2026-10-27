@@ -1,14 +1,22 @@
 # 验证报告
 
-当前版本 **0.24.2**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.24.3**（2026-10-27）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 修复 fields 对 DOMSnapshot 原生 input/textarea 空值字符串索引 -1 的解码：显式返回 `dom.value=""` 并保留 value_source。未采集值仍省略 value，密码值仍不输出，不推断自绘控件的展示值或填写状态。
+- 测试 fixture 使用真实空值编码；新增回归覆盖 input/textarea 空值及 JSON 序列化、缺失值、非空值和空密码脱敏。新测试在旧实现上失败，修复后 fields/snapshot/controller-observation 相关 52 项测试通过。
+- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 420 次调用、40 项检查通过，包含新增的真实空 input/textarea 字段值及 value_source 断言。首轮并行运行分别在 iframe 准备和 fetch 处超时，未修改相关实现或超时值，串行重跑均通过。npm run test:package 通过，62 个发布文件、23 个 stdio 工具，包外安装与独立扩展目录通过。
+- 本机部署：stop/start 重启 Hub 后，Hub 与两个已连接扩展均为 0.24.3 / ready；稳定扩展副本的 manifest 版本/身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管标签。
+- 版本递增至 0.24.3；无新增工具、参数、依赖或权限。
+
+## 0.24.2 验证
 
 - 精简 MCP instructions、工具及参数描述；batch 公共定位说明集中在 steps，分支保留模式、选项选择和 wait 条件。补清 ref/selector/focused 选择、frame 至少一个条件及互斥、wait 条件必填、scroll until/delta_y、截图目标/full_page 互斥，以及 batch 已完成前缀仍预检等已实现约束。
 - 实际初始化及 tools/list 元数据由 56,638 降为 51,605 字符，减少 5,033（8.9%）；instructions 与全部 description 合计由 23,937 降为 19,213（19.7%）。字符数按紧凑 JSON 统计，不等于 token 数。
 - 去除 description 后，23 个工具的发布定义逐项完全一致，包含 required、default、枚举、范围及 oneOf 分支；20 组有效/无效 MCP 调用契约检查通过，验证目标互斥、frame、wait、scroll、DOM batch click、选项选择及组合步骤。fetch cursor 续读未注入 url/format/wait_until/timeout_ms 默认值。
 - 相关现有测试：hub/config/primitives/input/locator 共 41 项通过，含真实 stdio MCP 的工具发现、参数校验与 Hub 透传；npm run test:package 通过，包外安装发布 62 个文件、23 个 stdio 工具，无生成配对密钥。本次无浏览器执行实现变更，未重复运行整套浏览器交互测试。
-- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.2 / ready；稳定扩展目录 manifest 版本和身份一致，其余 43 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连，重新加载说明并发现、接管标签。
+- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.2 / ready；稳定扩展目录 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连，重新加载说明并发现、接管标签。
 - 本次仅修正说明及共享描述组织，版本递增至 0.24.2；工具数量、参数、校验逻辑、执行语义、依赖与权限不变。
 
 ## 0.24.1 验证
@@ -19,7 +27,7 @@
 - npm test：301 项通过。覆盖 role 误填名称、错误角色、候选去重/数量/长度/空名称；CSS 原始错误和替代提示；未知输入不激活或补发；观察重试上限、共享预算、分页、fields 重新采集、控制结束和迟到读取，以及导航观察不重发。
 - Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 420 次调用、40 项检查通过。新增真实 link 被误填为 button/selector 名称时的诊断、Playwright CSS 提示传递且无补点；采集 AX 后的同文档导航触发一次完整重读，返回变化后的控件和 URL；选区丢失后显式 click/Control+A/focused type 恢复并读回核验。保留 12,000 节点大页面、OOPIF、原生回执及多行 fill 等回归。记录见 test-results/npm-live-chromium.json、npm-live-edge.json。
 - npm run test:package：62 个发布文件、23 个 stdio MCP 工具；包外安装及独立扩展目录通过，不含生成的配对密钥。
-- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.1 / ready；稳定扩展目录 F:/.nosis/browser-attach/extension 的 manifest 版本与身份一致，其余 43 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
+- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.1 / ready；稳定扩展目录 F:/.nosis/browser-attach/extension 的 manifest 版本与身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
 - 本次为可靠性与诊断修复，版本递增至 0.24.1；无新增工具、输入参数、依赖或权限。新增 diagnostics.hint/suggestions/omitted_suggestions 及观察错误原因，现有精确定位和输入结果语义保持。
 - 剩余边界：持续导航或超过预算仍可能观察失败，名称建议不证明目标唯一；激活与送达回执均不证明业务成功。编辑器模型写入、CM6 模型读取和 type 控制字符输入未扩展；键盘恢复需调用方明确选择并核验内容。本轮不操作真实业务账户。
 

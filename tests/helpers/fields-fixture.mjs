@@ -14,7 +14,7 @@ export function domCapture(documents) {
       nodes.attributes.push(Object.entries(node.attrs || {}).flatMap(([name, value]) => [intern(name), intern(value)]));
       if (node.value != null) {
         const data = node.tag.toLowerCase() === 'textarea' ? nodes.textValue : nodes.inputValue;
-        data.index.push(index); data.value.push(intern(node.value));
+        data.index.push(index); data.value.push(node.value === '' ? -1 : intern(node.value));
       }
       if (node.checked) nodes.inputChecked.index.push(index);
       if (node.selected) nodes.optionSelected.index.push(index);

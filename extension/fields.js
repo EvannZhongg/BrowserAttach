@@ -44,6 +44,8 @@ export function renderFields(axNodes, domNodes, strings, token, refs, frameId, s
   for (const node of axNodes) if (node.backendDOMNodeId && (!node.ignored || !axByBackend.has(node.backendDOMNodeId))) axByBackend.set(node.backendDOMNodeId, node);
   const rare = data => new Map((data?.index || []).map((index, n) => [index, data.value?.[n]]));
   const inputValues = rare(domNodes.inputValue), textValues = rare(domNodes.textValue);
+  // CDP uses string index -1 for captured empty input/textarea values.
+  const valueString = index => index === -1 ? '' : strings[index];
   const checked = new Set(domNodes.inputChecked?.index || []), selected = new Set(domNodes.optionSelected?.index || []);
   const children = new Map();
   for (let i = 0; i < domNodes.parentIndex.length; i++) {
@@ -108,8 +110,8 @@ export function renderFields(axNodes, domNodes, strings, token, refs, frameId, s
     if (type != null) dom.type = type;
     if (attrs.has('placeholder')) dom.placeholder = attrs.get('placeholder');
     if (type === 'password') dom.value_redacted = true;
-    else if (tag === 'input' && inputValues.has(index)) { dom.value = strings[inputValues.get(index)]; dom.value_source = 'input_value'; }
-    else if (tag === 'textarea' && textValues.has(index)) { dom.value = strings[textValues.get(index)]; dom.value_source = 'textarea_value'; }
+    else if (tag === 'input' && inputValues.has(index)) { dom.value = valueString(inputValues.get(index)); dom.value_source = 'input_value'; }
+    else if (tag === 'textarea' && textValues.has(index)) { dom.value = valueString(textValues.get(index)); dom.value_source = 'textarea_value'; }
     else if (tag === 'select') {
       dom.multiple = attrs.has('multiple'); dom.selected_options = [];
       descendants(index, current => {
