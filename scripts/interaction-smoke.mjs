@@ -14,7 +14,7 @@ import { startHub } from '../src/hub.mjs';
 import { AttachClient } from '../src/client.mjs';
 import { normalizeHit } from '../extension/pointer.js';
 
-const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
 if (!values.executable) throw new Error('Pass --executable PATH to a browser that permits --load-extension');
 const dir = await mkdtemp(join(tmpdir(), 'attach-interaction-'));
 const rows = Array.from({ length: 200 }, (_, i) => `<li>Row ${i+1}: alpha beta gamma delta epsilon</li>`).join('');
@@ -88,7 +88,77 @@ try {
  const focus = () => evaluate(`chrome.windows.getAll({populate:true}).then(w=>w.map(x=>({id:x.id,focused:x.focused,state:x.state,active:x.tabs.filter(t=>t.active).map(t=>t.id)})).sort((a,b)=>a.id-b.id))`);
  await evaluate(`chrome.tabs.update(${cover.id},{active:true})`);await pause(250);
  const operationsFocus=await focus();
- if (values.preparation) {
+ if (values.controls) {
+  const call=(method,args={})=>{results.last_operation={method,args};return client.call(method,{...h,...args})};
+  await page(`(() => {
+    document.querySelector('#go').remove();document.querySelector('#edit').remove();
+    const section=document.createElement('section');section.id='control-probe';section.style.marginTop='80px';
+    section.innerHTML='<button id="control-keep">Keep ref</button><div id="control-picker" role="combobox" aria-label="学历" aria-expanded="false" aria-controls="control-portal" tabindex="0" style="width:300px;padding:12px"><input id="control-filter" readonly value=""><span id="control-display">请选择</span></div><input id="control-other"><div id="control-portal" role="listbox" aria-label="学历选项" hidden><div id="control-bachelor" role="option" aria-selected="false">本科</div><div id="control-master" role="option" aria-selected="false">硕士</div></div><div id="control-unrelated" role="listbox"><div role="option">日语</div></div>';
+    document.body.prepend(section);window.controlWrites=0;window.controlTrusted=[];
+    const picker=section.querySelector('#control-picker'),portal=section.querySelector('#control-portal'),filter=section.querySelector('#control-filter');
+    Object.assign(portal.style,{height:'0px',overflow:'visible',position:'relative',zIndex:'10'});section.querySelector('#control-unrelated').style.marginTop='48px';
+    picker.onclick=()=>{portal.hidden=false;picker.setAttribute('aria-expanded','true');picker.setAttribute('aria-activedescendant','control-bachelor');filter.focus()};
+    const choose=(id,event)=>{section.querySelector('#control-display').textContent=document.getElementById(id).textContent;for(const option of portal.children)option.setAttribute('aria-selected',String(option.id===id));portal.hidden=true;picker.setAttribute('aria-expanded','false');picker.removeAttribute('aria-activedescendant');controlWrites++;controlTrusted.push(event.isTrusted)};
+    picker.onkeydown=e=>{if(e.key==='ArrowDown'){picker.setAttribute('aria-activedescendant','control-master');e.preventDefault()}if(e.key==='Enter'&&!portal.hidden)choose(picker.getAttribute('aria-activedescendant'),e)};
+    for(const option of portal.children)option.onclick=e=>choose(option.id,e);
+  })()`);
+  const snapshot=await call('snapshot',{query:'Keep ref'}),oldRef=snapshot.snapshot.match(/\[([^\]]+)\] button/)[1];
+  const opened=await call('click',{selector:'#control-picker',observe:{selector:'#control-picker',max_options:1}});
+  assert.equal(opened.delivery_verified,true);assert.equal(opened.observation.available,true);
+  assert.equal(opened.observation.control.ax.expanded,true);assert.equal(opened.observation.observed_options,2);
+  assert.equal(opened.observation.popups[0].dom.visible,false);
+  assert.equal(opened.observation.options.length,1);assert.equal(opened.observation.omitted_options,1);
+  assert.ok(!JSON.stringify(opened.observation).includes('日语'));
+  const moved=await call('press_key',{selector:'#control-picker',key:'ArrowDown',observe:{selector:'#control-picker',max_options:1}});
+  assert.equal(moved.target_verified,true);assert.equal(moved.keyboard_target.received.id,'control-filter');
+  assert.equal(moved.observation.active_option.ax.name,'硕士');assert.ok(moved.observation.active_option.ref);
+  const committed=await call('press_key',{selector:'#control-picker',key:'Enter',observe:{selector:'#control-picker'}});
+  assert.equal(committed.observation.control.dom.text,'硕士');assert.equal(committed.observation.control.ax.expanded,false);
+  assert.equal((await call('read_control',{selector:'#control-filter'})).control.dom.value,'');
+  assert.equal(await page('controlWrites'),1);assert.deepEqual(await page('controlTrusted'),[true]);
+  await call('click',{ref:oldRef});
+  await page('document.querySelector("#control-other").focus();true');
+  await assert.rejects(call('press_key',{selector:'#control-picker',key:'Enter'}),error=>error.input_dispatched===false&&error.diagnostics.reason==='keyboard_focus_mismatch');
+  const unguarded=await call('press_key',{key:'Enter'});assert.equal(unguarded.target_verified,null);assert.equal(unguarded.keyboard_target.received.id,'control-other');
+  const reopened=await call('click',{selector:'#control-picker',observe:{selector:'#control-picker'}});
+  const option=reopened.observation.options.find(option=>option.ax.name==='硕士');
+  await call('click',{ref:option.ref,observe:{selector:'#control-picker'}});assert.equal(await page('controlWrites'),2);
+  const missing=await call('click',{selector:'#control-keep',observe:{selector:'#missing-control',timeout_ms:100}});
+  assert.equal(missing.delivery_verified,true);assert.equal(missing.observation.available,false);
+  await page(`(() => {const picker=document.querySelector('#control-picker');picker.scrollIntoView({block:'center'});const r=picker.getBoundingClientRect();const cover=document.createElement('div');cover.id='control-cover';cover.textContent='Blocking popup';Object.assign(cover.style,{position:'fixed',left:r.x+'px',top:r.y+'px',width:r.width+'px',height:r.height+'px',zIndex:'9999999',background:'gray'});document.body.append(cover)})()`);
+  await assert.rejects(call('click',{selector:'#control-picker',scroll:false}),error=>{
+    assert.equal(error.input_dispatched,false);assert.equal(error.diagnostics.requested_target.id,'control-picker');assert.equal(error.diagnostics.blocked_by.id,'control-cover');return true;
+  });
+  await page('document.querySelector("#control-cover").remove();true');
+  await client.call('activate_tab',h);
+  await page(`(() => {
+    const host=document.createElement('div');host.style.display='inline-block';host.id='control-shadow-host';
+    const root=host.attachShadow({mode:'closed'});root.innerHTML='<input aria-label="Closed shadow field" id="control-shadow-input">';document.querySelector('#control-probe').append(host);
+    const frame=document.createElement('iframe');frame.id='control-frame';frame.srcdoc='<input id="control-frame-input" aria-label="Frame field" role="combobox" aria-controls="frame-popup"><div id="frame-popup" role="listbox"><div role="option">Frame option</div></div>';document.querySelector('#control-probe').append(frame);
+    const remote=document.createElement('iframe');remote.id='control-remote';remote.src=${JSON.stringify(base.replace('127.0.0.1','localhost')+'/inner')};document.querySelector('#control-probe').append(remote);
+  })()`);
+  const shadow=await call('type',{selector_type:'role',selector:'textbox',name:'Closed shadow field',text:'A中'});
+  assert.equal(shadow.typed,2);assert.equal(shadow.delivery_verified,true);
+  const shadowRead=await call('read_control',{selector_type:'role',selector:'textbox',name:'Closed shadow field'});
+  assert.equal(shadowRead.control.dom.value,'A中');
+  const shadowKey=await call('press_key',{ref:shadowRead.control.ref,key:'End'});
+  assert.equal(shadowKey.target_verified,true);assert.equal(shadowKey.keyboard_target.received.id,'control-shadow-input');
+  const frameRead=await call('read_control',{selector:'#control-frame-input',frame:{path:['#control-frame']}});
+  assert.equal(frameRead.options[0].ax.name,'Frame option');
+  await call('click',{ref:frameRead.control.ref});
+  const frameKey=await call('press_key',{ref:frameRead.control.ref,key:'ArrowDown'});
+  assert.equal(frameKey.target_verified,true);assert.equal(frameKey.keyboard_target.received.id,'control-frame-input');
+  assert.equal(frameKey.keyboard_target.frame_id,frameRead.frame_id);
+  const remoteRead=await call('read_control',{selector:'input',frame:{path:['#control-remote']},timeout_ms:5000});
+  await call('click',{ref:remoteRead.control.ref});
+  const remoteKey=await call('press_key',{ref:remoteRead.control.ref,key:'ArrowDown'});
+  assert.equal(remoteKey.target_verified,true);assert.equal(remoteKey.keyboard_target.frame_id,remoteRead.frame_id);
+  const steps=Array.from({length:30},()=>({action:'press_key',key:'Tab'}));
+  const suffix=await call('batch',{steps,start_at:29,observe:{selector:'#control-picker'}});
+  assert.equal(suffix.completed,true);assert.equal(suffix.results.length,1);assert.equal(suffix.observation.available,true);
+  await assert.rejects(call('batch',{steps:[...steps,steps[0]]}),/1..30/);
+  results.cases.push({scenario:'control_popup_active_option_observation_and_keyboard_targets',opened,moved,committed,missing,suffix,shadowKey,frameKey,remoteKey,writes:await page('controlWrites')});
+ } else if (values.preparation) {
   const call=(method,args={})=>client.call(method,{...h,...args});
   await page(`(() => {
     const section=document.createElement('section');section.id='preparation';
@@ -953,13 +1023,13 @@ try {
  assert.equal(fragment.same_document,true);assert.equal(fragment.snapshot,undefined);assert.equal(fragment.url,base+'/slow#fragment');
  }
  results.browser=browserInfo.user_agent;results.extension_version=browserInfo.extension_version;
- console.log(JSON.stringify({preparation:values.preparation?results.cases:undefined,issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
+ console.log(JSON.stringify({controls:values.controls?results.cases:undefined,preparation:values.preparation?results.cases:undefined,issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
   hover:results.cases.find(c=>c.scenario==='hover_shift_30px'),navigation:results.navigation}));
  if(claim)await client.call('release_tab',{tab_handle:claim.tab_handle});claim=null;
 } finally {
  if(claim)await client?.call('release_tab',{tab_handle:claim.tab_handle}).catch(()=>{});
  await client?.close();await closeBrowser?.().catch(()=>{});ws?.terminate();browser.kill();await hub.close();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));
  await mkdir(join(ROOT,'test-results'),{recursive:true});
-  await writeFile(join(ROOT,'test-results',`${values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
+  await writeFile(join(ROOT,'test-results',`${values.controls?'controls':values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
  await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100}).catch(()=>{});
 }

@@ -8,8 +8,8 @@ import { syncExtension } from './setup.mjs';
 import { compareVersions } from '../extension/version.js';
 
 const MAX_MESSAGE = 24 * 1024 * 1024;
-const OPERATIONS = new Set(['release_tab', 'activate_tab', 'close_tab', 'snapshot', 'read_text', 'type', 'hover', 'drag', 'wait', 'select_option', 'click', 'fill', 'press_key', 'batch', 'scroll', 'navigate', 'screenshot', 'handle_dialog', 'upload_file', 'evaluate', 'logs']);
-export const CAPABILITIES = ['tabs', 'fetch', 'open_tab', 'activate_tab', 'close_tab', 'claim', 'ax_snapshot', 'text', 'type', 'hover', 'drag', 'wait', 'select_option', 'click', 'fill', 'keyboard', 'batch', 'scroll', 'navigate', 'screenshot', 'handle_dialog', 'upload_file', 'visual_indicator', 'evaluate', 'logs'];
+const OPERATIONS = new Set(['release_tab', 'activate_tab', 'close_tab', 'snapshot', 'read_control', 'read_text', 'type', 'hover', 'drag', 'wait', 'select_option', 'click', 'fill', 'press_key', 'batch', 'scroll', 'navigate', 'screenshot', 'handle_dialog', 'upload_file', 'evaluate', 'logs']);
+export const CAPABILITIES = ['tabs', 'fetch', 'open_tab', 'activate_tab', 'close_tab', 'claim', 'ax_snapshot', 'read_control', 'text', 'type', 'hover', 'drag', 'wait', 'select_option', 'click', 'fill', 'keyboard', 'batch', 'scroll', 'navigate', 'screenshot', 'handle_dialog', 'upload_file', 'visual_indicator', 'evaluate', 'logs'];
 export class OperationTimeout extends Error {}
 const send = (ws, data) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(data)); };
 

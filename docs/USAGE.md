@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.27.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.28.1**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -44,6 +44,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 | `browser_tab_control` | 释放、激活或关闭标签 |
 | `browser_snapshot` | AX 语义树或结构化字段数组、元素 ref、查询与 frame 覆盖 |
 | `browser_read_text` | 正文、字段值或支持的编辑器模型 |
+| `browser_read_control` | 定向读取控件状态、关联弹层、活动与选中选项，保留已有 refs |
 | `browser_fetch` | 使用登录态在临时后台标签读取一个 URL |
 | `browser_click` | 原生点击或显式 DOM 点击 |
 | `browser_hover` | 悬停并保留原生指针位置 |
@@ -215,6 +216,31 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 - query 在 AX 名称/值、labels/context、DOM id/name/placeholder/value 和选中选项值/标签上作字面子串匹配。text/text_limit 只控制正文，不截断字段值。分页续读不重新采集；要核对当前值应发起新的字段观察。
 - DOM 与 AX 按所属 frame/session 的 backend 节点身份关联，支持闭合 Shadow DOM 和 OOPIF。两次捕获之间节点被替换时不按 id/name 猜测新节点，只有 AX 事实的行 dom=null；无法判断原生字段类型时也省略 AX value。各 frame 与文件列表分步读取，不提供跨来源原子快照、业务提交值、组件内部模型或并发写入归属判断。读取最终保存结果仍需任务相关的页面或接口证据。
 
+### browser_read_control
+
+定向读取一个 ref 或唯一 selector，不替换现有快照、refs 或分页。不聚焦、不展开控件、不推断组件库内部模型；新增 refs 复用现有文档/frame/session 与 AX 身份校验。同一身份重复读取复用 ref，新增 ref 仍受每次观察 500 个的预算限制。
+
+```json
+{"tab_handle":"...","selector":"#education","max_options":10}
+{"tab_handle":"...","selector":"#education-wrapper","popup_selector":"#education-popup"}
+```
+
+- `control.dom` 保留原生 value/checked/indeterminate、readonly/disabled、innerText、ARIA 属性和几何事实；`control.ax` 分开保留浏览器 AX 名称、值、状态与关联。不把过滤 input 的空 value 当作未选择；组件显示文本在外层时，应明确读取包含该文本的节点。密码字段不输出 DOM/AX value。
+- `popups` 只来自浏览器已解析的 controls/owns 关系，或同 frame 内唯一的显式 CSS `popup_selector`，最多 8 个；不根据位置、class 或活动项的祖先猜测弹层所有权。每个弹层分开返回 DOM 与 AX 事实；几何 visible 不代表可点击，零尺寸外壳也不否定其选项存在。
+- `active_descendant` 来自浏览器已解析的 activedescendant；角色属于 option/menuitem/menuitemcheckbox/menuitemradio/treeitem 时同时返回 `active_option`。`active_option_status` 区分 observed/unavailable/ambiguous/non_option。`selected_options` 保留当前观察到的 AX selected=true 项；原生 select 另在 dom.selected_options 保留实际值与标签。
+- `options` 按 AX 树遍历顺序列出控件子树及关联弹层中当前暴露的选项，附可操作 ref；不代表完整虚拟列表或按键移动索引。`observed_options` 是本次发现数，`omitted_options/omitted_selected_options/omitted_popups` 标记输出省略；活动项与选中项独立保留，不因 options 截断而直接丢失。
+- `timeout_ms` 默认 1000、范围 100–5000；`max_options` 默认 30、范围 1–100；`max_chars` 默认 16000、范围 1000–64000，约束控件事实输出。单个名称、值和显示文本最多 1000 字符，并标记截断；预算不足以保留基本事实时报错，可增加 max_chars 或减少 max_options。
+
+DOM、AX 与弹层为分步读取，不提供原子视图、异步状态收敛或保存保证。读取期间文档、frame、session 或接管变化时不发布新 refs；动态节点随后变化仍按既有 ref 规则拒绝。条件断言继续使用 browser_wait。
+
+输入工具和 batch 可通过 `observe` 请求相同的动作后读取，目标必须显式指定，可与动作目标不同。例如 browser_click：
+
+```json
+{"tab_handle":"...","selector":"#master-option","observe":{"selector":"#education-wrapper"}}
+```
+
+动作成功后返回独立 `observation={available:true,...}`；读取失败或超时返回 available=false/error，保留原动作回执，不改报输入失败。已派发动作失败时也可附带 observation，仍不能据此认定未送达或自动重放。观察期限受剩余动作/步骤/整批预算限制；不隐式等待 blur、提交或弹层关闭，application_result 仍为 not_checked。
+
 ### browser_read_text
 
 `browser_read_text({tab_handle})` 默认读取主 frame 的可见正文，不包含 input/textarea 的当前值，不能据此判断表单为空。单字段用 `browser_read_text({tab_handle, selector:"#name", mode:"value"})`；整张表单用 `browser_snapshot({tab_handle, profile:"fields"})`，可加 query 筛选字段。可用 selector 限定正文范围，或用 frame/frame_id 选择子 frame。
@@ -294,7 +320,7 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 | `offset` | 原生元素内的 {x_ratio,y_ratio}，各为 0–1；默认可见区域中心 |
 | `settle_ms` | 派发前等待：0–1000 整数或有序 [min,max] 区间，默认 0 |
 
-原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 附带 hit_target、命中点及受阻 frame，前序输入可能已经送达。
+原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 分开返回 requested_target（请求目标）和 blocked_by（遮挡物），保留 hit_target 表示实际命中，并附命中点及受阻 frame，前序输入可能已经送达。
 
 布局可能变化时优先传 selector 或 ref：每次操作重新计算点击位置，无须缓存 getBoundingClientRect 坐标。无 AX role 的 div 也可用唯一 CSS/XPath 定位；复杂查询可通过 evaluate 的 result_type=element 返回 ref，再调用 click，继续使用相同的命中和事件路径核验。纯坐标调用无法推断此前截图中期望的元素。
 
@@ -407,7 +433,7 @@ delay_ms 为 0–1000 整数（默认 0）或有序区间，每两个字符间�
 
 ### browser_batch
 
-一次执行 1–20 步，支持 click/fill/type/press_key/hover/scroll/select_option/wait。元素动作使用 selector（可带 selector_type/name/frame/nth），每步重解析，不接受 ref 或坐标；type 也可使用 focused=true，scroll/wait 可按各自接口不带元素目标。
+一次执行 1–30 步，支持 click/fill/type/press_key/hover/scroll/select_option/wait。元素动作使用 selector（可带 selector_type/name/frame/nth），每步重解析，不接受 ref 或坐标；type 也可使用 focused=true，press_key 可不带目标或用 selector 守卫焦点，scroll/wait 可按各自接口不带元素目标。步骤可带 observe（仅 selector）；整批也可带 observe。
 
 ```json
 {"tab_handle":"...","steps":[
@@ -420,9 +446,17 @@ delay_ms 为 0–1000 整数（默认 0）或有序区间，每两个字符间�
 
 成功返回 completed=true/results；失败返回 MCP isError=true、completed=false、此前 results、failed_step/error，以及 started_at、next_unattempted_step、retry_failed_step_safe。索引从 0 开始，无后续步骤时 next_unattempted_step=null。
 
-显式 start_at 可跳过已审查的完成前缀，重新提交同一 steps；被跳过的步骤仍做参数验证。先观察失败步骤，再决定重试它还是从下一未尝试步骤继续。retry_failed_step_safe=false 表示已派发或无法确认；整批不具备事务或回滚语义。
+显式 start_at 可跳过已审查的完成前缀，重新提交同一 steps；被跳过的步骤仍做参数验证。先观察失败步骤，再决定重试它还是从下一未尝试步骤继续。retry_failed_step_safe=false 表示已派发或无法确认；整批不具备事务或回滚语义。失败步骤的动作后读取放在 failed_step_observation，整批末尾读取放在 observation；读取失败本身不停止后续步骤，需要条件断言时使用 wait。
 
 ### browser_press_key
+
+可选 ref/selector 用作预期焦点守卫，只检查目标或其 composed 后代是否已获焦，不主动聚焦；不带目标时仍发送给当前焦点。守卫在派发前不匹配，返回 keyboard_focus_mismatch 和 input_dispatched=false；派发期间发现事件路径不匹配，返回 keyboard_target_changed、实际接收目标及结果未知，并尝试阻止不匹配事件继续传播，仍不证明页面没有先行处理。两者均不自动重放。
+
+成功的 `keyboard_target` 分开记录准备时目标、prepared_frame_id、可信 keydown 实际目标与 frame_id；描述不包含输入值。带守卫时 target_verified=true，否则为 null。隔离世界事件路径核验支持 slot/Shadow DOM；闭合 Shadow DOM 从对应 root 读取实际事件路径。可与 observe 组合读取另一个控件或显示节点。
+
+```json
+{"tab_handle":"...","selector":"#education","key":"Enter","observe":{"selector":"#education-wrapper"}}
+```
 
 支持 F1–F12、Enter/Tab/Escape/Backspace、Insert/Delete、方向键、Home/End/PageUp/PageDown，以及 ASCII 字母、数字和 US 键盘标点。
 

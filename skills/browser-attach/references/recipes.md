@@ -22,7 +22,9 @@ Use actual labels, placeholders or stable selectors. A short sequence of known e
 
 Tab explicitly requests blur; omit it when the page does not need it. Read validation and selected state before the task's submit/save step. After saving, verify a concrete application result, such as a success message or the saved record. `value_verified` establishes retained text, not persistence.
 
-For a custom combobox, fill the filter, inspect the opened popup, then click the intended option. Use observed `controls`/`owns` IDs to scope a portal when available; they are DOM IDs, not refs. For a popup ID `company-options`, an option selector could be:
+For a custom combobox, open/fill the filter, use `browser_read_control` on the control, then click the intended option ref. It reports the current active and selected items separately from the bounded option list. Add `observe` with an explicit control/display-container locator to the click or guarded `browser_press_key` to read the displayed result in the same call; observation failure does not undo input delivery. Use `browser_wait` when the next step requires an asserted state.
+
+When no usable relation is exposed, provide a unique `popup_selector` instead of guessing which floating list belongs to the control. Existing `controls`/`owns` IDs can also scope a portal; they are DOM IDs, not refs. For a popup ID `company-options`, an option selector could be:
 
 ```json
 {"tab_handle":"HANDLE","selector_type":"xpath","selector":"//*[@id='company-options']//*[@role='option' and normalize-space(.)='Example Ltd']"}

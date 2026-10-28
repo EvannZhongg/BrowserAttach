@@ -25,7 +25,7 @@
 - 导航与历史前进/后退、打开或关闭标签页，处理 JavaScript 对话框，上传本机文件并截取整页或单个元素。
 - 在主页面执行 JavaScript 表达式，读取接管后的控制台、页面异常和网络生命周期日志；需要校验 XHR/fetch 时显式开启有界、脱敏的请求/响应详情。
 - 在临时后台标签中复用配置的登录态读取一个 HTTP(S) URL，返回渲染文本、当前 DOM 或完整 JSON，并在可观察时附带主文档 HTTP 状态。
-- 使用标准 stdio MCP，共提供 23 个工具。Hub 仅监听本机 loopback，通过随机密钥配对扩展。
+- 使用标准 stdio MCP，共提供 24 个工具。Hub 仅监听本机 loopback，通过随机密钥配对扩展。
 
 ## 环境要求
 
@@ -98,9 +98,10 @@ npm 包附带可选的 [browser-attach skill](skills/browser-attach/SKILL.md)，
 | `browser_open_tab` / `browser_tab_control` | 创建标签，可用 `claim:true` 同时接管；显式 `release/activate/close` 释放控制、激活或关闭已接管的标签 |
 | `browser_fetch` | 在临时后台标签中复用登录态读取一个 HTTP(S) URL；支持 `text`/`html`/`json`、可选 HTTP 状态和游标续读 |
 | `browser_snapshot` / `browser_read_text` | AX 快照、按字面名称/value 查询及可操作引用、正文 |
+| `browser_read_control` | 定向读取控件、关联弹层及活动/选中选项，保留已有 refs |
 | `browser_wait` | 只读等待元素、文本、URL 或网络空闲 |
 | `browser_click` / `browser_hover` / `browser_drag` / `browser_select_option` / `browser_type` / `browser_fill` / `browser_press_key` / `browser_scroll` | 原生/DOM 输入、指针悬停与拖拽、下拉选择、逐字输入与滚动 |
-| `browser_batch` | 单队列顺序执行 1–20 步 click/fill/type/press_key/hover/scroll/select_option/wait，失败即停并返回部分结果 |
+| `browser_batch` | 单队列顺序执行 1–30 步 click/fill/type/press_key/hover/scroll/select_option/wait，失败即停并返回部分结果 |
 | `browser_navigate` | HTTP(S)/file 导航、后退前进与加载等待 |
 | `browser_handle_dialog` | alert、confirm、prompt |
 | `browser_upload_file` | 原生文件 input 或拦截的文件选择器 |

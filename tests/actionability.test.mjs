@@ -207,6 +207,7 @@ test('obstruction centering is bounded, respects scroll=false and earlier dispat
   for (const scenario of ['clear', 'covered', 'no_scroll', 'dispatched', 'timeout', 'detached']) {
     let centers = 0, quads = 0, finish;
     const cdp = async (target, method, args) => {
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.callFunctionOn') {
         if (args.functionDeclaration.includes('this.scrollIntoView(')) {
           centers++;
@@ -244,6 +245,7 @@ test('ancestor-frame obstruction reports its hit target and preserves the failur
     const calls = [];
     const cdp = async (target, method, args) => {
       calls.push(method);
+      if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
       if (method === 'Runtime.callFunctionOn') {
         if (args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true, x: 10, y: 10 } } };
         if (args.functionDeclaration.includes('function describeHit')) {
@@ -266,8 +268,37 @@ test('ancestor-frame obstruction reports its hit target and preserves the failur
       assert.match(error.message, /covers this frame.*hit_target=.*blocked_frame_id="child"/);
       assert.match(error.message, dispatched ? /Outcome is unknown/ : /No input was dispatched/);
       assert.match(error.message, vanished ? /backend_node_id.*99/ : /Parent overlay/);
+      assert.equal(error.diagnostics.requested_target.backend_node_id, 7);
+      assert.equal(error.diagnostics.requested_target.frame_id, 'child');
+      if (vanished) assert.equal(error.diagnostics.blocked_by.backend_node_id, 99);
+      else assert.equal(error.diagnostics.blocked_by.text, 'Parent overlay');
       assert.equal(error.input_dispatched, dispatched); return true;
     });
     assert.ok(!calls.some(method => method.startsWith('Input.')));
   }
+});
+
+test('hit relationships resolve both backend nodes in one explicit frame world after isolated observations', async () => {
+  const calls = [];
+  const cdp = async (target, method, args) => {
+    calls.push({ method, args });
+    if (method === 'Page.createIsolatedWorld') return { executionContextId: 42 };
+    if (method === 'DOM.resolveNode') return { object: { objectId: args.executionContextId === 42 ? `isolated-${args.backendNodeId}` : 'foreign-world' } };
+    if (method === 'DOM.getContentQuads') return { quads: [[0, 0, 50, 0, 50, 50, 0, 50]] };
+    if (method === 'DOM.getNodeForLocation') return { backendNodeId: 1, frameId: 'child' };
+    if (method === 'Runtime.callFunctionOn') {
+      if (args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true } } };
+      if (args.functionDeclaration.includes('function describeHit')) return { result: { value: { tag: 'input' } } };
+      if (args.functionDeclaration.includes('function hitRelation')) {
+        assert.equal(args.objectId, 'isolated-1'); assert.equal(args.arguments[0].objectId, 'isolated-1');
+        return { result: { value: 'same_node' } };
+      }
+    }
+    return {};
+  };
+  const pointer = createPointer(cdp, r => r.result.value, async () => ({ width: 100, height: 100, scroll_x: 0, scroll_y: 0 }), null, {});
+  const result = await pointer.prepare(1, { target: { tabId: 1 }, objectId: 'foreign-world', backendNodeId: 1, frameId: 'child' }, {});
+  assert.equal(result.relation, 'same_node');
+  assert.equal(calls.filter(call => call.method === 'DOM.resolveNode' && call.args.executionContextId === 42).length, 2);
+  assert.ok(!calls.some(call => call.method.startsWith('Input.')));
 });

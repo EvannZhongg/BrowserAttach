@@ -36,7 +36,7 @@ for (const path of names) {
   if (/config\.generated\.js|(^|\/)(\.local|\.venv|test-results|node_modules)\//.test(path)) throw new Error(`Private file included in package: ${path}`);
 }
 for (const path of ['extension/connection.js', 'extension/version.js', 'extension/errors.js', 'extension/page-url.js']) if (!names.includes(path)) throw new Error(`Package is missing ${path}`);
-for (const path of ['src/hub-runtime.mjs', 'extension/observation.js', 'extension/fields.js', 'extension/pointer.js', 'extension/dialogs.js', 'extension/network.js', 'extension/log-data.js', 'extension/fetch-page.js', 'extension/screenshot.js', 'extension/upload.js']) if (!names.includes(path)) throw new Error(`Package is missing ${path}`);
+for (const path of ['src/hub-runtime.mjs', 'extension/observation.js', 'extension/control.js', 'extension/target-description.js', 'extension/fields.js', 'extension/pointer.js', 'extension/dialogs.js', 'extension/network.js', 'extension/log-data.js', 'extension/fetch-page.js', 'extension/screenshot.js', 'extension/upload.js']) if (!names.includes(path)) throw new Error(`Package is missing ${path}`);
 for (const path of ['bin/browser-attach.mjs', 'src/mcp.mjs', 'src/hub.mjs', 'extension/manifest.json', 'extension/evaluate.js', 'extension/fetch.js', 'extension/locator.js', 'extension/batch.js', 'extension/wait.js', 'extension/outcomes.js', 'extension/scroll.js', 'extension/drag.js', 'extension/text.js', 'extension/diagnostics.js', 'extension/sessions.js', 'extension/actionability.js', 'extension/limits.js', 'extension/icons/BrowserAttach.png']) {
   if (!names.includes(path)) throw new Error(`Package is missing ${path}`);
 }

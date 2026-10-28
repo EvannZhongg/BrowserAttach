@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.27.0"
+  version: "0.28.1"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -39,6 +39,7 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | Controls and actionable refs | `browser_snapshot(profile="interactive")` |
 | A known name, value or nearby field context | `browser_snapshot(query="...")`; use full view when searching prose |
 | Form inventory and current values | `browser_snapshot(profile="fields")` |
+| One control, its related popup and active/selected options | `browser_read_control`; input `observe` can attach this bounded read to an action |
 | One field or supported editor model | `browser_read_text(mode="value" or "editor", selector=...)` |
 | Visual layout or a canvas | `browser_screenshot` with its coordinate mapping |
 | Page data not exposed by these observations | A small, task-specific `browser_evaluate` expression |

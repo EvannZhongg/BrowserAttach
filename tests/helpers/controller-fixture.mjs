@@ -37,7 +37,7 @@ export function fixture() {
         calls.push({ method, args, target });
         if (method === 'Runtime.addBinding') binding = args.name;
         if (method === 'Input.dispatchKeyEvent' && ['rawKeyDown', 'keyDown'].includes(args.type)) {
-          api.debugger.onEvent.emit(target, 'Runtime.bindingCalled', { name: binding, executionContextId: 42, payload: '{"delivered":true}' });
+          api.debugger.onEvent.emit(target, 'Runtime.bindingCalled', { name: binding, executionContextId: 42, payload: '{"delivered":true,"matched":true,"target":{"tag":"input","id":"edit"}}' });
         }
         if (method === 'Page.createIsolatedWorld') return { executionContextId: 42 };
         if (method === 'Page.navigate') {
@@ -64,7 +64,7 @@ export function fixture() {
         ] }; axTrees.push({ sessionId: target.sessionId, result }); return result; }
         if (method === 'Runtime.evaluate' && args.expression.startsWith('(function queryElement')) return { result: { objectId: 'selector-node' } };
         if (method === 'DOM.describeNode' && args.objectId === 'selector-node') return { node: { backendNodeId: 12 } };
-        if (method === 'DOM.describeNode' && args.objectId === 'focused') return { node: {} };
+        if (method === 'DOM.describeNode' && args.objectId === 'focused') return { node: { backendNodeId: 13 } };
         if (method === 'Runtime.evaluate' && args.expression.includes('function activeElement')) return { result: { objectId: 'focused' } };
         if (method === 'DOM.describeNode') return { node: { frameId: 'remote', attributes: ['src', 'https://frame.test/'] } };
         if (method === 'DOM.resolveNode') return { object: { objectId: `object-${args.backendNodeId}` } };
@@ -76,6 +76,8 @@ export function fixture() {
         if (method === 'Runtime.evaluate' && args.expression.includes('title: document.title')) return { result: { value: { title: tabs.get(9).title, url: tabs.get(9).url } } };
         if (method === 'Runtime.evaluate') return { result: { value: { width: 1024, height: 768, scroll_x: 0, scroll_y: 0, device_pixel_ratio: 1 } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function installGuard')) return { result: { objectId: 'guard' } };
+        if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function installKeyReceipt')) return { result: { objectId: 'key-guard' } };
+        if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function describeTarget')) return { result: { value: { tag: 'input', id: args.objectId === 'focused' ? 'edit' : 'requested' } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true, x: 10, y: 10, width: 90, height: 40 } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function prepareFill')) return { result: { value: { verification_source: 'dom_value' } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function hitRelation')) return { result: { value: blocked ? null : 'same_node' } };

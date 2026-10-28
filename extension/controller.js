@@ -26,6 +26,7 @@ import { errorData } from './errors.js';
 import { pageUrl, httpUrl } from './page-url.js';
 import { createScreenshots } from './screenshot.js';
 import { createUploads } from './upload.js';
+import { createControlReader, controlOptions } from './control.js';
 
 export function createController(api, notify = () => {}) {
   const claims = new Map();
@@ -55,6 +56,7 @@ export function createController(api, notify = () => {}) {
     } else { evaluations.forget(tabId); uploads.forget(tabId); }
   });
   const outcomes = createOutcomes(cdp, value, sessions, observations, tabId => api.tabs.get(tabId), tabId => dialogs.get(tabId));
+  const readControl = createControlReader(cdp, value, sessions, observations, resolveNode, tabId => claims.get(tabId));
   const fetchPages = createFetchPages(api, cdp, value, navigation, network, sessions, pointer, observations, { queued, attach, currentClaim: tabId => claims.get(tabId), forget });
   const fetches = createFetches(fetchPages.read);
   const scrolling = createScrolling(cdp, value, sessions, pointer, viewport, position, observations, tabId => claims.get(tabId));
@@ -187,9 +189,10 @@ export function createController(api, notify = () => {}) {
       if (command !== 'release_tab') throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
     }
     if (command === 'snapshot') return await observations.snapshot(tabId, args);
+    if (command === 'read_control') return await readControl(tabId, args);
     if (command === 'batch') {
       validateSteps(args.steps, args.start_at ?? 0);
-      const budget = deadline(args.timeout_ms ?? 15000), results = [];
+      const budget = args.budget || deadline(args.timeout_ms ?? 15000), results = [];
       const claim = claims.get(tabId), documentVersion = observations.version(tabId);
       for (let index = args.start_at ?? 0; index < args.steps.length; index++) {
         const step = args.steps[index];
@@ -201,7 +204,9 @@ export function createController(api, notify = () => {}) {
           const stepBudget = budget.child(step.timeout_ms ?? 30000, command === 'wait' ? 'wait' : 'input');
           results.push(await perform(tabId, command, { ...inputArgs, dialog_policy: step.dialog_policy ?? args.dialog_policy ?? 'ask', budget: stepBudget }));
         } catch (error) {
-          return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index, next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: error.input_dispatched === false, ...errorData(error),
+          const { observation, ...failure } = errorData(error);
+          return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index, next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: error.input_dispatched === false, ...failure,
+            ...(observation ? { failed_step_observation: observation } : {}),
             application_result: 'not_checked', observe_again: true };
         }
       }
@@ -231,7 +236,7 @@ export function createController(api, notify = () => {}) {
     if (command === 'wait') return await waitFor(cdp, value, sessions, network, pointer, tabId, args);
     if (command === 'drag') {
       dragOptions(args);
-      args = { ...args, budget: deadline(args.timeout_ms ?? 5000) };
+      args = { ...args, budget: args.budget || deadline(args.timeout_ms ?? 5000) };
       await pointer.assertReady(tabId, args.budget, 'drag');
       await args.observe_start?.();
       const claim = claims.get(tabId), documentVersion = observations.version(tabId);
@@ -282,6 +287,7 @@ export function createController(api, notify = () => {}) {
     if (command === 'fill') fillOptions(args);
     if (command === 'select_option') selectOptions(args);
     if (command === 'type') typeOptions(args);
+    if (command === 'press_key' && ['ref', 'selector', 'selector_type', 'name', 'frame', 'frame_id', 'nth'].some(key => args[key] != null)) targetOptions(args);
     if (command === 'scroll') scrollOptions(args);
     if (['scroll', 'upload_file'].includes(command) && ['ref', 'selector', 'frame', 'frame_id', 'selector_type', 'name', 'nth'].some(key => args[key] != null)) targetOptions(args);
     if (['click', 'fill', 'type', 'hover', 'select_option'].includes(command)) targetOptions(args, { coordinates: command === 'hover' || command === 'click' && inputMode(args) !== 'dom', focused: command === 'type' });
@@ -312,14 +318,26 @@ export function createController(api, notify = () => {}) {
     if (command === 'select_option') return await input.selectOption(tabId, node, args);
     if (command === 'type') return await input.typeText(tabId, node, args);
     if (command === 'fill') return await input.fill(tabId, node, args);
-    if (command === 'press_key') return await input.pressKey(tabId, args.key, args);
+    if (command === 'press_key') return await input.pressKey(tabId, args.key, { ...args, expectedNode: node });
     if (command === 'scroll') return await scrolling.scroll(tabId, node, args);
     throw new Error(`Unknown operation: ${command}`);
   }
 
   async function perform(tabId, command, args) {
-    if (!args.budget && (['click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'upload_file'].includes(command) || command === 'evaluate' && args.cursor == null)) {
-      args = { ...args, budget: deadline(args.timeout_ms ?? (command === 'evaluate' ? 10000 : 5000), command === 'evaluate' ? 'evaluation' : 'input') };
+    if (args.observe != null) controlOptions(args.observe);
+    if (!args.budget && (['batch', 'drag', 'click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'upload_file'].includes(command) || command === 'evaluate' && args.cursor == null)) {
+      args = { ...args, budget: deadline(args.timeout_ms ?? (command === 'batch' ? 15000 : command === 'evaluate' ? 10000 : 5000), command === 'evaluate' ? 'evaluation' : 'input') };
+    }
+    const claim = claims.get(tabId);
+    async function observe() {
+      try {
+        if (claims.get(tabId) !== claim || !claim) throw new Error('Tab control ended before action observation');
+        if (dialogs.has(tabId)) throw new Error('A JavaScript dialog blocks action observation');
+        const budget = args.budget ? args.budget.child(args.observe.timeout_ms ?? 1000, 'snapshot') : deadline(args.observe.timeout_ms ?? 1000, 'snapshot');
+        await budget.run(async () => controlCurrentUrl((await api.tabs.get(tabId)).url, 'read_control'));
+        if (claims.get(tabId) !== claim) throw new Error('Tab control ended before action observation');
+        return { available: true, ...await readControl(tabId, args.observe, budget) };
+      } catch (error) { return { available: false, ...errorData(error) }; }
     }
     const state = dialogs.enter(tabId, args.dialog_policy);
     let outcome;
@@ -327,12 +345,14 @@ export function createController(api, notify = () => {}) {
       outcome = await outcomes.begin(tabId, command, args);
       const result = await action(tabId, command, { ...args, observe_start: outcome.start });
       await dialogs.settle(state);
-      return { ...result, ...(state.messages.length ? { dialogs: state.messages } : {}) };
+      return { ...result, ...(args.observe ? { observation: await observe() } : {}), ...(state.messages.length ? { dialogs: state.messages } : {}) };
     } catch (error) {
+      if (command === 'read_control') error.input_dispatched = false;
       if (error.input_dispatched == null && args.budget?.has_dispatched) error.input_dispatched = args.budget.has_dispatched();
       await dialogs.settle(state).catch(() => {});
       if (state.messages.some(d => d.type === 'beforeunload' && d.accepted === false && d.handled) && /ERR_ABORTED|cancel/i.test(error.message)) return { navigated: false, cancelled_by_dialog: true, dialogs: state.messages, observe_again: true };
       if (!await outcome?.enrich(error, state.messages) && state.messages.length) error.message += ` Dialogs: ${JSON.stringify(state.messages)}`;
+      if (args.observe && error.input_dispatched !== false) error.observation = await observe();
       throw error;
     } finally {
       dialogs.exit(tabId, state);

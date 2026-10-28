@@ -14,7 +14,8 @@ import { fetchOptions } from '../extension/fetch.js';
 import { clickOptions } from '../extension/click.js';
 import { offsetOption } from '../extension/motion.js';
 import { errorData } from '../extension/errors.js';
-import { validateSteps } from '../extension/batch.js';
+import { validateSteps, MAX_BATCH_STEPS } from '../extension/batch.js';
+import { controlOptions } from '../extension/control.js';
 
 const text = data => ({ content: [{ type: 'text', text: JSON.stringify(data) }] });
 function integerRange(name, min, max) {
@@ -40,7 +41,15 @@ export function createMcp(client) {
   const dialogPolicy = { dialog_policy: z.enum(['ask', 'accept', 'dismiss']).default('ask').describe('accept/dismiss auto-handle dialogs and return their messages.') };
   const target = { ...frameScope, ref: z.string().optional(), ...selector, frame_id: z.string().optional().describe('Selector frame; default main.'),
     nth: integerRange('nth', 0, Number.MAX_SAFE_INTEGER).optional().describe('Selector only: zero-based DOM index, AX tree order for role.') };
-  const inputTimeout = { ...dialogPolicy, timeout_ms: integerRange('timeout_ms', 100, 30000).default(5000).describe('Total preparation/dispatch/verification budget.') };
+  const controlFields = { ...target,
+    popup_selector: z.string().min(1).max(10000).optional().describe('Optional unique CSS popup in the control frame; otherwise use browser-resolved controls/owns relations and control descendants.'),
+    timeout_ms: integerRange('observation timeout_ms', 100, 5000).default(1000),
+    max_options: integerRange('max_options', 1, 100).default(30), max_chars: integerRange('max_chars', 1000, 64000).default(16000) };
+  const observeSchema = (batch = false) => z.object(batch ? Object.fromEntries(Object.entries(controlFields).filter(([key]) => key !== 'ref').map(([key, schema]) => [key, schema.meta({ description: undefined })])) : controlFields).strict().superRefine((args, ctx) => {
+    try { controlOptions(args); } catch (error) { ctx.addIssue({ code: 'custom', message: error.message }); }
+  });
+  const observe = { observe: observeSchema().optional().describe('Read this explicit control after the action within its remaining budget; observation is separate from delivery. No assertion or automatic replay.') };
+  const inputTimeout = { ...dialogPolicy, ...observe, timeout_ms: integerRange('timeout_ms', 100, 30000).default(5000).describe('Total preparation/dispatch/verification and optional observation budget.') };
   const timing = name => z.union([integerRange(name, 0, 1000), z.tuple([integerRange(name, 0, 1000), integerRange(name, 0, 1000)]).refine(([min, max]) => min <= max, 'Use an ordered [min, max] pair')]);
   const offset = { offset: z.object({ x_ratio: z.number().min(0).max(1), y_ratio: z.number().min(0).max(1) }).strict().optional().describe('Native element only: ratios within its content quad; hit checks still apply.') };
   const settle = { settle_ms: timing('settle_ms').optional().describe('After preparation, before dispatch: ms or uniform [min,max]; min<=max.') };
@@ -166,6 +175,9 @@ export function createMcp(client) {
     ...handle, ...inputTimeout, ...target, ...optionChoice,
   }, null, args => { targetOptions(args); selectOptions(args); return args; });
   const focused = { focused: z.literal(true).optional().describe('Pin current editable focus without refocusing; exclusive with ref/selector and locator options.') };
+  tool('read_control', 'Read one explicit control: separate native DOM/AX values, rendered text and state; related popups, active descendant and currently exposed options in AX order. Bounded refs preserve the existing snapshot. No library-specific inference, complete virtual list, application commit or atomic DOM/AX view.', {
+    ...handle, ...controlFields,
+  }, null, args => { controlOptions(args); return args; });
   tool('type', 'Type printable characters with trusted keys without clearing. Choose exactly one ref/selector/focused=true; stop on focus loss/detachment. Enter/Tab use press_key; ordinary multiline replacement uses fill.', { ...handle, ...inputTimeout, ...target, ...focused, text: z.string().max(10000), delay_ms: typeDelay }, null, args => { targetOptions(args, { focused: true }); typeOptions(args); return args; });
   const expectedValue = { expected_value: z.string().optional().describe('Expected retained text, default text. Verification only; insertion unchanged. No normalization or blur/async wait.') };
   const fillMode = z.enum(['native', 'dom']).default('native').describe('native: focus/select and insert without character keydown. dom: write visible line breaks without focus, emit synthetic input/change.');
@@ -175,9 +187,9 @@ export function createMcp(client) {
     .map(([key, schema]) => [key, schema.meta({ description: undefined })]));
   const batchTarget = { ...batchLocator, selector: z.string().min(1).max(10000) };
   const scrollFields = { until: z.object({ text: z.string().min(1).max(2000), selector: z.string().min(1).optional() }).strict().optional().describe('DOM-only search of visible elements\' textContent; selector is a CSS filter within the container.'), max_steps: integerRange('max_steps', 1, 500).default(100), mode: z.enum(['dom', 'wheel']).default('dom'), delta_y: z.number().optional().describe('Vertical delta, positive down; required without until.'), delta_x: z.number().default(0), x: z.number().optional(), y: z.number().optional() };
-  const stepOptions = { timeout_ms: integerRange('step timeout_ms', 100, 30000).optional(), dialog_policy: z.enum(['ask', 'accept', 'dismiss']).optional() };
+  const stepOptions = { timeout_ms: integerRange('step timeout_ms', 100, 30000).optional(), dialog_policy: z.enum(['ask', 'accept', 'dismiss']).optional(), observe: observeSchema(true).optional() };
   tool('batch', 'Run ordered steps in one tab queue under a shared deadline; per-step timeouts cap remaining time. Prevalidates all steps, including skipped ones. Stops on failure with failed_step/prior results and isError; no rollback or automatic replay.', {
-    ...handle, ...dialogPolicy, start_at: integerRange('start_at', 0, 19).default(0).describe('Explicitly skip a reviewed completed prefix.'), timeout_ms: integerRange('timeout_ms', 100, 30000).default(15000),
+    ...handle, ...dialogPolicy, ...observe, start_at: integerRange('start_at', 0, MAX_BATCH_STEPS - 1).default(0).describe('Explicitly skip a reviewed completed prefix.'), timeout_ms: integerRange('timeout_ms', 100, 30000).default(15000),
     steps: z.array(z.discriminatedUnion('action', [
       z.object({ action: z.literal('click'), ...stepOptions, ...batchTarget, mode: z.enum(['native', 'dom']).default('native').describe('DOM: left single click, no modifiers.'),
         ...offset, ...settle,
@@ -188,10 +200,10 @@ export function createMcp(client) {
       z.object({ action: z.literal('select_option'), ...stepOptions, ...batchTarget, ...optionChoice }).strict(),
       z.object({ action: z.literal('scroll'), ...stepOptions, ...batchLocator, ...scrollFields }).strict(),
       z.object({ action: z.literal('wait'), ...stepOptions, ...batchLocator, ...waitFields }).strict(),
-      z.object({ action: z.literal('press_key'), ...stepOptions, key: z.string() }).strict(),
-    ])).min(1).max(20).describe('Element steps require selector; type uses selector XOR focused=true; scroll may omit target, wait follows condition. No refs; coordinates only for scroll x/y. Common locators: selector_type defaults css; label=exact associated HTML label with normalized whitespace; placeholder=exact attribute; role uses selector="link", name="Claim" (exact AX name, empty allowed). nth=zero-based DOM/AX-role order. Locator options need selector; frame/frame_id exclusive. frame needs at least one of exact url/title or nested CSS iframe path (each step unique, e.g. ["#frame"]). Steps may override dialog_policy.'),
+      z.object({ action: z.literal('press_key'), ...stepOptions, ...batchLocator, key: z.string() }).strict(),
+    ])).min(1).max(MAX_BATCH_STEPS).describe('Element steps require selector; type uses selector XOR focused=true; press_key optionally guards focus with selector; scroll may omit target, wait follows condition. Step observe uses a fresh selector; batch observe reads at the end. No refs; coordinates only for scroll x/y. Common locators: selector_type defaults css; label=exact associated HTML label with normalized whitespace; placeholder=exact attribute; role uses selector="link", name="Claim" (exact AX name, empty allowed). nth=zero-based DOM/AX-role order. Locator options need selector; frame/frame_id exclusive. frame needs at least one of exact url/title or nested CSS iframe path (each step unique, e.g. ["#frame"]). Steps may override dialog_policy.'),
   }, null, args => { validateSteps(args.steps, args.start_at); return args; });
-  tool('press_key', 'Send a native key/chord to current focus and verify keydown delivery. Supports F1-F12, navigation/editing keys and US ASCII punctuation. Examples: Control+A, Control++, Shift+/.', { ...handle, ...inputTimeout, key: z.string() });
+  tool('press_key', 'Send a native key/chord to current focus and report its trusted keydown target. Optional ref/selector guards focus without focusing it; a mismatch before dispatch sends no key. Supports F1–F12, navigation/editing keys and US ASCII punctuation.', { ...handle, ...inputTimeout, ...target, key: z.string() });
   tool('scroll', 'Scroll one ref/selector container or viewport x/y (default center). DOM emits no wheel events; wheel sends native wheel input. until returns a fresh ref. Stopped searches report stop_reason, scroll_pending and confirmed progress; a boundary/miss does not prove end of data.', {
     ...handle, ...inputTimeout, ...target, ...scrollFields,
   }, null, args => { scrollOptions(args); if (['ref', 'selector', 'frame', 'frame_id', 'selector_type', 'name', 'nth'].some(key => args[key] != null)) targetOptions(args); return args; });

@@ -80,7 +80,7 @@ export function popupProperties(node) {
   const result = {};
   for (const { name, value } of node.properties || []) {
     if (name === 'hasPopup' && value?.value != null) result.hasPopup = value.value;
-    if (name === 'controls' || name === 'owns') {
+    if (name === 'controls' || name === 'owns' || name === 'activedescendant') {
       // Keep browser-resolved DOM idrefs, not AX/backend ids or inferred owners.
       const ids = [...new Set((value?.relatedNodes || []).map(node => node.idref).filter(id => typeof id === 'string' && id))];
       if (ids.length) result[name] = ids;

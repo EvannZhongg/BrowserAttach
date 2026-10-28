@@ -4,15 +4,26 @@ import { inputMode, fillOptions, keyParameters, selectOptions, typeOptions } fro
 import { scrollOptions } from './scroll.js';
 import { waitOptions } from './wait.js';
 import { offsetOption } from './motion.js';
+import { controlOptions } from './control.js';
+
+export const MAX_BATCH_STEPS = 30;
 
 export function validateSteps(steps, startAt = 0) {
-  if (!Array.isArray(steps) || steps.length < 1 || steps.length > 20) throw new Error('steps must contain 1..20 actions');
+  if (!Array.isArray(steps) || steps.length < 1 || steps.length > MAX_BATCH_STEPS) throw new Error(`steps must contain 1..${MAX_BATCH_STEPS} actions`);
   if (!Number.isInteger(startAt) || startAt < 0 || startAt >= steps.length) throw new Error('start_at must be an existing zero-based step index');
   for (const step of steps) {
     if (!step || !['click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'wait'].includes(step.action)) throw new Error('Unsupported batch action');
     if (step.timeout_ms != null && (!Number.isInteger(step.timeout_ms) || step.timeout_ms < 100 || step.timeout_ms > 30000)) throw new Error('step timeout_ms must be 100..30000');
     if (step.dialog_policy != null && !['ask', 'accept', 'dismiss'].includes(step.dialog_policy)) throw new Error('dialog_policy must be ask, accept or dismiss');
-    if (step.action === 'press_key') keyParameters(step.key);
+    if (step.observe != null) {
+      controlOptions(step.observe);
+      if (step.observe.ref != null) throw new Error('Batch observation uses a fresh selector, not ref');
+    }
+    if (step.action === 'press_key') {
+      keyParameters(step.key);
+      if (step.ref != null) throw new Error('Batch keyboard targets use a fresh selector, not ref');
+      if (['selector', 'selector_type', 'name', 'frame', 'frame_id', 'nth'].some(key => step[key] != null)) targetOptions(step);
+    }
     else if (step.action === 'wait') waitOptions(step);
     else if (step.action === 'scroll') {
       if (step.ref != null) throw new Error('Batch scroll uses a fresh selector, not ref');

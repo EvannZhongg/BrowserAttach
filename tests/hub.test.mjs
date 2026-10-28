@@ -274,7 +274,7 @@ test('unknown outcome disconnects the client and releases its claims without rep
   assert.equal(f.requests.filter(item => item.command === 'read_text').length, 1);
 });
 
-test('real stdio MCP exposes 23 tools including ordered batch, unified logs, single JSON content, PNG image, and validated upload', async t => {
+test('real stdio MCP exposes 24 tools including bounded control reads, ordered batch, unified logs and validated upload', async t => {
   const failCommands = new Set();
   const failure = {};
   const f = await fixture(t, { failCommands, failure }), browser = await f.extension();
@@ -286,7 +286,12 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
   const mcp = new Client({ name: 'test', version: '1' });
   await mcp.connect(transport); t.after(() => mcp.close());
   const tools = (await mcp.listTools()).tools;
-  assert.equal(tools.length, 23);
+  assert.equal(tools.length, 24);
+  const readControlSchema = tools.find(tool => tool.name === 'browser_read_control').inputSchema.properties;
+  assert.equal(readControlSchema.timeout_ms.maximum, 5000); assert.equal(readControlSchema.max_options.maximum, 100);
+  const batchSchema = tools.find(tool => tool.name === 'browser_batch').inputSchema.properties;
+  assert.equal(batchSchema.steps.maxItems, 30); assert.equal(batchSchema.start_at.maximum, 29);
+  assert.ok(tools.find(tool => tool.name === 'browser_press_key').inputSchema.properties.ref);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const logSchema = tools.find(tool => tool.name === 'browser_logs').inputSchema;
   assert.deepEqual(logSchema.properties.kind.enum, ['console', 'network', 'navigation']);
@@ -370,6 +375,15 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
   const fieldRequest = f.requests.findLast(item => item.command === 'snapshot');
   assert.equal(fieldRequest.arguments.profile, 'fields'); assert.equal(fieldRequest.arguments.include_hidden, true);
   assert.equal(fieldRequest.arguments.query, 'TEXTS28');
+  await call('read_control', { tab_handle: handle, selector: '#education', popup_selector: '#portal', max_options: 2 });
+  assert.equal(f.requests.at(-1).command, 'read_control'); assert.equal(f.requests.at(-1).arguments.popup_selector, '#portal');
+  await call('press_key', { tab_handle: handle, selector: '#education', key: 'Enter', observe: { selector: '#education' } });
+  assert.equal(f.requests.at(-1).arguments.observe.selector, '#education');
+  const beforeObservation = f.requests.length;
+  for (const observe of [{}, { selector: '#education', max_options: 0 }, { selector: '#education', timeout_ms: 5001 }]) {
+    assert.equal((await call('click', { tab_handle: handle, selector: '#button', observe })).isError, true);
+  }
+  assert.equal(f.requests.length, beforeObservation);
   const beforeControl = f.requests.length;
   for (const args of [{ tab_handle: handle }, { action: 'all', tab_handle: handle }, { action: 'release' },
     { action: 'release', tab_handle: handle, focus_window: false }, { action: 'close', tab_handle: handle, focus_window: true },
@@ -390,7 +404,7 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
   const batch = await call('batch', { tab_handle: handle, steps: [{ action: 'fill', selector: 'input', nth: 1, text: 'x' }, { action: 'press_key', key: 'Tab' }] });
   assert.equal(batch.isError, true); assert.equal(JSON.parse(batch.content[0].text).failed_step, 1);
   const batchCount = f.requests.filter(r => r.command === 'batch').length;
-  for (const steps of [[], [{ action: 'fill', ref: 'old', text: 'x' }], [{ action: 'evaluate', expression: '1' }], Array(21).fill({ action: 'press_key', key: 'Tab' })]) {
+  for (const steps of [[], [{ action: 'fill', ref: 'old', text: 'x' }], [{ action: 'evaluate', expression: '1' }], Array(31).fill({ action: 'press_key', key: 'Tab' })]) {
     assert.equal((await call('batch', { tab_handle: handle, steps })).isError, true);
   }
   assert.equal(f.requests.filter(r => r.command === 'batch').length, batchCount);

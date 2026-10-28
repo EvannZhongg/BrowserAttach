@@ -2,6 +2,7 @@ import { deadline, waitForTarget, delivery } from './actionability.js';
 import { clickOptions } from './click.js';
 import { timingOption, pause } from './motion.js';
 import { checkedValue } from './errors.js';
+import { describeTarget } from './target-description.js';
 
 const BUSY = 'Browser UI may be capturing input (a tab drag or native menu). Finish that interaction, then observe the page before deciding whether to try again. Never replay an unknown outcome automatically.';
 
@@ -34,7 +35,15 @@ export function createInput(cdp, value, sessions) {
       operation.reject(Object.assign(new Error('The key action opened a JavaScript dialog. It may already have executed; use browser_snapshot and browser_handle_dialog before continuing.'), { outcome_unknown: true }));
     }
     if (method !== 'Runtime.bindingCalled' || params.name !== operation.name || !operation.contexts.has(JSON.stringify([sessionId, params.executionContextId]))) return;
-    try { if (JSON.parse(params.payload).delivered === true) operation.resolve(); }
+    try {
+      const receipt = JSON.parse(params.payload);
+      if (receipt.delivered === true) {
+        if (receipt.matched === false || operation.expected && receipt.matched !== true) operation.reject(Object.assign(new Error('Keyboard focus changed during dispatch; the key reached another target. Outcome is unknown; observe before continuing. Do not replay automatically.'), {
+          outcome_unknown: true, diagnostics: { reason: 'keyboard_target_changed', requested_target: operation.expected, received_target: receipt.target, frame_id: operation.frames.get(JSON.stringify([sessionId, params.executionContextId])) },
+        }));
+        else operation.resolve({ ...receipt, frame_id: operation.frames.get(JSON.stringify([sessionId, params.executionContextId])) });
+      }
+    }
     catch (error) { operation.reject(error); }
   }
   function cancel(tabId) { pending.get(tabId)?.reject(Object.assign(new Error('Tab detached during keyboard input; outcome is unknown. Observe before retrying.'), { outcome_unknown: true })); }
@@ -68,8 +77,9 @@ export function createInput(cdp, value, sessions) {
     const send = (...params) => budget.run(() => cdp(...params));
     const { params, text } = args.character != null ? characterParameters(args.character) : keyParameters(chord);
     const name = `__attachKey_${crypto.randomUUID().replaceAll('-', '')}`;
-    const contexts = new Set(), guards = [], omittedFrames = [];
-    const receipt = new Promise((resolve, reject) => pending.set(tabId, { name, contexts, resolve, reject }));
+    const contexts = new Set(), receiptFrames = new Map(), guards = [], omittedFrames = [];
+    const expected = args.expectedNode ? { backend_node_id: args.expectedNode.backendNodeId, frame_id: args.expectedNode.frameId } : null;
+    const receipt = new Promise((resolve, reject) => pending.set(tabId, { name, contexts, frames: receiptFrames, expected, resolve, reject }));
     receipt.catch(() => {});
     try {
       const frames = await budget.run(() => sessions.frames(tabId, send));
@@ -83,27 +93,46 @@ export function createInput(cdp, value, sessions) {
           contextId = executionContextId;
           worlds.set(frame.id, { target, contextId, frameId: frame.id });
           contexts.add(JSON.stringify([target.sessionId, executionContextId]));
+          receiptFrames.set(JSON.stringify([target.sessionId, executionContextId]), frame.id);
           await send(target, 'Runtime.addBinding', { name, executionContextId });
-          const installed = await send(target, 'Runtime.evaluate', {
-            contextId: executionContextId, expression: `(${installKeyReceipt.toString()})(${JSON.stringify(name)},${JSON.stringify(params)},${budget.remaining() + 500})`,
-            objectGroup: 'browser-attach',
+          let installed;
+          if (args.expectedNode?.frameId === frame.id) {
+            const expected = await send(target, 'DOM.resolveNode', { backendNodeId: args.expectedNode.backendNodeId, executionContextId, objectGroup: 'browser-attach' });
+            if (!expected.object?.objectId) throw new Error('Keyboard target detached before verification; no input was dispatched.');
+            worlds.get(frame.id).expectedObjectId = expected.object.objectId;
+            installed = await send(target, 'Runtime.callFunctionOn', { objectId: expected.object.objectId,
+              functionDeclaration: `function(name, params, expiry) { return (${installKeyReceipt.toString()})(name, params, expiry, (${describeTarget.toString()}), this); }`,
+              arguments: [{ value: name }, { value: params }, { value: budget.remaining() + 500 }], objectGroup: 'browser-attach' });
+          } else installed = await send(target, 'Runtime.evaluate', {
+            contextId: executionContextId, expression: `(${installKeyReceipt.toString()})(${JSON.stringify(name)},${JSON.stringify(params)},${budget.remaining() + 500},(${describeTarget.toString()}),${args.expectedNode ? 'false' : 'null'})`, objectGroup: 'browser-attach',
           });
           if (installed.exceptionDetails) value(installed);
           if (!installed.result?.objectId) throw new Error('Could not install keyboard verification; no input was dispatched.');
           guards.push({ target, objectId: installed.result.objectId });
         } catch (error) {
-          if (frame.id === frames[0].id) throw error;
+          if (frame.id === frames[0].id || frame.id === args.expectedNode?.frameId) throw error;
           contexts.delete(JSON.stringify([target.sessionId, contextId]));
           omittedFrames.push({ frame_id: frame.id, reason: error.message });
         }
       }
       const focused = await focusedNode(tabId, budget, worlds, frames);
       await waitForTarget(cdp, value, focused.target, focused, budget);
+      const preparedTarget = value(await send(focused.target, 'Runtime.callFunctionOn', { objectId: focused.objectId,
+        functionDeclaration: describeTarget.toString(), returnByValue: true }));
       if (args.expectedNode) {
         const expected = args.expectedNode;
-        const matches = focused.frameId === expected.frameId && value(await send(expected.target, 'Runtime.callFunctionOn', { objectId: expected.objectId,
-          functionDeclaration: 'function() { const a=this.getRootNode().activeElement; return this.isConnected && (a===this || this.contains(a)); }', returnByValue: true }));
-        if (!matches) throw new Error('Typing target lost focus during key preparation; no further key was dispatched');
+        const matches = focused.frameId === expected.frameId && value(await send(focused.target, 'Runtime.callFunctionOn', { objectId: worlds.get(focused.frameId).expectedObjectId,
+          functionDeclaration: `function matchesKeyboardFocus() {
+            if (!this.isConnected) return false;
+            let active=this.getRootNode().activeElement;
+            while (active?.shadowRoot?.activeElement) active=active.shadowRoot.activeElement;
+            for (let node=active; node; node=node.assignedSlot || node.parentNode || node.host) { if (node===this) return true; }
+            return false;
+          }`, returnByValue: true }));
+        if (!matches) throw Object.assign(new Error('Keyboard target lost focus during key preparation; no further key was dispatched'), {
+          input_dispatched: budget.has_dispatched(), outcome_unknown: budget.has_dispatched(),
+          diagnostics: { reason: 'keyboard_focus_mismatch', requested_target: { backend_node_id: expected.backendNodeId, frame_id: expected.frameId }, focused_target: preparedTarget, frame_id: focused.frameId },
+        });
       }
       budget.dispatch();
       // Queue the complete chord before waiting for acknowledgements. Always
@@ -111,8 +140,10 @@ export function createInput(cdp, value, sessions) {
       const commands = [send(focused.target, 'Input.dispatchKeyEvent', { type: args.character != null ? 'keyDown' : 'rawKeyDown', ...(args.character != null ? { text, unmodifiedText: text } : {}), ...params })];
       if (text != null && args.character == null) commands.push(send(focused.target, 'Input.dispatchKeyEvent', { type: 'char', text, unmodifiedText: text, ...params }));
       commands.push(send(focused.target, 'Input.dispatchKeyEvent', { type: 'keyUp', ...params }));
-      await budget.run(() => delivery(Promise.all([Promise.all(commands), receipt])));
+      const [, received] = await budget.run(() => delivery(Promise.all([Promise.all(commands), receipt])));
       return { sent: chord, method: 'native', delivery_verified: true, application_result: 'not_checked',
+        events_trusted: true, target_verified: args.expectedNode ? true : null,
+        keyboard_target: { prepared: preparedTarget, prepared_frame_id: focused.frameId, received: received.target ?? null, frame_id: received.frame_id },
         ...(omittedFrames.length ? { verification_omitted_frames: omittedFrames } : {}), observe_again: true };
     } finally {
       pending.delete(tabId);
@@ -211,17 +242,25 @@ export function createInput(cdp, value, sessions) {
   return { pressKey, fill, typeText, domClick, selectOption, event, cancel };
 }
 
-function installKeyReceipt(name, params, expiryMs) {
+export function installKeyReceipt(name, params, expiryMs, describe, expected = null) {
   const report = globalThis[name];
+  const roots = [globalThis], boundaries = [];
+  for (let root=expected?.getRootNode?.(); root?.host; root=root.host.getRootNode()) { roots.push(root); boundaries.push({ root, host: root.host }); }
   function listener(event) {
     const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
     if (event.isTrusted && event.code === params.code && event.key === params.key && modifiers === params.modifiers) {
-      report(JSON.stringify({ delivered: true })); stop();
+      const path = event.composedPath(), target = path.find(node => node?.nodeType === 1);
+      const matched = expected === null ? null : !!expected && expected.isConnected && path.includes(expected);
+      // Window listeners see retargeted closed-shadow events. Let the listener
+      // inside that root verify the actual path before accepting or rejecting it.
+      if (matched === false && boundaries.some(({ root, host }) => path.includes(host) && !path.includes(root))) return;
+      if (matched === false) { event.preventDefault(); event.stopImmediatePropagation(); }
+      report(JSON.stringify({ delivered: true, matched, target: describe.call(target) })); stop();
     }
   }
   let expiry;
-  function stop() { clearTimeout(expiry); globalThis.removeEventListener('keydown', listener, true); delete globalThis[name]; }
-  globalThis.addEventListener('keydown', listener, true);
+  function stop() { clearTimeout(expiry); for (const root of roots) root.removeEventListener('keydown', listener, true); delete globalThis[name]; }
+  for (const root of roots) root.addEventListener('keydown', listener, true);
   expiry = setTimeout(stop, expiryMs);
   return { stop };
 }

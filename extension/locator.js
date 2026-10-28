@@ -103,8 +103,8 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
     }
     throw error;
   }
-  // Hit-test refs resolve in the default world too. CDP forbids passing object
-  // arguments between worlds, even when both wrappers refer to the same node.
+  // Keep only backend identity across operations. Helpers that compare objects
+  // must resolve both into an explicit world; a default wrapper can be reused.
   const resolved = await send('DOM.resolveNode', { backendNodeId, objectGroup: 'browser-attach' });
   if (!resolved.object?.objectId) throw Object.assign(new Error('Selector target detached before resolution; no input was dispatched'), {
     diagnostics: { reason: 'element_detached', frame_id: frameId },

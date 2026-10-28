@@ -78,16 +78,33 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     const connected = value(await send('Runtime.callFunctionOn', { objectId, functionDeclaration: 'function() { return this.isConnected; }', returnByValue: true }));
     if (!connected) throw new Error('Element is detached; no ref was created');
     if (documents.get(tabId) !== version || currentClaim(tabId) !== claim || frameStates.get(tabId)?.versions.get(frameId) !== frameVersion) throw new Error('Element document/frame/control changed; no ref was created');
+    const refs = rememberAXNodes(tabId, target, frameId, [ax]);
+    return { ref: refs.get(node.backendNodeId), frame_id: frameId, role: ax.role?.value, name: String(ax.name?.value || '') };
+  }
+
+  // Targeted reads add bounded refs to the current observation, without replacing
+  // its identities or pagination. The caller checks document/frame/claim first.
+  function rememberAXNodes(tabId, target, frameId, nodes) {
     let state = snapshots.get(tabId);
     if (!state) {
       state = { id: crypto.randomUUID().slice(0, 8), refs: new Map(), entries: [], invalidFrames: new Set(), totalNodes: 0, nextCursor: null, metadata: { omitted_frames: [] } };
-      snapshots.set(tabId, state);
     }
-    if ((state.extraRefs || 0) >= 500) throw new Error('Element ref budget exhausted; take a new snapshot');
-    state.extraRefs = (state.extraRefs || 0) + 1;
-    const ref = `${state.id}:element:${state.extraRefs}`;
-    state.refs.set(ref, { backendNodeId: node.backendNodeId, frameId, sessionId: target.sessionId, role: ax.role?.value, name: String(ax.name?.value || ''), ignored: !!ax.ignored });
-    return { ref, frame_id: frameId, role: ax.role?.value, name: String(ax.name?.value || '') };
+    const refs = new Map(), additions = [];
+    for (const ax of nodes) {
+      if (!ax.backendDOMNodeId || refs.has(ax.backendDOMNodeId)) continue;
+      const identity = { backendNodeId: ax.backendDOMNodeId, frameId, sessionId: target.sessionId,
+        role: ax.role?.value, name: String(ax.name?.value || ''), ignored: !!ax.ignored };
+      const existing = [...state.refs].find(([, entry]) => entry.backendNodeId === identity.backendNodeId &&
+        entry.frameId === frameId && entry.sessionId === target.sessionId && entry.role === identity.role && entry.name === identity.name && !!entry.ignored === identity.ignored);
+      const ref = existing?.[0] || `${state.id}:element:${(state.extraRefs || 0) + additions.length + 1}`;
+      refs.set(identity.backendNodeId, ref);
+      if (!existing) additions.push([ref, identity]);
+    }
+    if ((state.extraRefs || 0) + additions.length > 500) throw new Error('Element ref budget exhausted; take a new snapshot');
+    state.extraRefs = (state.extraRefs || 0) + additions.length;
+    for (const [ref, identity] of additions) state.refs.set(ref, identity);
+    snapshots.set(tabId, state);
+    return refs;
   }
 
   function invalidateFrame(tabId, frameId) {
@@ -257,7 +274,7 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     for (const key of pageContexts.keys()) if (JSON.parse(key)[0] === tabId) pageContexts.delete(key);
     frameStates.delete(tabId);
   }
-  return { snapshot, resolve: getObject, rememberElement, invalidate: invalidateSnapshot, expireCursor,
+  return { snapshot, resolve: getObject, rememberElement, rememberAXNodes, invalidate: invalidateSnapshot, expireCursor,
     initialize, invalidateFrame, documentChanged, event, contextEvent, forget,
     version: tabId => documents.get(tabId),
     mainFrame: tabId => frameStates.get(tabId)?.mainId,

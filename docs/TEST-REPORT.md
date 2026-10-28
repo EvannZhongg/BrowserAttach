@@ -1,298 +1,130 @@
 # 验证报告
 
-当前版本 **0.27.0**（2026-10-28）。浏览器验证使用本地 fixture；临时 profile 与本机已配对配置的测试链路在各项下说明。
-
-## 当前版本
-
-- `browser_logs` 新增 `kind=navigation`，独立缓冲与游标：`event=requested/committed/same_document` 分别保留浏览器上报的 reason/disposition、frame_id/parent_frame_id/loader_id/URL/可用的 unreachable_url 与 navigation_type。不把相邻请求与提交自动配对，也不把 scriptInitiated 推断为某段脚本导致跳转。
-- 网络事件保留 loader_id；request 记录附带可用的 initiator（type、位置、request_id 与调用栈），浏览器 Log 记录附带 request_id。console、异常、浏览器 Log 与网络 initiator 只保留事件已提供的调用栈：最多 8 帧、最多两层内联异步父栈，async_depth 标注层级，函数名/URL/script_id 分别裁剪到 200/2000/100 字符，stack_truncated 标记帧数、父链或未展开 parentId 造成的缺失；不额外启用 Debugger，也不查询远端父栈。
-- 不带 capture 的日志读取只校验所有权并遵守标签队列，不访问当前页面、不读取实时标签元数据，页面变空白、变为不支持的 URL、元数据不可用或存在 JS 对话框时仍可读；带 capture（含 enabled=false）仍要求当前页面受支持且文件访问已授权，不会因页面故障自动改配置。工具数量、参数数量、权限与依赖不变，版本递增至 0.27.0。同步更新使用、架构与 README 描述。
-- `npm test` 全量 329 项通过，新增 8 项覆盖 navigation 事件与淘汰/生命周期、栈与 initiator 裁剪及隐私字段、空白与受限页面及元数据失败下的缓冲读取、capture 修改仍需页面访问、所有权与释放/断连/关闭顺序。记录：test-results/logs-navigation-unit-0270.log。
-- Chromium 156 无头临时 profile 的 tabs 组 6 项检查、71 次调用通过；新增检查经真实扩展 → Hub → stdio MCP 验证 about:blank 前后的 console/network/navigation 证据、可用栈与 initiator、loader 身份、独立分页，以及 capture 修改与其他 owner 仍被拒绝。记录：test-results/npm-live-chromium-tabs.json。Edge tabs 组与 files 组本版未重跑。
-- `npm run test:package` 通过：67 个发布文件、包外安装、23 个 stdio 工具及随包 skill 文件一致性检查通过，无生成配对密钥。记录：test-results/logs-navigation-package-0270.log。
-- 本机既有 F:\\.nosis\\browser-attach\\config.json 完成 Hub stop/start；Chrome 与 Edge 扩展在 Hub 重启后自动重载至 0.27.0 / ready，未手工重新加载。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致。在这两个真实已配对浏览器中各创建并关闭一个本地 fixture 标签，验证 navigation 日志（historyApi、requested/committed）、console 栈与 network initiator/loader_id、变为 about:blank 后三种缓冲读取仍可读、带 capture 仍被拒绝、普通操作仍拒绝空白页，且未新增或激活其他标签。记录：test-results/deployment-0.27.0.json。旧 MCP 连接及句柄需重新连接、发现与接管。
-
-## 0.26.0 验证
-
-- controller 区分当前页检查与导航目标校验：已有 claim 的标签变为 about:blank 后，显式 URL 或前进/后退导航可在原标签恢复；目标 URL、文件授权、所有权、队列和 ref 失效规则沿用已有实现。普通页面操作和新 claim 仍拒绝空白页，错误分别说明原句柄恢复或在浏览器中导航后重新发现接管的路径。
-- instructions 提醒复用已有任务标签；open_tab 描述明确同 URL 已开仍创建新标签，fetch 描述明确临时页会执行站点脚本并可能影响其他标签。工具数量、参数、权限与依赖不变；导航恢复范围扩展，版本递增至 0.26.0。同步更新使用、架构及恢复文档。
-- `npm test` 全量 321 项通过，新增 5 项 controller 测试覆盖原标签恢复、不派发被拒绝的普通操作、其他 owner 拒绝、旧 ref 失效、目标/历史条目及文件授权校验、新 claim 拒绝和 detach 失败保留控制权。记录：test-results/blank-recovery-unit-0260.log。
-- Chromium 156 与 Edge 156 的临时 profile 均通过 tabs 5 组、files 7 组集成检查，经真实扩展 → Hub → stdio MCP 验证页面主动 replace/assign 到 about:blank、原标签及句柄 URL/历史恢复、不新增标签或激活、文件授权关闭拒绝及开启允许、旧 ref 失效和生命周期清理。修正 files 测试等待权限切换后的新浏览器连接身份，避免误用正在重载的旧连接。记录：test-results/blank-recovery-{chromium,edge}-0260.log、test-results/blank-recovery-files-{chromium,edge}-0260.log。
-- `npm run test:package` 通过：67 个发布文件、包外安装、23 个 stdio 工具及随包 skill 文件一致性检查通过，无生成配对密钥。记录：test-results/blank-recovery-package-0260.log。
-- 本机既有 F:\.nosis\browser-attach\config.json 完成 Hub stop/start；Hub 与 Chrome/Edge 两个扩展均为 0.26.0 / ready。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致。另在这两个真实已配对浏览器中，仅创建并清理本地 fixture 标签，验证空白错误、原标签/句柄恢复、旧 ref 拒绝及不激活，测试前后标签集合一致。记录：test-results/deployment-0.26.0.json。旧 MCP 连接及句柄需重新连接、发现与接管。
-- 后续在用户明确授权下复测已登录 Chrome 猎聘简历页：后台展示态两轮重复打开各观察 30 秒未清空；进入优势亮点编辑态后，同完整 URL 新标签使原页约 14.1 秒后变空白，但其后单标签接管亦在约 8 秒后清空，重复标签不是必要条件。独立 Browser Use 读取实际加载的 security.min.js 并捕获其 action_dev_tool_open 上报、同源安全脚本调用栈及紧随其后的 Page.frameRequestedNavigation(reason=scriptInitiated,url=about:blank)，证据对应站点 DevTools 检测白屏策略。此前“同页互斥”的定性不充分。原句柄导航入口可用，但不保证站点恢复后持续稳定；未修改或提交简历，也未屏蔽站点检测。记录：test-results/liepin-browser-use-diagnosis-0.26.0.md、liepin-real-repro-0.26.0.json、liepin-edit-real-repro-0.26.0.json、liepin-unclaimed-real-repro-0.26.0.json。
-
-## 0.25.2 验证
-
-- 修复 native fill 未核对 input/textarea 完整替换选区的问题；email 不暴露选区偏移，保留 select() 与最终值核验。新增只读预检，在聚焦/赋值前拒绝已识别的 Monaco/CodeMirror 5 代理 textarea；native/DOM、单步/batch 共用检查，不切换模式或回放。成功值核验和相关失败诊断新增 verification_source，与既有 verification_basis 区分实际回读来源和预期来源。
-- editor 读取检查暴露接口的形状、调用结果和唯一模型关联；缺失、污染或异常返回 editor_model_unavailable，多实例返回 editor_model_ambiguous。所选节点调用经 checkedValue 保留页面诊断，不扫描私有全局或拼接可视行。错误提示显式模型回读路径；text wait 保持完整文本比较，预览增加 total_chars/text_truncated 及容器提示。
-- 相关 10 个测试文件共 163 项通过，覆盖选区折叠/部分选择/空值、代理拦截无焦点/写入且 batch 停止、模型接口缺失/非函数/异常/歧义、CDP 诊断保留、长文本匹配，以及原生指针、观察与 Hub 回归。记录：test-results/editor-fixes-unit-0252.log。
-- Chromium 与 Edge headless 的 preparation 集成各通过 7 组场景，经真实扩展与 Hub 操作临时 profile/本地 fixture；新增六种 input、textarea、多行 contenteditable 两种模式的回读来源、选区丢失无插入、代理预检无焦点/输入事件、公有/私有模型回读路径及超出诊断预览的文本等待。模型接口使用受控 fixture，未在原业务站点复现其 Monaco 自动缩进。记录：test-results/preparation-chromium.json、preparation-edge.json。
-- npm run test:package 通过：67 个发布文件、包外安装与 23 个 stdio 工具检查成功，已安装 skill 文件与源文件一致，无生成配对密钥。版本递增至 0.25.2；未新增工具、参数、权限或依赖。结果字段为增量变化；对已识别代理 textarea 的 fill 改为提前拒绝，调用方须显式选择模型操作路径。
-- 本机使用既有 F:\.nosis\browser-attach\config.json 完成 Hub stop/start，两个已连接扩展均已重载至 0.25.2 / ready。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致；记录：test-results/deployment-0.25.2.json。重启已释放旧控制权，原 MCP 客户端需重连并重新发现、接管。
-
-## 0.25.1 验证
-
-- 随 npm 包分发 `skills/browser-attach/`：75 行主干、setup/recovery/recipes 三份按需参考及 MCP JSON 模板。description 按 Agent 触发场景编写；正文首段说明 MCP、Hub 与配对扩展的运行前提。frontmatter 的 name 与目录一致，description/compatibility 长度和 metadata 版本检查通过，目录内链接及 JSON/TOML 示例有效。
-- Setup reference 以通用 stdio 启动参数和 JSON/TOML 配置为主，不逐宿主展开配置流程；SKILL.md 按安装、配对或连接配置任务引导阅读。Agent 集成文档改为入口和仓库验证说明，README 增加可选 skill 入口。未增加宿主自动注册或 Claude 插件外壳。
-- 移除 `scripts/install.ps1`、Nosis 专用 CLI 选项、配置辅助代码及验证脚本；通用 setup、配对文件与扩展同步保留。`--help` 已不列出 `--nosis`，传入旧选项会在读取配对前被参数解析拒绝。
-- `node --test tests/config.test.mjs tests/hub.test.mjs`：20 项通过（config 3、Hub 17），覆盖配对路径、Hub 控制权、setup 及真实 stdio MCP。此前记录的 22 项包括本次移除的两项 Nosis 配置测试，不是 12 项。6 个配方 JSON 示例此前通过内存 MCP 的 schema 与参数转换校验，未调用真实浏览器。
-- `npm run test:package`：67 个发布文件、包外安装及 23 个 stdio 工具检查通过；安装后的 5 个 skill 文件与源文件逐字节一致，不含生成的配对密钥。
-- skill 保留未知结果先观察、明确前台操作等策略；ref/分页、定位语法、就绪条件与诊断名称的细节转向工具描述，减少重复维护。setup 补充 MIT 开源包来源及安装/配对的实际行为；两份 MCP 示例保持不同用途，打包检查同时核对包名、CLI 和显式配对路径约定。
-- 本机 Hub 使用现有 `F:\.nosis\browser-attach\config.json` 完成 stop/start；Hub 和两个扩展均为 0.25.1 / ready。稳定扩展副本的 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 一致。原 MCP 连接需重连并重新接管。
-- 本次为 skill 文档与分发调整，版本递增至 0.25.1，MCP 工具能力、依赖和权限不变。未重跑浏览器交互全集，未修改实际宿主配置；JSON 模板及 TOML 示例语法验证通过，TOML 配置格式已核对 Codex 官方文档。
-
-## 0.25.0 验证
-
-- `browser_open_tab` 新增 claim（默认 false）；claim=true 直接用本次创建的准确 tab_id 复用接管流程，单次 MCP 调用取得 tab_handle，不枚举标签、不更改已有发现记录。初始 URL 观察最多 15 秒，允许重定向，不等待页面加载完成。
-- 创建后的接管错误返回 open_tab 阶段及已知标签身份；接管超时/浏览器断连报告 claimed=null、outcome_unknown=true，禁止自动重开。初始化清理失败且仍保留控制时返回恢复句柄。Hub 与扩展在初始化前预留控制权，覆盖初始 URL 等待、attach 中断连和 detach 后迟到回执；不静默移交控制权。
-- 全量 313 项测试通过，覆盖真实 Hub/模拟扩展的跨连接隔离、创建与接管之间的竞争、失败保留页面、发现记录隔离、清理失败恢复、超时后释放及迟到回执失效；真实 stdio MCP 验证新增 schema、成功句柄与结构化错误传递。未知结果字段调整后 Hub 18 项复验通过。
-- Chromium 156、Edge 155 各通过 `live-smoke --tabs` 的 20 次 stdio MCP 调用和 4 组检查：重定向后句柄可用、后台打开保持活动标签、跨 owner 拒绝、释放/重新接管/关闭、加载持续阻塞时仍可接管、claim=false 仍需发现、断连后保留页面并释放控制。全部使用临时 Profile 和本地测试页面。
-- `npm run test:package` 通过：62 个发布文件、包外安装、独立扩展副本及 23 个 stdio 工具。版本递增至 0.25.0，无新增依赖或权限。
-- 本机 Hub 已用现有 `F:\.nosis\browser-attach\config.json` stop/start 重启；Hub 和两个连接扩展均为 0.25.0 / ready。稳定扩展副本共 44 个文件，manifest 版本与身份一致（仅换行符与工作副本不同），其余 43 个文件逐字节一致。现有 MCP 客户端需重连，旧句柄失效。创建与接管不承诺原子性，其他 owner 先取得控制时明确返回冲突。
-
-## 0.24.3 验证
-
-- 修复 fields 对 DOMSnapshot 原生 input/textarea 空值字符串索引 -1 的解码：显式返回 `dom.value=""` 并保留 value_source。未采集值仍省略 value，密码值仍不输出，不推断自绘控件的展示值或填写状态。
-- 测试 fixture 使用真实空值编码；新增回归覆盖 input/textarea 空值及 JSON 序列化、缺失值、非空值和空密码脱敏。新测试在旧实现上失败，修复后 fields/snapshot/controller-observation 相关 52 项测试通过。
-- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 420 次调用、40 项检查通过，包含新增的真实空 input/textarea 字段值及 value_source 断言。首轮并行运行分别在 iframe 准备和 fetch 处超时，未修改相关实现或超时值，串行重跑均通过。npm run test:package 通过，62 个发布文件、23 个 stdio 工具，包外安装与独立扩展目录通过。
-- 本机部署：stop/start 重启 Hub 后，Hub 与两个已连接扩展均为 0.24.3 / ready；稳定扩展副本的 manifest 版本/身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管标签。
-- 版本递增至 0.24.3；无新增工具、参数、依赖或权限。
-
-## 0.24.2 验证
-
-- 精简 MCP instructions、工具及参数描述；batch 公共定位说明集中在 steps，分支保留模式、选项选择和 wait 条件。补清 ref/selector/focused 选择、frame 至少一个条件及互斥、wait 条件必填、scroll until/delta_y、截图目标/full_page 互斥，以及 batch 已完成前缀仍预检等已实现约束。
-- 实际初始化及 tools/list 元数据由 56,638 降为 51,605 字符，减少 5,033（8.9%）；instructions 与全部 description 合计由 23,937 降为 19,213（19.7%）。字符数按紧凑 JSON 统计，不等于 token 数。
-- 去除 description 后，23 个工具的发布定义逐项完全一致，包含 required、default、枚举、范围及 oneOf 分支；20 组有效/无效 MCP 调用契约检查通过，验证目标互斥、frame、wait、scroll、DOM batch click、选项选择及组合步骤。fetch cursor 续读未注入 url/format/wait_until/timeout_ms 默认值。
-- 相关现有测试：hub/config/primitives/input/locator 共 41 项通过，含真实 stdio MCP 的工具发现、参数校验与 Hub 透传；npm run test:package 通过，包外安装发布 62 个文件、23 个 stdio 工具，无生成配对密钥。本次无浏览器执行实现变更，未重复运行整套浏览器交互测试。
-- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.2 / ready；稳定扩展目录 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连，重新加载说明并发现、接管标签。
-- 本次仅修正说明及共享描述组织，版本递增至 0.24.2；工具数量、参数、校验逻辑、执行语义、依赖与权限不变。
-
-## 0.24.1 验证
-
-- role 精确定位失败时，复用最后一次 AX 树生成最多 10 项名称建议，回显实际 role；同名优先、去重并标记长名称截断，不解析或操作建议目标。非法 CSS 的原始解析错误保留，附带原生 CSS 与 role/label/placeholder 替代提示。
-- 原生回执丢失及派发超时提示显式 activate → snapshot → 重新定位，并明确激活不证明之前未送达，不能自动重放；fill_selection_lost 提示可显式选择 click/Control+A/focused type，仍在插入前停止，不自动改用键盘或 DOM 模式。
-- full/interactive/fields 新观察共享 30 秒总预算，文档或导航上下文竞态最多重读一次，与 navigate 元数据观察共用有界重试；导航本身不重发，cursor 不重采集。发布 refs 前检查同一 claim 和文档身份；持续变化、控制结束、预算耗尽及迟到读取均不发布失败采集的 refs。
-- npm test：301 项通过。覆盖 role 误填名称、错误角色、候选去重/数量/长度/空名称；CSS 原始错误和替代提示；未知输入不激活或补发；观察重试上限、共享预算、分页、fields 重新采集、控制结束和迟到读取，以及导航观察不重发。
-- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 420 次调用、40 项检查通过。新增真实 link 被误填为 button/selector 名称时的诊断、Playwright CSS 提示传递且无补点；采集 AX 后的同文档导航触发一次完整重读，返回变化后的控件和 URL；选区丢失后显式 click/Control+A/focused type 恢复并读回核验。保留 12,000 节点大页面、OOPIF、原生回执及多行 fill 等回归。记录见 test-results/npm-live-chromium.json、npm-live-edge.json。
-- npm run test:package：62 个发布文件、23 个 stdio MCP 工具；包外安装及独立扩展目录通过，不含生成的配对密钥。
-- 本机部署：已 stop/start 重启 Hub，Hub 与两个已连接扩展均为 0.24.1 / ready；稳定扩展目录 F:/.nosis/browser-attach/extension 的 manifest 版本与身份一致，其余 42 个非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
-- 本次为可靠性与诊断修复，版本递增至 0.24.1；无新增工具、输入参数、依赖或权限。新增 diagnostics.hint/suggestions/omitted_suggestions 及观察错误原因，现有精确定位和输入结果语义保持。
-- 剩余边界：持续导航或超过预算仍可能观察失败，名称建议不证明目标唯一；激活与送达回执均不证明业务成功。编辑器模型写入、CM6 模型读取和 type 控制字符输入未扩展；键盘恢复需调用方明确选择并核验内容。本轮不操作真实业务账户。
-
-## 0.24.0 验证
-
-- 独立验证：在 0.23.6 临时 Profile 上，Chromium 156 与 Edge 155 各通过 3 组基线：sticky 遮挡经显式居中后可点击、06 已被页面保留为 6 但默认 fill 核验失败、明确 controls ID 可限定根部 portal 的重复选项。记录见 test-results/preparation-baseline-*.json。
-- pointer.prepare 在本次输入尚未派发时，遇到元素或祖先 frame 遮挡可额外即时居中一次，复用总预算并对同一节点重查命中及 frame 边界。持续遮挡仍失败；坐标、只读 actionable 和拖拽按下后的目的端不执行居中补救。
-- fill 和 batch fill 增加 expected_value，写入仍使用 text，核验复用现有函数；verification_basis 区分 text/expected_value，不自动归一化、不 blur、不等待异步格式化，失败不补发。默认字段和 contenteditable 容差保持原状。
-- 弹层定位沿用 controls/owns ID 与严格 CSS/XPath/元素 ref 的组合；补充定位示例及特殊 ID 转义、歧义和重新观察的边界。
-- npm test：293 项通过。覆盖居中次数上限、scroll=false、已派发阶段、持续遮挡、节点脱离、超时迟到不接续；显式预期值/空字符串、默认比较、不回显值、不重放和 batch 完整预检；MCP 单步及 batch 参数透传。
-- Chromium 156 与 Edge 155 headless preparation 专项各 4 组通过：selector/ref 的 sticky 遮挡、嵌套滚动容器、整页覆盖层仍拦截、native/DOM/batch 的格式化核验与错误预期、默认保留前导零，以及重复 portal 选项的明确关联定位。记录见 test-results/preparation-*.json。
-- Chromium 156 与 Edge 155 完整 stdio MCP live-smoke：各 402 次调用、38 项检查通过；增加 expected_value 在真实 native/DOM/batch 填写中的参数透传和保留值核验，保留 OOPIF 遮挡、原生回执和已有输入回归。
-- npm run test:package：包外安装与 stdio MCP 通过，62 个发布文件、23 个工具，无生成配对密钥；新增可选参数与返回字段，现有未指定 expected_value 的调用保持原有核验规则。工具能力扩展按次版本递增至 0.24.0。
-- 本机部署：按本次交付要求 stop/start 重启 Hub，Hub 与 Chrome/Edge 扩展均为 0.24.0 / ready；稳定扩展目录的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
-- 剩余边界：一次居中无法解决所有遮挡；expected_value 验证当时保留文本，不证明输入送达、blur 校验或业务保存；关联缺失、多个目标或重建时仍需重新观察。未操作真实业务表单。
-
-## 0.23.6 验证
-
-- 快照 full/interactive 与 fields 共用弹层语义提取：保留浏览器提供的 hasPopup、expanded 和已解析 controls/owns DOM idrefs，不猜测归属或增加 ref。
-- 上传将命令回执与 FileList 读回分层：assignment_acknowledged、requested_count、observed_count、count_verified；同步消费/重置不再当作赋值失败，读回不可用附 observation_error，赋值本身超时仍报未知结果且不补发。
-- scroll until 停止时返回 scroll_search_stopped、stop_reason、已完成 scroll_steps、scroll_pending、boundary_observed 与 last_scroll；保持无位移后只读等待增长和未知结果不重放的边界。预算异常使用内部结构化标记，避免残留 selector 准备诊断掩盖搜索超时。
-- npm test：290 项通过。覆盖弹层语义与 portal ID、上传消费/节点脱离/读回异常/派发迟到、滚动边界等待/步数限制/派发迟到/文档变化/初次只读查找超时。
-- Chromium 156、Edge 155 headless 完整 stdio MCP live-smoke：各 398 次调用、38 项检查通过。新增 full/interactive/fields 的真实 portal 关联、滚动预算与步数终止证据；真实 change 处理器消费 FileList 后 count_verified=false，未报告赋值错误且只有一次 change。首次并行运行时 Edge 的既有跨 frame 遮挡检查在 500 ms 准备预算内超时，串行重跑通过，未修改该检查或页面操作超时。
-- npm run test:package：包外安装与 stdio MCP 通过，62 个发布文件、23 个工具，无生成的配对密钥。版本元数据统一为 0.23.6，未增加工具、参数、依赖或权限。
-- 本机部署：协调升级因其他 MCP 连接正在使用 Hub 而拒绝在线替换，按本次明确重启要求执行 stop/start。Hub 与 Chrome/Edge 扩展均为 0.23.6 / ready；稳定目录 F:/.nosis/browser-attach/extension 的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有 MCP 客户端需重连并重新发现、接管。
-- 剩余边界：弹层语义取决于浏览器 AX 暴露；FileList 数量不证明组件登记或服务器上传完成；无位移不证明服务端数据到底。本轮未操作真实业务表单。
-
-## 0.23.5 验证
-
-- read_text 的工具描述与使用指南明确：默认正文不包含 input/textarea 当前值；单字段使用 mode=value，整表使用 snapshot(profile=fields)。complete_source 表示来源覆盖，分页仍以 next_offset 为准。
-- 上传完成后读回原 input 的 FileList 数量，files_set 不再直接回显请求数量；数量不符或节点脱离时报告 file_count_not_retained、已派发且结果未知。派发或读回异常均保留未知结果，不自动补发。非空路径返回 method=native、events_trusted=null；清空返回 method=dom、events_trusted=false；两者 application_result=not_checked，不声称事件送达、组件登记或上传完成。
-- 命中元素及最近可点击祖先补充 id/classes；classes 至多 8 项，每项 100 字符，作为当前身份线索，沿用原有遮挡检查与派发边界。
-- 文档整理：升级协调、日志上限与边界描述原先在 README、Agent 集成与架构文档中重复，现各自保留一处并按读者分层（用户步骤 / 宿主装配 / 协议实现）；中文 README 与英文对齐 file:// 范围与后台单击规则；使用指南中的字段、frame、日志与上传示例改用中性占位值，不再引用测试 fixture 的字段名与业务数据。
-- `npm test`：284 项通过。新增上传后页面重置/节点脱离与读回异常不重放的回归，补充清空结果、未检查的应用状态和有界 class 诊断断言。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 388 次调用、36 项检查通过。新增 FileList 读回及结果语义核验，真实 change 处理器立即清空文件时返回未知结果且仅触发 1 次 change；跨 frame 遮挡保留 class/祖先身份且未误点。保留隐藏 input、选择器、清空、多文件、OOPIF 上传及其他既有回归。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、62 个发布文件，无配对密钥。未增加工具、参数、依赖或权限，版本递增至 0.23.5。
-- 本机部署：通过 stop/start 重启，Hub 为 0.23.5 / ready，Chrome、Edge 扩展均为 0.23.5 / ready；稳定扩展副本的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有客户端需重连并重新发现、接管。
-- 剩余边界：FileList 核验仅为当时数量，不核验内容或服务器持久化；页面已经消费文件也可能导致未知结果。class 线索不保证唯一或跨重渲染稳定。本轮未操作真实业务表单。
-
-## 0.23.4 验证
-
-- 补充 npm 包的 `mcpName` 和根目录 `server.json`，包含 Registry 名称、展示名称、描述、源码/文档链接及 npm stdio 启动信息；元数据通过官方 2025-12-11 JSON Schema 校验。
-- `npm test`：282 项通过。仅调整发布元数据、版本与打包检查，未修改页面操作实现，未重复运行真实浏览器 fixture 测试。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、62 个发布文件，无配对密钥。`server.json` 已纳入发布包；打包检查覆盖 Registry 名称、npm 包名及版本一致性。
-- 本机部署：协调升级因现有 MCP 连接占用拒绝后，通过 stop/start 重启；Hub 为 0.23.4 / ready，Chrome、Edge 扩展均为 0.23.4。稳定扩展副本的 43 个文件已核对：manifest 版本/身份一致，其余非生成文件 SHA-256 一致。现有客户端需重连并重新发现、接管。
-- 已发布 npm `@evan_zhong/browser-attach@0.23.4`（registry latest，含 `mcpName`），并以 GitHub 账号登录 `mcp-publisher` 发布 Registry 元数据：`io.github.EvannZhongg/browser-attach` 0.23.4 状态 active、`isLatest=true`，可通过 `GET /v0.1/servers?search=io.github.EvannZhongg/browser-attach` 检索。
-
-## 0.23.3 验证
-
-- `npm test`：282 项通过。DOM contenteditable 与 native 共用同位置普通空格 → NBSP 的单向容差；补充首尾/连续空格、混合空格、显式 NBSP 保留与丢失、空格数量及位置变化的回归。input/textarea 的精确 value 比较保持原状。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 385 次调用、35 项检查通过。页面同步将普通空格改成 NBSP 时 DOM fill 成功；CSS 折叠空格或页面丢失显式 NBSP 时仍返回 value_not_retained、未知结果，每次仅派发 1 次 input，不重放。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥。未增加工具、参数、依赖或权限，按比较修复递增至 0.23.3。
-- 本机部署：协调升级完成，Hub 为 0.23.3 / ready，Chrome、Edge 扩展均为 0.23.3；稳定扩展副本的 43 个文件已核对，manifest 版本/身份一致，其余非生成文件 SHA-256 一致。
-- 本次未增加选区事件或竞态处理机制。原有 selectionchange、非原子检查及业务保存边界保留；重启后的客户端需重连并重新发现、接管。
-
-## 0.23.2 验证
-
-- `npm test`：275 项通过。覆盖浏览器所选纯文本的换行编码、NBSP 和实际文本差异；核验恢复选区端点及方向，DOM 不操作选区；替换选区丢失不发送 insertText。type 参数错误区分非字符串、长度和控制字符。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 364 次调用、34 项检查通过。新增 Gmail 同形 DOM 的空行、连续空行、首尾换行、空文本，以及含旧段落内容的连续原生替换；原生 input 可信，核验后光标仍折叠。DOM 写入可见 br 换行并保持已有焦点；真实空行数量不匹配仍返回未知结果、不重放。
-- Trusted Types 专用页面确认 innerHTML 字符串赋值抛出 TypeError；native/DOM 均能在该页完成含空行文本及单行替换。页面在 focus 后主动折叠替换选区时，返回 fill_selection_lost，正文不变且 input 事件为 0。type 的换行错误经真实 MCP 提示 press_key/Enter。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥。未增加工具、参数、依赖或权限，按输入及核验修复递增至 0.23.2。
-- 本机部署：协调升级因现有 MCP 连接占用拒绝后，按 stop/start 重启；Hub 为 0.23.2 / ready，Chrome、Edge 扩展均为 0.23.2。稳定扩展副本逐文件核对，manifest 保留机器 CSP，其余非生成文件 SHA-256 一致。
-- 当前边界：native 核验暂时选择文本，可能触发 selectionchange；选区检查与 insertText 不具备原子性，不能消除所有页面竞态。未操作真实 Gmail 草稿，不证明自动保存或发送正确。read_text 的 visible/value 保持 innerText；type 仍只接受可打印字符，换行显式 press_key Enter；hash 路由变化仍按现有规则使 ref 失效。重启后的客户端需重连并重新发现、接管。
-
-## 0.23.1 验证
-
-- `npm test`：273 项通过。新增 contenteditable 按输入模式核验的 19 个子用例，覆盖 native 渲染换行、CRLF/CR、普通空格以 NBSP 保留、显式 NBSP、空文本和 Unicode；DOM 精确文本；拒绝另一种文本表示掩盖的段落、字符、空格与空行变化，失败保持未知结果且不补发。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 302 次调用、32 项检查通过。真实原生输入验证首尾 NBSP、CRLF/CR 与中文多行；DOM 精确文本和同步格式化造成的跨表示不匹配经过扩展 → Hub → MCP 返回 `value_not_retained`。两种模式的受控不匹配均只产生 1 次 input，不切换模式或重放；多行原生插入本身可产生多个 input 事件。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥。未增加工具、参数、依赖或扩展权限，版本按校验修复递增至 0.23.1。
-- 本机部署：协调升级因已有 MCP 连接拒绝后，按 stop/start 重启；Hub 为 0.23.1 / ready，Chrome、Edge 扩展均为 0.23.1。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 43 个文件已核对：manifest 版本/身份一致，其余非生成源码/资源 SHA-256 一致。
-- 当前边界：native contenteditable 不裁剪空白、不合并空行，富文本占位换行或异步重建仍可能返回结果未知；不增加编辑器适配、自动重试或保存核验。未在真实 Gmail 草稿上验证；本机已有 MCP 客户端需重连并重新发现、接管。
-
-## 0.23.0 验证
-
-- `npm test`：253 项通过。新增结构化字段保留重复标签、真实 HTML label 来源与附近 context、DOM/AX 值区分、原生多选与 mixed 状态、隐藏字段显式读取、密码值省略、节点身份缺失不按名称合并、完整行双预算分页、session 级 DOM 捕获复用与文件选择只读采集。覆盖输入后 cursor 失效且 ref 保留、新观察替换旧 ref、子 frame 变化只移除子树、文档捕获中导航不恢复旧引用。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 281 次调用、31 项检查通过。真实 DOMSnapshot 与 AX 关联验证重复 HTML 标签、TEXTS28 字段名查询、格式化/只读值、多选原始值/标签、checkbox mixed、隐藏输入、密码省略、闭合 Shadow DOM、同源 iframe、OOPIF、文件选择数量/中文文件名、分页与字段 ref 操作；单纯观察不派发 input。保留输入、截图、上传、对话框、日志与 12000 节点 AX 分页回归。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、61 个发布文件，无配对密钥；新增 fields 模块纳入包边界检查。没有新工具、依赖或扩展权限，观察能力扩展升至 0.23.0。
-- 本机部署：协调升级因已有 MCP 连接拒绝后，按 stop/start 重启；Hub 为 0.23.0 / ready，Chrome、Edge 扩展均为 0.23.0。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 43 个文件已核对：manifest 版本一致，其余非生成源码/资源 SHA-256 一致。
-- 当前边界：跨 frame、AX/DOM/FileList 分步采集不具备事务或并发写入归属；自定义组件内部模型、最终提交值和服务端附件状态仍需任务相关检查。隐藏原生字段可能无 AX/ref，未关联 DOM 身份的 AX 行省略值；缺失或失败的 frame 保留 omitted_frames。已有 MCP 客户端需重连刷新字段视图参数并重新发现/接管。
-
-## 0.22.1 验证
-
-- `npm test`：246 项通过。新增隔离世界选择器诊断经 CDP 异常对象读取、单步/read_text/wait/batch 传递及 frame 路径底层原因保留；诊断读取失败保留原异常并清理 wrapper。补充准备/派发超时分类、派发后不沿用准备诊断、fill 值不匹配保留未知结果且不回显字段值。后续新增的 click 目标变化原因断言另通过 15 项指针回归。
-- Chromium 156、Edge 155 headless 完整 stdio MCP `live-smoke`：各 267 次工具调用、29 项检查通过。新增真实 CSS/XPath 语法错误、CSS/AX role 歧义、缺失 selector、read_text/wait/batch 错误原因经过扩展 → Hub → MCP 的检查；原生 fill 同步格式化返回 value_not_retained、input_dispatched=true 及 post_action，真实 input 事件仅 1 次。保留上传、对话框、OOPIF、日志、后台输入与大 AX 树回归。
-- Edge 首次与 Chromium 并行执行时，原有遮挡检查在 500 ms 准备预算内超时，未派发输入；未修改该检查预算，独立复跑完整脚本通过。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、60 个发布文件，无配对密钥。未增加工具、参数、依赖或扩展权限，版本按诊断修复递增至 0.22.1。
-- 本机部署：协调升级因现有 MCP 连接拒绝后，使用项目 stop/start 重启；Hub 为 0.22.1 / ready，已配对 Chrome、Edge 均为 0.22.1。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 42 个文件已核对：manifest 版本一致，其余非生成文件 SHA-256 一致。
-- 当前边界：原因码不推断业务成功或服务端拒绝，也不授权重放；文档/上下文销毁导致异常诊断无法读取时保留原错误，diagnostics 可能缺失。已有 MCP 客户端需重连，重新发现和接管标签。
-
-## 0.22.0 验证
-
-- `npm test`：243 项通过。新增非活动标签的单次左键单击（ref / selector / viewport / document 坐标）仍取得可信回执且不激活标签；hover、拖拽、其他按键、双击与带修饰键的点击仍在派发前以 `TAB_NOT_READY` 拒绝；派发前的就绪检查允许左键单击期间的标签切换，仍拒绝视图冻结或目标丢弃，`page_state` 带 `tab_active`。
-- Chromium 156、Edge 155 headless：`interaction-smoke --regressions` 各 35 个场景通过。后台 ref / selector / viewport / document / offset 各 3 次（每浏览器 15 次，合计 30 次）均 `delivery_verified` 且标签激活与窗口焦点状态不变；连续两次后台 batch、后台回执丢失（1 次效果、不重放）、后台遮挡（未派发）、受限动作组、settle 期间切换标签等场景通过。
-- Chromium 156 `interaction-smoke` 默认场景 17 项通过，覆盖前台、后台 ref 与坐标、遮挡窗口、缩放、hover 偏移、闭合 Shadow DOM 与导航。
-- Chromium 156、Edge 155 完整 stdio MCP `live-smoke`：各 255 次工具调用、27 项检查通过；后台 ref / selector / 坐标点击均在 `tab_active=false` 下取得可信送达，显式激活、DOM 模式与命中提示的既有行为保持。
-- `npm run test:package`：仓库外安装与 stdio MCP 通过，23 个工具、60 个发布文件，无配对密钥；未增加工具、参数、依赖或扩展权限。次版本反映点击就绪语义的变化。
-- 本机部署：Hub 从工作区重启为 0.22.0 / ready；已配对 Chrome、Edge 均上报 0.22.0；稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 42 个文件逐一核对与工作区一致。
-- 真实既有 profile 探测：从未激活的后台页面上，Edge 取得可信回执并产生 1 次点击；Chrome 未取得回执，返回结果未知、`input_dispatched=true` 且未重放（0 次效果）。验证日志为本地忽略目录 `test-results/` 中的 `*-0220*` 文件。
-- 当前边界：非活动标签只允许单次左键单击，送达仍以可信回执为准；无回执时报告结果未知，不自动激活、不重放、不切换 DOM 模式。hover、拖拽与其他点击变体继续要求活动标签。
-
-## 0.21.1 验证
-
-- `npm test`：240 项通过。原 controller 测试按观察、指针、键盘输入、对话框、截图/上传、滚动、求值和 fetch 分组，共用原有 fixture；保留控制权、队列、权限和清理的集成测试。新增不依赖日志的网络状态、错误文案无关的结构化未知结果、观察启动前失败仍恢复对话框策略，以及 select 异常跨 CDP 边界后保留结果未知证据的回归。
-- Chromium 156、Edge 155 完整 stdio MCP 集成：各 254 次工具调用通过，覆盖快照/ref、输入、上传、截图、导航、对话框、fetch、日志、嵌套 OOPIF 和 12000 个语义节点分页；Edge `interaction-smoke --primitives --headless` 22 个场景通过。
-- Chromium 文件页面集成：50 次工具调用、5 组检查通过，覆盖实时文件权限、中文/空格/# 路径、主文档与 iframe 观察、原生输入、HTTP↔file 导航和控制权清理。
-- Chromium 真实升级验证通过：同一临时 profile 内两个并发启动者完成 Hub 与扩展升级至 0.21.1，确认自动 runtime 重载及升级后页面操作。旧协议版本由当前代码修改版本号构造，不代表真实 0.16 扩展具备自动升级能力。
-- `npm run test:package`：仓库外安装和 stdio MCP 通过，60 个发布文件、23 个工具，无配对密钥。未增加工具、参数、依赖或扩展权限；补丁版本用于内部职责重构与清理修复。
-- 本机部署：Hub 已停止并从工作区重启，健康接口为 0.21.1 / ready；已配对 Chrome、Edge 均自动重载并实际重连为 0.21.1。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 42 个非生成文件已核对：manifest 按 JSON 内容一致，其余文件字节一致。新 stdio 连接返回 0.21.1 和 23 个工具。
-- 验证日志与本机同步校验在本地忽略目录 `test-results/refactor-0.21.1/`；已有 MCP 客户端需重新连接以载入新版进程。
-
-## 0.21.0 验证
-
-- `npm test`：236 项通过。新增可操作性原因、有限祖先样式/滚动/transition 证据、零透明度放行、slot 继承 inert、无可见落点且保留既有派发事实、ref 历史上限及释放清理、身份解析期间文档变化、动作后观察不可用/未见变化/正面证据分型，以及明确状态等待的参数、严格匹配、节点替换、缺失 ARIA 状态和字段值不回显验证。
-- Chromium、Edge headless：`interaction-smoke --primitives` 各 22 个场景通过。新增扩展 → Hub 的真实 DOM 验证：一次 DOM 点击后在 batch 等待替换后的字段值、原生 checked/selected、AX role 定位的 aria-expanded/aria-selected、CSS/role 无匹配；原生 mixed、隐藏 DOM 不等于 CSS 无匹配、缺失状态不等于 false、等待超时后写次数仍为 1，以及旧 ref 的 snapshot_replaced 诊断。原有原生输入、hover、拖拽及滚动场景继续通过。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、51 个发布文件，无配对密钥；未增加依赖或扩展权限。MCP 测试同时覆盖新 wait 条件在单步和 batch 中的 schema、布尔 false/mixed 传递与参数预检。
-- 本机部署：Hub 已停止并从工作区重启，健康接口为 0.21.0 / ready；Chrome、Edge 均自动重载并上报 0.21.0。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 manifest 为 0.21.0，其余 33 个非生成源码/资源文件 SHA-256 与工作区一致。新 stdio 连接返回 0.21.0、23 个工具和新增 wait 条件；已有 MCP 客户端需重新连接以刷新 schema。
-- 当前边界：状态等待只确认指定的页面状态，不推断业务成功；ARIA 缺失/无效时继续报告 unavailable。role 无匹配不证明 DOM 已移除；不可用 frame 不作为元素消失证据。ref 原因历史每标签限 1000 条；不自动重绑定、补发或切换输入模式。
-
-## 0.20.0 验证
-
-- `node --test tests/*.test.mjs`：226 项通过。新增 file:// 发现与接管的实时授权、普通操作与 batch 中途停权、HTTP→file 导航派发前检查、文件导航后的 ref/分页失效、停权后可靠释放及 detach 失败保留控制权、历史目标权限检查和迟到权限回执不派发导航。
-- Chromium 156、Edge 155 headless：`node scripts/live-smoke.mjs --executable <浏览器路径> --files` 各通过 5 组集成检查。复用扩展 → Hub → stdio MCP 链路，验证中文/空格/# 文件路径、真实扩展设置中的文件权限开关、发现后独占接管且不激活、主文档与本地 iframe AX、PNG 截图、ref 原生 fill/type/按键/click 与 trusted 事件、DOM batch、文件 URL/前进/后退及 HTTP↔file 导航、旧 ref/cursor 失效、释放/连接断开/关闭后的控制权清理。测试脚本只在临时 profile 的扩展管理页切换权限；权限变更触发扩展重载后重新发现浏览器连接。
-- Chromium 156 原有 HTTP(S) `live-smoke`：254 次工具调用通过，包含 fetch、正文查询与分页、输入、对话框、上传、OOPIF、日志及大 AX 树回归。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、52 个发布文件，无配对密钥；未增加依赖或扩展权限。
-- 本机部署：Hub 已停止并从工作区重启，健康接口为 0.20.0 / ready；Chrome、Edge 均自动重载并上报 0.20.0。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 manifest 为 0.20.0，其余 33 个非生成源码/资源文件 SHA-256 与工作区一致。已有 MCP 客户端需重新连接以刷新工具描述与连接句柄。
-- 当前边界：open_tab / fetch 仍仅支持 HTTP(S)；浏览器内部页和任意扩展页仍拒绝接管。内置 PDF 正文 AX/截图兼容性未纳入本次验收。
-
-## 0.19.0 验证
-
-- `npm test`：219 项通过。覆盖 ShadowRoot 命中归一化、同进程子 frame 的局部命中坐标、slot/ShadowRoot 祖先关系、归一化后仍拒绝遮挡、frame 候选诊断及超时保留、select 的只读准备和继承 inert、文本等待缺 selector 提示，以及扩展 → Hub → 客户端 → stdio MCP 的结构化错误证据传递。保留原有输入、导航、所有权、清理和升级回归。
-- Chromium 156、Edge 155 headless：`--issues` 各 10 个场景、`--primitives` 各 21 个场景、`--extended` 各 13 个场景通过。新增场景验证闭合 Shadow DOM 的真实 trusted 点击与 userActivation、实际 ShadowRoot 上的命中归一化、遮挡节点 rect/样式诊断、纯坐标验证范围、隐藏 select 的单步/batch 一致性和禁用/inert 拒绝、frame 定位候选、同进程与 OOPIF 的嵌套滚动/缩放/高度变化、元素截图、上传后 reload 及显式补填、求值超时后已观察到导航的 post_action。
-- Chromium、Edge 完整 stdio MCP 集成：各 254 次调用通过，覆盖实际扩展与 Hub 链路、嵌套 OOPIF、输入、上传、导航、日志、截图和 12000 个语义节点分页。测试退出前经 CDP 正常关闭所创建的临时浏览器，避免 Windows Edge 重启实际主进程后仅结束 launcher 留下 profile 锁；Edge 完整重跑后正常退出。
-- `npm run test:package`：仓库外安装与 stdio MCP 通过，23 个工具、51 个发布文件，不含配对密钥；无新增依赖和扩展权限。新增结构化结果及隐藏 select 能力，版本递增到 0.19.0。
-- 本机部署：Hub 已从工作区重启，健康接口返回 0.19.0 / ready；原 Chrome、Edge 两个 profile 均已自动重载并上报 0.19.0。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 manifest 为 0.19.0，其余 32 个非生成源码/资源文件 SHA-256 与工作区一致。已有 MCP 客户端需重新连接以载入新版工具描述。
-- 复现结论：带嵌套滚动、缩放和 iframe 高度变化的同进程/OOPIF 点击及后续坐标点击均送达目标，未复现所述约 88px 偏差；不能据此排除原站其他布局组合。上传触发 reload 后清空已填字段已复现，显式等待、观察后再 batch 补填成功，上传事件仅一次。顶层视口外元素截图保留真实内容且不改变滚动；overflow 祖先裁剪下的目标截图为空白，已人工查看 PNG，文档明确保留此裁剪语义。
-- 当前范围：未在原 iCIMS 页面或真实验证码上复测；不新增 diagnose、跨导航字段重放引擎或截图默认自动滚动。诊断只报告当前可观测事实，不解释任意应用业务禁用原因，不把字段保留、可信事件或用户激活视为业务成功。
-
-## 0.18.0 验证
-
-- `npm test`：213 项通过。新增真实 HTML label/placeholder 匹配、AX role/name 唯一性与树顺序、每次重新解析、focused 参数互斥、失焦停止、batch 预校验、快照 context 查询与 ref 身份、嵌套求值预算首屏提示回归。最后的定位错误文案调整另通过 12 项定位/原语定向测试。
-- Chromium 156、Edge 155 headless：输入集成各 21 个场景、扩展集成各 13 个场景通过。覆盖关联标签填写、placeholder 和 AX role 字段读取、坐标聚焦后输入、延迟打开的自定义 option、闭合 Shadow DOM role 点击、开放 Shadow DOM 焦点输入、同进程及跨进程 iframe 的 role/focused 输入、字段切换焦点后停止，以及缓存续读不重放表达式。测试通过扩展和 Hub 操作页面；CDP 仅用于临时 fixture 设置/断言及关闭测试浏览器。
-- `npm run test:package`：包外安装与 stdio MCP 通过，23 个工具、50 个发布文件，不含配对密钥；工具能力扩展，未新增工具、依赖或扩展权限。
-- 本机部署：Hub 已从工作区重启，健康接口返回 0.18.0 / ready；Chrome、Edge 均已自动重载并上报 0.18.0。稳定扩展目录 `F:\.nosis\browser-attach\extension` 的 manifest 为 0.18.0，其余 31 个非生成源码/资源文件 SHA-256 与工作区一致。原有 MCP 客户端需要重新连接以刷新 schema。
-- 当前边界：label 仅使用真实 HTML 关联，不推断兄弟 div；context 是有界观察提示，不改写 AX name。role 每次采集所选 frame 的完整 AX 树。evaluate 仍按完整嵌套项分页，10 秒默认、最多 30 秒，未加入任意脚本检查点或截图布局 token。
-- 额外测试观察：接管后动态插入再移除跨源 iframe 的组合场景中，后续 network_idle 曾以 inflight=1 超时，原因未在本次定位改动中解决；跨进程输入另在接管前已加载 iframe 的 fixture 中验证通过。本次不包含网络跟踪修复。
-
-## 0.17.2 验证
-
-- `npm test`：207 项通过。新增滚动最深匹配、隐藏中间节点、多个分支歧义和候选上限回归；10000 个匹配只做 9999 次包含关系检查，每个文字命中候选只读一次几何信息。保留渲染文本的 expected/previous 比较与预览截取、1.5 万层深树的 full/interactive 遍历和正文合并、15 万节点观察的分页回归。用修改前的实现分别复现深树递归和宽树数组参数展开的 `Maximum call stack size exceeded`。
-- 同版本滚动优化：Chromium 156 与 Edge 155 headless 输入集成各 20 个场景通过，包含真实 DOM 的隐藏中间节点、最深匹配 ref、兄弟分支歧义、selector 消歧及原有延迟加载滚动。保留 10000 候选上限、文字与可见性条件；筛选只比较文档顺序中的相邻匹配，不再两两比较，不代表选择器、子树文字和布局读取的总成本也是线性的。
-- Chromium 156 与 Edge 155 headless 完整 stdio MCP 集成：各 254 次调用通过。真实 DOM 验证 script/style/隐藏子节点字面量不会提前满足 text wait，expected 与 previous 均等待渲染文字变化；1.2 万个显式语义节点在 max_nodes=1 下完成采集和续页，分别约 15.3 秒、16.6 秒。
-- 剩余限制：Chromium 上 12 万个显式 group 节点的真实快照调用仍触及 MCP 60 秒请求超时。迭代渲染和逐项合并只消除栈及函数参数数量上限，不减少完整 AX 采集成本；max_nodes 仅控制分页，不代表超大页面能在现有预算内完成。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、50 个发布文件，不含配对密钥；无新增工具、运行依赖或扩展权限。
-- 本机部署：Hub 从工作区重启，健康接口返回 0.17.2 / ready；`F:\.nosis\browser-attach\extension` 的 manifest 为 0.17.2，其余 31 个非生成源码/资源文件与工作区逐字节一致。滚动优化按要求保持版本号，现有自动重载协议只处理版本递增，已打开的浏览器需手动重新加载扩展才能应用本次优化；已有 MCP 连接需重新连接。
-
-## 0.17.1 验证
-
-- `npm test`：200 项通过。新增并发升级与冷启动、旧配对缺少 `extension_dir` 的兼容回落、`release_all` 部分失败时的错误回传与剩余控制权保留、弹窗释放失败提示和显式重试，以及原有升级、清理和连接回归。
-- Chromium 156 与 Edge 155：`npm run test:upgrade -- --executable <路径>` 均通过。临时 profile 开启开发者模式后，两个并发启动者将 Hub 和真实扩展从当前代码改版本号构造的兼容旧协议 0.16.9 升到 0.17.1；确认同一 profile、实际 runtime 重载后的版本，以及升级后发现/接管 → AX 查询 → DOM 点击 → 查询结果 → 释放。CDP 只用于临时 profile 的开发者模式设置，页面操作走扩展与 Hub。该脚本验证升级协议本身，不代表真实 0.16 扩展能自行重载；真实旧版本首次升级仍需手动重载。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、50 个发布文件；由已安装包中的 Hub 同步稳定扩展目录并运行 stdio MCP，不含配对密钥，无新增运行依赖或扩展权限。
-- 本机部署：Hub 已从工作区重启并返回 0.17.1 / ready；`F:\.nosis\browser-attach\extension` 已同步，manifest 为 0.17.1。Chrome、Edge 均上报 0.17.1 并已重连。
-
-## 0.16.0 验证
-
-- `npm test`：184 项通过。新增 offset 的变换/越界处理、延迟区间校验、默认路径不采样随机数、拖拽曲线与精确终点、batch 参数预检、真实 stdio MCP 参数转发，以及 settle/拖拽超时后停止和调试分离取消待点击的回归。
-- Chromium 156 与 Edge 155 headless 输入集成：各 19 个场景通过（扩展 → 独立 Hub 客户端）。新增非中心可信点击、offset hover、settle、区间逐字输入、曲线 pointer 与 HTML5 拖拽；实际记录移动坐标、可信事件和按键时间，保留原有默认路径及跨屏拖拽验证。不据此声称能通过任意网站的行为验证。
-- Chromium 156 完整 stdio MCP 集成：244 次调用通过，保留发现/接管、输入、导航、OOPIF、日志、分页及临时页清理覆盖。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、48 个发布文件，版本 0.16.0；无新增依赖或扩展权限，不包含本机配对密钥。
-- 本机部署：Hub 已从工作区重启，健康接口返回 0.16.0；扩展同步至 `F:\.nosis\browser-attach\extension`，29 个源码/资源文件哈希一致，manifest 版本为 0.16.0。Chrome 与 Edge 均已重新连接并上报 0.16.0；MCP 客户端需刷新连接以获取新 schema。
-
-## 0.15.1 验证
-
-- `npm test`：176 项通过。新增 AX 字面查询（名称/合并正文/value、预览前匹配、interactive 视图、零命中）、查询分页与新旧 ref 生命周期、默认精简/verbose 元数据、当前/祖先 frame 的遮挡诊断、诊断节点失效保留主错误，以及 drag 已派发预算不能误报“未派发”的回归。
-- Chromium 156 与 Edge 155 headless 完整 stdio MCP 集成：各 244 次调用通过。新增真实 AX 查询返回的 ref 可用于原生 hover、查询分页和 verbose 续页、零命中及 ancestor frame 的实际遮挡文字；保留输入、导航、OOPIF、日志、分页和临时页关闭链路。
-- 同一构造表单 AX（2 个字段、2 个按钮，固定 URL/ref 前缀）比较 JSON 字符数：0.15.0 默认 908，0.15.1 默认 443（减少 51.2%），query=save 为 332。这里只衡量固定 fixture 的序列化输出，不代表题述表单、token 数或 AX 采集耗时。
-- 实际 MCP tools/list：仍为 23 个工具；紧凑 JSON 从 36703 增至 37116 UTF-8 字节（新增 query/verbose 参数及说明，约 +1.1%），格式化 JSON 从 75945 增至 76502 字节。未声称 schema 总量下降；不新增工具分组、依赖或扩展权限。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、47 个发布文件，版本为 0.15.1；发布包不含本机配对密钥。
-- 本机部署：已把扩展同步至 `F:\.nosis\browser-attach\extension`，关键模块与源码一致，Hub 健康接口返回 0.15.1。临时 Chromium 加载该实际副本连接共享 Hub，AX 查询 → 原生点击 → 查询确认页面变化通过。验证结束时用户原有浏览器尚未重新连接；仍需在 Chrome/Edge 重新加载扩展，并刷新 MCP 连接以获取新 schema。
-
-## 0.15.0 验证
-
-- `npm test`：172 项通过。新增 commit / DOMContentLoaded、等待超时后的降级采集、主文档替换后跟随 loader、采集期间只读重试、等待完成后换文档的身份核对、HTTP 错误响应关联及空体判断，以及标签创建/关闭超时和迟到清理；保留断连、控制权变化与不重放导航的回归覆盖。
-- Chromium 156 与 Edge 155 headless 完整 stdio MCP 集成：各 238 次调用通过。新增阻塞 load 时的早期等待及超时降级、load 前 location.replace、SSE 阻塞 network_idle，以及空体 418/500/503 的状态码和正文来源；同时验证既有输入、导航、OOPIF、分页与临时页关闭链路。
-- Chromium 临时配置访问真实 URL：`https://httpbin.org/status/500` 与 `/status/503` 分别在约 689 ms、384 ms 返回对应状态、`ok=false`、空正文及 `http_error_response` 标记。`https://chatgpt.com/` 在约 2253 ms 返回 403 验证页的文档结果，未复现客户端跳转，不将该结果视为登录应用验收。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、46 个发布文件，版本为 0.15.0；无新增扩展权限与依赖。
-
-## 0.14.0 验证
-
-- `npm test`：165 项通过。新增主文档 frame/loader 状态匹配、未知状态、日志淘汰后状态保留、HTTP 错误正文、渲染后 DOM 标记、空标题省略、JSON 整份返回、四份缓存交叉续读与 LRU 淘汰；读完/失败的请求不淘汰已有缓存，同 URL 独立采集，保留断连及迟到回执不续跑的回归覆盖。
-- Chromium 156 与 Edge 155 headless 完整 stdio MCP 集成：各 230 次调用通过。实际验证重定向后的 HTTP 200、404/500 保留正文并返回 ok=false、200 登录墙不误判成 HTTP 错误、子框架 404 不污染主文档状态、动态 DOM 插入与 dom=rendered、900000 字符 JSON 在 max_chars=400 下整份返回、超限 JSON 报错、四份缓存交叉续读与第 5 份 LRU 淘汰，以及临时页关闭和不激活。
-- `npm run test:package`：仓库外安装运行通过，23 个工具、46 个发布文件，版本为 0.14.0；无新增扩展权限与依赖。
-
-## 0.13.1 验证
-
-- 描述精简：实际 MCP 初始化与 tools/list 的描述文本从 18716 降至 11469 字符，减少 38.7%（不含 schema 结构，不等于 token 数）；instructions / 工具描述 / 参数说明分别为 1893 / 3949 / 5627 字符。跨工具规则、工具语义、参数选择规则与文档实现细节各自归位。
-- 对比精简前后的实际 MCP 输出：23 个工具的名称与输入 schema 在移除 description 后完全一致；类型、枚举、默认值、范围与 required 均未改变。
-- `npm test`：159 项通过；`npm run test:package`：仓库外安装运行通过，23 个工具、46 个发布文件，版本为 0.13.1。本次只调整描述与版本，未修改浏览器操作实现，未重复运行真实浏览器用例。
-
-## 0.13.0 验证
-
-- `npm test`：159 项通过。新增单页 fetch 参数、三种格式、采集上限、缓存分页、owner 隔离、断连清理、初始化与导航超时、文档/控制权变化、关闭失败保留所有权和迟到回执不续跑；保留原有 149 项回归覆盖。
-- `npm run test:package`：仓库外含空格路径安装运行通过，23 个 MCP 工具、46 个发布文件；包含 `fetch.js`，不包含配对密钥，版本为 0.13.0。
-- Chromium 156 与 Edge 155 headless 完整 stdio MCP 集成：各 219 个调用通过。新增后台临时页不激活、单次导航、重定向与 HttpOnly 登录 Cookie、网络空闲等待延迟内容、无链接爬取、text/HTML/JSON、不可变分页、1000000 字符采集上限、非法 JSON 和导航超时后关闭；同时覆盖原有输入、OOPIF、上传、日志、截图与导航链路。
-
-## 0.12.0 验证
-
-- `npm test`：149 项通过。覆盖 interactive 快照的控件/祖先筛选、文本预览与原始 ref 身份、视图绑定分页、独占控制、快照/ref 生命周期、严格 selector 与有界歧义候选、原生/DOM 输入、逐字输入、hover、pointer/HTML5 拖拽、document 拖拽坐标差值与按轴滚动、滚动边界后的延迟加载、条件等待、HTML select、batch、历史导航、OOPIF、日志、上传、截图、对话框和未知结果不重放。
-- `npm run test:package`：仓库外含空格路径安装运行通过，22 个 MCP 工具、45 个发布文件；包含 `drag.js` / `wait.js` / `scroll.js` / `outcomes.js`，不包含配对密钥。版本为 0.12.0，示例配置使用 `@latest`。
-- Chromium headless `--primitives`：16 个场景通过，包含 interactive 快照、document 坐标纵向 pointer/HTML5 拖拽、普通 pointer/HTML5 拖拽、取消 pointerdown 默认行为后的可信回执、滚动边界后延迟增长和歧义候选。含 200 段正文的 fixture 中，默认 full 首屏 23302 字符且仍需续页，interactive 为 947 字符且无需续页；该比较只衡量返回内容，不代表 AX 采集提速。
-
-## 升级前的浏览器验证
-
-- Edge 155 headless `--primitives`：10 个场景通过，包含 hover 停留后点击子项、一次快照的 ref 连续输入并跨只读 evaluate 保持有效、替换节点拒绝、label/value/index 下拉选择、三种等待失败、pointer/HTML5 拖拽和目的元素滚入视口。
-- Edge 155 完整 stdio MCP 集成：192 个调用通过，包含嵌套 OOPIF、原生/DOM 输入、遮挡、上传、日志、按键、滚动与导航；扩展报告 `extension_version=0.10.0`。
-- Chromium 156、Edge 155 headless `--extended`：各 12 个场景通过，包含 ref 生命周期、选择框、拖拽、等待、历史导航和 OOPIF。
-- `select_option` 明确返回 `events_trusted=false`；native select 点击在派发前拒绝。拖拽和输入只证明送达，不证明页面业务成功。
+当前版本 **0.28.1**（2026-10-28）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+
+## 0.28（当前）
+
+- 0.28.1：拖拽与动作后观察共用原动作截止时间，不另开观察预算；增加截止时间回归测试。
+
+- 能力：新增 `browser_read_control`，分开读取原生 DOM/AX 值、显示文本、明确关联的弹层、activedescendant 及当前暴露的活动/选中选项，复用既有 refs，保留文档/frame/session/claim 校验；不推断组件库内部模型、完整虚拟列表或业务提交。
+- 输入：可选 `observe` 在同一队列和剩余预算内读取显式控件；观察失败保留原输入回执，失败步骤与整批末尾观察分开返回。`press_key` 新增不聚焦的目标守卫及可信事件目标/frame 证据，支持闭合 Shadow DOM；遮挡诊断分开请求目标和遮挡物。batch 上限由 20 调整为 30，续跑索引最大为 29。
+- 修复：元素命中关系比较显式统一到目标 frame 的同一隔离 world，避免对子 frame 定向读取后，默认 wrapper 混用造成 CDP 跨 world 参数错误。
+- 验证：`npm test` 345 项通过（+16）；Chromium 156 headless controls、preparation、extended、controlled forms 组通过，Edge 156 headless controls 组通过；覆盖过滤框 value 为空但显示值已提交、零高度弹层外壳、选项截断、明确所有权、观察失败不覆盖输入、焦点守卫、闭合 Shadow DOM、同进程 iframe 与 OOPIF。`test:package` 69 个文件、24 个 MCP 工具，包外安装后 stdio 检查通过。
+- 部署：本机 Hub stop/start 完成；Chrome、Edge 扩展自动重载为 0.28.1 / ready，稳定副本 manifest 身份一致，44 个非生成文件 SHA-256 一致。新建 stdio 会话实际确认 24 个工具、batch maxItems=30 和两个配对浏览器的 read_control 能力；已有 MCP 会话需重新连接以加载新 schema。记录：`unit-0281.log`、`controls-{chromium,edge}.json`、`preparation-chromium.json`、`extended-chromium.json`、`forms-chromium.json`、`package-0281.log`、`deployment-0.28.1.json`、`runtime-mcp-0.28.1.json`。
+
+## 0.27
+
+- 语义：`browser_logs` 新增 `kind=navigation`，`event=requested/committed/same_document` 分别保留浏览器给出的 reason/disposition、frame、loader、URL 与 navigation_type，独立缓冲与游标；不把相邻请求与提交配对，不把 `scriptInitiated` 推断成某段脚本导致跳转。网络事件补 `loader_id` 与 `initiator`，浏览器 Log 补 `request_id`。
+- 证据边界：console、异常、浏览器 Log 与 network initiator 只保留事件已提供的调用栈，最多 8 帧、两层内联异步父栈，`async_depth` 标层级，函数名/URL/script_id 裁到 200/2000/100，`stack_truncated` 标记帧数、父链与未展开 `parentId` 造成的缺失；不额外启用 Debugger、不查远端父栈、不保留 `objectId`。
+- 读取边界：不带 `capture` 的日志读取只校验所有权并遵守标签队列，不访问页面、不读实时标签元数据，空白页、不支持的 URL、元数据不可用或有 JS 对话框时仍可读；带 `capture`（含 `enabled=false`）仍要求当前页受支持且文件访问已授权。工具数、参数数、权限、依赖不变。
+- 验证：`npm test` 329 项通过（+8）；Chromium 156 headless tabs 组 6 项检查、71 次调用通过，含 about:blank 前后的三类证据与独立分页；`npm run test:package` 67 个文件、23 个工具。Edge tabs 组与 files 组本版未重跑。
+- 部署：Hub stop/start 后 Chrome、Edge 扩展自动重载至 0.27.0 / ready（无需手动 Reload），稳定副本 manifest 版本与身份一致、其余 42 个非生成文件 SHA-256 一致；两个真实浏览器各做一次定点检查（navigation 日志、栈与 initiator、空白后缓冲读取、capture 与普通操作仍被拒），未新增或激活其他标签。记录：`deployment-0.27.0.json`、`logs-navigation-{unit,package}-0270.log`、`npm-live-chromium-tabs.json`。
+
+## 0.26
+
+- 0.26.0：已有 claim 的标签变为 `about:blank` 后，显式 URL 或前进/后退导航可在原标签恢复，目标 URL、文件授权、所有权、队列与 ref 失效规则不变；普通操作和新 claim 仍拒绝空白页，错误说明恢复或释放路径。说明层明确复用已有任务标签、`open_tab` 同 URL 已开仍新建、`fetch` 会执行站点脚本。
+- 验证：`npm test` 321 项；Chromium 156 与 Edge 156 临时 profile 通过 tabs 5 组、files 7 组集成检查；`test:package` 67 个文件、23 个工具；Hub 与两扩展 0.26.0 / ready，42 个非生成文件一致（`deployment-0.26.0.json`）。
+- 站点实测（用户授权）：猎聘简历页编辑态原页约 14.1 秒后自清空，单标签接管亦约 8 秒后清空，重复标签不是必要条件；独立 Browser Use 捕获 `security.min.js` 上报与紧随其后的 `Page.frameRequestedNavigation(reason=scriptInitiated)`，指向 DevTools 检测式白屏。原句柄导航可用但不保证持续稳定，未修改或提交简历，也未屏蔽站点检测。
+
+## 0.25
+
+- 0.25.0：`browser_open_tab` 新增 `claim`（默认 false），claim=true 单次调用取得句柄、不改写发现记录；创建与接管非原子，失败保留页面与已知身份，超时或断连报 `claimed=null`、`outcome_unknown`，清理失败返回恢复句柄。
+- 0.25.1：skill 随 npm 包分发（SKILL.md 主干 + setup/recovery/recipes + MCP 模板），移除 Nosis 专有 CLI 选项与安装脚本；打包检查核对 skill 逐字节一致与版本戳。
+- 0.25.2：native fill 派发前只读预检完整替换选区，拒绝已识别的 Monaco/CodeMirror 5 代理 textarea 并返回 `editor_proxy`；新增 `verification_source` 与 `verification_basis` 区分回读来源和预期来源；`read_text mode=editor` 细分不可用/歧义，text wait 预览补 `total_chars`/`text_truncated`。
+- 验证：0.25.0 全量 313 项、两浏览器 tabs 各 20 次调用 4 组检查；0.25.1 config+hub 20 项；0.25.2 相关 10 文件 163 项与两浏览器 preparation 各 7 组；`test:package` 62（0.25.0）→ 67 个文件、23 个工具；三次均完成 Hub stop/start 与扩展自动重载（`deployment-0.25.2.json`）。
+- 边界：内容编辑器的第三方实现、选区事件与 insertText 的非原子性、选择器与占位换行仍可能返回结果未知，不自动重试或补发。
+
+## 0.24
+
+- 0.24.0：`pointer.prepare` 在本次输入尚未派发且元素或祖先 frame 遮挡时额外居中一次（复用总预算），坐标、只读 actionable 与拖拽按下后的目的端不做补救；`fill`/batch fill 新增 `expected_value`，写入仍用 `text`。
+- 0.24.1：role 精确定位失败时复用最后一次 AX 树给出最多 10 项名称建议（不操作目标），非法 CSS 保留原始解析错误并附替代提示；原生回执丢失与派发超时提示先激活再重新定位，明确激活不证明未送达；full/interactive/fields 观测共享 30 秒总预算，文档竞态最多重读一次。
+- 0.24.2：精简 instructions、工具与参数描述，初始化加 tools/list 由 56,638 降至 51,605 字符（−8.9%），description 后 23 个工具定义逐项一致；无浏览器执行实现变更。
+- 0.24.3：修复 fields 对原生 input/textarea 空值字符串索引 −1 的解码，显式返回 `dom.value=""` 并保留 `value_source`，密码值仍不输出。
+- 验证：`npm test` 293 → 301 项，0.24.2 与 0.24.3 只跑相关子集（41 项、52 项）；preparation 专项两浏览器各 4 组；完整 live-smoke 各 402 次调用、38 项检查（0.24.1、0.24.3 为 420 次调用、40 项检查）；`test:package` 62 个文件、23 个工具。
+- 边界：一次居中不解决所有遮挡；`expected_value` 只核验当时保留文本，不证明送达、blur 校验或业务保存；名称建议不证明目标唯一。
+
+## 0.23
+
+- 0.23.0：新增 `snapshot(profile=fields)` 结构化字段视图（真实 HTML label、DOM/AX 值区分、多选与 mixed、隐藏字段显式读取、密码省略、字段分页与 ref）。
+- 0.23.1：contenteditable 按输入模式核验（native 渲染换行与 NBSP、DOM 精确文本），拒绝跨表示掩盖的段落/空格/空行变化。
+- 0.23.2：核验改为读取浏览器所选纯文本并恢复选区端点与方向，替换选区丢失时不发 `insertText`；`type` 参数错误区分非字符串、长度与控制字符。
+- 0.23.3：普通空格被页面写成同位置 NBSP 时两种模式都算保留；折叠空格、丢失显式 NBSP、数量或位置变化仍失败。
+- 0.23.4：补 `mcpName` 与根 `server.json`（官方 schema 校验通过），首次发布 MCP 官方 Registry。
+- 0.23.5：上传改为读回 FileList 数量（`assignment_acknowledged`/`count_verified` 分层），命中元素与最近可点击祖先补 id/classes 线索；`read_text` 明确不含 input 值。
+- 0.23.6：快照与 fields 共用弹层语义（hasPopup/expanded/controls 与 owns idrefs），上传回执与读回分离，scroll until 停止返回 `stop_reason`、`scroll_pending` 与已走步数。
+- 验证：`npm test` 253 → 290 项；完整 live-smoke 由 281 次调用/31 项检查增至 398 次调用/38 项检查（含 Gmail 同形 DOM、Trusted Types 页面、真实 change 消费 FileList）；`test:package` 61 → 62 个文件、23 个工具；各次均完成本机部署与扩展自动重载。
+
+## 0.22
+
+- 0.22.0：非活动标签上的单次无修饰左键点击（ref/selector/viewport/document 坐标）可取可信回执且不激活标签；hover、拖拽、其他按键、双击与带修饰键仍要求活动标签，`page_state` 带 `tab_active`，拒绝时 `input_dispatched=false`。
+- 0.22.1：定位与输入失败统一为结构化 `diagnostics.reason`（selector_not_found/ambiguous/invalid、value_not_retained、delivery_unverified、target_changed、preparation/input_timeout），frame 路径保留底层原因；派发后超时不复用准备期诊断。
+- 验证：`npm test` 243 → 246 项；`interaction-smoke --regressions` 两浏览器各 35 个场景；完整 live-smoke 255 → 267 次调用、27 → 29 项检查；`test:package` 60 个文件、23 个工具。
+- 边界：真实既有 profile 中 Chrome 对从未激活的后台页可能取不到回执，报告未知且不重放（Edge 可取到）；原因码不推断业务成功，也不授权重放。
+
+## 0.21
+
+- 0.21.0：新增可操作性原因与有限祖先样式/滚动/过渡证据、`wait` 的原生状态条件（checked/selected/expanded 等）及分型后的动作后观察证据。
+- 0.21.1：按职责拆分 controller 测试与内部模块，补齐网络状态、结构化未知结果、对话框策略恢复与 select 异常跨 CDP 边界回归；含真实并发升级验证。
+- 验证：`npm test` 236 → 240 项；`--primitives` 两浏览器各 22 个场景；文件页面 50 次调用 5 组检查；完整集成各 254 次调用；`test:package` 51 → 60 个文件、23 个工具。
+- 边界：状态等待只确认指定页面状态，不推断业务成功；ARIA 缺失报 unavailable，role 无匹配不证明 DOM 已移除。
+
+## 0.20
+
+- file:// 支持：发现与接管检查实时 `isAllowedFileSchemeAccess`，普通操作与 batch 每步重查，导航目标（含历史条目）在派发前校验；停权后仍可释放，detach 失败保留控制权。`open_tab`/`fetch` 仍限 HTTP(S)。
+- 验证：`npm test` 226 项；两浏览器 files 组各 5 组集成检查（中文/空格/# 路径、主文档与本地 iframe AX、PNG、原生输入与 DOM batch、HTTP↔file 导航）；HTTP live-smoke 254 次调用；`test:package` 52 个文件、23 个工具。
+- 边界：浏览器内部页与任意扩展页仍拒绝接管；内置 PDF 正文的 AX/截图兼容性未验收。
+
+## 0.19
+
+- 闭合 Shadow DOM 的命中归一化与 trusted 点击、同进程子 frame 局部坐标、slot/ShadowRoot 祖先关系、select 只读准备与 inherit inert 拒绝、frame 候选诊断与超时保留、结构化错误证据跨扩展 → Hub → stdio MCP 传递。
+- 验证：`npm test` 219 项；两浏览器 `--issues` 10、`--primitives` 21、`--extended` 13 个场景；完整集成各 254 次调用；`test:package` 51 个文件、23 个工具。
+- 边界：诊断只报告可观测事实，不解释任意站点禁用原因；overflow 祖先裁剪下的元素截图为空白（保留该语义）。
+
+## 0.18
+
+- 新增真实 HTML label/placeholder、AX role 与 focused 定位，每次重新解析、唯一性检查与树顺序，失焦即停止；快照支持 context 查询。
+- 验证：`npm test` 213 项；输入集成两浏览器各 21 个场景、扩展集成各 13 个场景；`test:package` 50 个文件、23 个工具。
+- 边界：label 只认真实 HTML 关联；role 每次采集所选 frame 完整 AX 树；已知观察：接管后动态增删跨源 iframe 时 `network_idle` 曾以 inflight=1 超时，本次未修。
+
+## 0.17
+
+- 0.17.1：并发升级与冷启动、旧配对缺 `extension_dir` 的回落、`release_all` 部分失败的错误回传与控制权保留、弹窗释放失败提示。
+- 0.17.2：滚动最深匹配、隐藏中间节点与歧义候选改为线性筛选，深树与宽树不再栈溢出；text wait 只比较渲染文字。
+- 验证：`npm test` 200 → 207 项；`test:upgrade` 两浏览器临时 profile 并发升级并重连成功；输入集成各 20 个场景；完整集成各 254 次调用（1.2 万节点分页约 15.3/16.6 秒）；`test:package` 50 个文件、23 个工具。
+- 边界：12 万个显式 group 节点的快照仍触及 MCP 60 秒请求超时；`max_nodes` 只控分页，不代表超大页面能按期完成。
+
+## 0.16
+
+- 新增非中心可信点击与 offset、settle 区间、逐字区间输入、曲线 pointer 拖拽与 HTML5 拖拽，batch 参数预检与真实 stdio 转发；超时后停止且调试分离取消待点击。
+- 验证：`npm test` 184 项；输入集成两浏览器各 19 个场景；完整集成 244 次调用；`test:package` 48 个文件、23 个工具。
+- 边界：不据此声称能通过任意站点的行为验证；拖拽与输入只证明送达。
+
+## 0.15
+
+- 0.15.0：`fetch` 支持 commit/domcontentloaded/load/network_idle 等待与超时降级，主文档替换后跟随 loader，HTTP 错误响应带状态与正文来源。
+- 0.15.1：快照新增 AX 字面 `query` 与 `verbose`，默认精简元数据；同一构造表单的序列化输出由 908 降至 443 字符（−51.2%），tools/list 总量因新增参数略增 1.1%。
+- 验证：`npm test` 172 → 176 项；完整集成 238 → 244 次调用；真实 URL 校验 httpbin 500/503 与 403 验证页；`test:package` 46 → 47 个文件、23 个工具。
+
+## 0.14
+
+- `fetch` 补主文档 frame/loader 状态匹配、HTTP 错误正文与 `ok` 区分、渲染后 DOM 标记、JSON 整份返回、四份缓存交叉续读与 LRU 淘汰。
+- 验证：`npm test` 165 项；完整集成两浏览器各 230 次调用（重定向、404/500、登录墙、子框架 404、90 万字符 JSON）；`test:package` 46 个文件、23 个工具。
+
+## 0.13
+
+- 0.13.0：新增 `fetch` 单页读取（text/html/json、后台临时页、不可变分页、owner 隔离与断连清理），工具数 22 → 23。
+- 0.13.1：描述文本由 18,716 降至 11,469 字符（−38.7%），移除 description 后 23 个工具 schema 完全一致。
+- 验证：`npm test` 159 项；完整集成各 219 次调用；`test:package` 46 个文件、23 个工具。
+
+## 0.12
+
+- 新增 interactive 快照、document/pointer/HTML5 拖拽与按轴滚动、条件等待、HTML select、batch、历史导航与未知结果不重放；22 个工具。
+- 验证：`npm test` 149 项；`--primitives` 16 个场景；`test:package` 45 个文件、22 个工具；200 段正文 fixture 中 full 首屏 23,302 字符仍需续页，interactive 为 947 字符。
+
+## 0.12 之前
+
+- Edge 155 `--primitives` 10 个场景、`--extended` 12 个场景通过；Edge 完整 stdio MCP 集成 192 次调用（扩展版本 0.10.0）。
+- `select_option` 明确 `events_trusted=false`，native select 点击在派发前拒绝；拖拽与输入只证明送达。
 
 ## 复跑
 
@@ -304,20 +136,20 @@ node scripts/interaction-smoke.mjs --primitives --headless --executable /path/to
 node scripts/interaction-smoke.mjs --extended --headless --executable /path/to/browser --family edge
 ```
 
-真实浏览器测试需要允许命令行加载扩展的 Chromium / Edge 可执行文件，并只操作临时 profile 与本地 fixture。原始结果保存在被忽略的 `test-results/` 目录（`primitives-*.json`、`npm-live-*.json`、`extended-*.json`）。
+真实浏览器测试需要允许命令行加载扩展的 Chromium / Edge，并只操作临时 profile 与本地 fixture。
 
 ## 已知限制
 
 - 未覆盖独立 worker / service worker、WebSocket 消息、`window.showOpenFilePicker()`、目录上传、下载管理和网络拦截。
-- 后台截图可能因浏览器暂停渲染而在 5 秒后超时；原生菜单和标签拖动可能抑制输入。
-- readiness 是派发前的保守条件，不保证 compositor 或业务处理；输入真正派发后丢失可信回执仍报告 Outcome is unknown，不把“没观察到效果”当作零效果证明。
+- 后台截图可能因浏览器暂停渲染在 5 秒后超时；原生菜单和标签拖动可能抑制输入。
+- readiness 是派发前的保守条件，不保证 compositor 或业务处理；派发后丢失可信回执仍报结果未知，不把“没观察到效果”当作零效果证明。
 - 拖拽的自动滚动是目的元素驱动的滚入视口，不提供持续边缘滚动任务。
 - `select_option` 不制造可信事件；`network_idle` 只覆盖 claim 后观察到的页面/iframe 请求。
 - Monaco / CodeMirror 5 分支通过接口级测试，未针对第三方生产编辑器或特定 React/Vue 版本做站点验收。
 - 计时数据仅代表本机 fixture，不构成对任意网站的耗时承诺。
-- 未针对已登录 Gmail / Overleaf / ChatGPT 生产页面验收；这些页面可受登录状态、验证页、网络与应用初始化影响。降级保证以实际可读文档为准，不保证业务正文在期限内出现。
+- 未针对已登录 Gmail / Overleaf / ChatGPT 生产页面验收；结果受登录状态、验证页、网络与应用初始化影响，降级保证以实际可读文档为准。
 
 ## 历史验证
 
-- 0.8.0（2026-10-21）：`npm test` 118 项通过；20 个工具、40 个发布文件；Chromium 156 / Edge 155 各 191 次真实调用通过。
-- 0.7.0（2026-10-21）：`npm test` 110 项通过；19 个工具、40 个发布文件；Chromium 156 / Edge 155 各 191 次真实调用通过。
+- 0.8.0（2026-10-21）：`npm test` 118 项；20 个工具、40 个发布文件；Chromium 156 / Edge 155 各 191 次真实调用通过。
+- 0.7.0（2026-10-21）：`npm test` 110 项；19 个工具、40 个发布文件；Chromium 156 / Edge 155 各 191 次真实调用通过。

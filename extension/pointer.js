@@ -1,5 +1,6 @@
 import { deadline, waitForTarget } from './actionability.js';
 import { offsetOption } from './motion.js';
+import { describeTarget } from './target-description.js';
 
 export function createPointer(cdp, value, viewport, position, sessions, getTab, getWindow) {
   async function assertReady(tabId, budget, action, args = {}) {
@@ -135,12 +136,21 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     if (pseudo) hitTarget.pseudo_element = true;
     let relation = null;
     if (node) {
+      // resolveNode without an explicit context can reuse wrappers from a prior
+      // isolated read. Compare both backend identities in the same frame world.
+      const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: node.frameId, worldName: 'browser-attach-input' });
+      if (!executionContextId) throw new Error('Could not create hit verification context; no input was dispatched.');
+      const expected = await send('DOM.resolveNode', { backendNodeId: node.backendNodeId, executionContextId, objectGroup: 'browser-attach' });
+      const actual = await send('DOM.resolveNode', { backendNodeId, executionContextId, objectGroup: 'browser-attach' });
       relation = value(await send('Runtime.callFunctionOn', {
-        objectId: node.objectId, functionDeclaration: hitRelation.toString(),
-        arguments: [{ objectId: hit.object.objectId }], returnByValue: true,
+        objectId: expected.object.objectId, functionDeclaration: hitRelation.toString(),
+        arguments: [{ objectId: actual.object.objectId }], returnByValue: true,
       }));
-      if (!relation) throw obstruction(`Another element covers this ref. hit_target=${JSON.stringify(hitTarget)}; point=${JSON.stringify(point)}; frame_id=${JSON.stringify(node.frameId)}`,
-        { reason: 'obstructed', hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
+      if (!relation) {
+        const requested = await requestedTarget(node);
+        throw obstruction(`Another element covers the requested target. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(hitTarget)}; point=${JSON.stringify(point)}; frame_id=${JSON.stringify(node.frameId)}`,
+          { reason: 'obstructed', requested_target: requested, blocked_by: hitTarget, hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
+      }
     }
     // Dispatch through the root widget so overlays in ancestor documents cannot
     // be bypassed by sending directly to an OOPIF widget. Guard every boundary.
@@ -164,14 +174,24 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
           blocker = value(await diagnostic.run(() => cdp(parent.target, 'Runtime.callFunctionOn', { objectId: resolved.object.objectId,
             functionDeclaration: describeHit.toString(), returnByValue: true })));
         } catch { /* Preserve the obstruction error even if its node disappears. */ }
-        throw obstruction(`Another element covers this frame. hit_target=${JSON.stringify(blocker ?? { backend_node_id: parentHit.backendNodeId })}; point=${JSON.stringify(rootPoint)}; blocked_frame_id=${JSON.stringify(parent.frameId)}`,
-          { reason: 'frame_obstructed', hit_target: blocker ?? null, point: rootPoint, coordinate_space: 'session_viewport_css_pixels', blocked_frame_id: parent.frameId });
+        const requested = node ? await requestedTarget(node) : null;
+        throw obstruction(`Another element covers this frame. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(blocker ?? { backend_node_id: parentHit.backendNodeId })}; point=${JSON.stringify(rootPoint)}; blocked_frame_id=${JSON.stringify(parent.frameId)}`,
+          { reason: 'frame_obstructed', requested_target: requested, blocked_by: blocker ?? { backend_node_id: parentHit.backendNodeId }, hit_target: blocker ?? null, point: rootPoint, coordinate_space: 'session_viewport_css_pixels', blocked_frame_id: parent.frameId });
       }
       const ownerFrameId = parent.ownerFrameId || (await budget.run(() => cdp(parent.target, 'Page.getFrameTree'))).frameTree.frame.id;
       boundaries.push({ target: parent.target, backendNodeId: owner.backendNodeId, frameId: ownerFrameId });
       current = parent.target; currentView = parentView;
     }
     return { target, point: rootPoint, hitTarget, relation, frameId: node?.frameId || frameId, backendNodeId: node?.backendNodeId || backendNodeId, boundaries };
+    async function requestedTarget(node) {
+      const identity = { backend_node_id: node.backendNodeId, frame_id: node.frameId };
+      try {
+        const detail = value(await budget.child(100).run(() => cdp(node.target, 'Runtime.callFunctionOn', {
+          objectId: node.objectId, functionDeclaration: describeTarget.toString(), returnByValue: true,
+        })));
+        return { ...identity, ...detail };
+      } catch { return identity; }
+    }
   }
   return { assertReady, prepare };
 }
