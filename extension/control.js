@@ -5,6 +5,7 @@ import { boundedRead } from './outcomes.js';
 
 const OPTION_ROLES = new Set(['option', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
 const STATES = new Set(['disabled', 'readonly', 'required', 'invalid', 'checked', 'selected', 'expanded', 'focused', 'multiselectable']);
+const POPUP_TEXT_PREVIEW_CHARS = 120;
 
 export function controlOptions(args) {
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('observe requires a control locator object');
@@ -78,7 +79,7 @@ export function createControlReader(cdp, value, sessions, observations, resolveN
         try {
           const resolved = await send('DOM.resolveNode', { backendNodeId: popup.node.backendDOMNodeId, executionContextId, objectGroup: group });
           const dom = value(await send('Runtime.callFunctionOn', { objectId: resolved.object.objectId,
-            functionDeclaration: readControlDOM.toString(), arguments: [{ value: args.max_options ?? 30 }], returnByValue: true }));
+            functionDeclaration: readControlDOM.toString(), arguments: [{ value: args.max_options ?? 30 }, { value: POPUP_TEXT_PREVIEW_CHARS }], returnByValue: true }));
           popupDOM.push(dom?.detached ? { available: false, error: 'Popup detached during observation' } : dom);
         } catch (error) {
           if (error.deadline_exceeded) throw error;
@@ -145,7 +146,7 @@ export function createControlReader(cdp, value, sessions, observations, resolveN
   };
 }
 
-export function readControlDOM(maxOptions) {
+export function readControlDOM(maxOptions, textLimit = 1000) {
   if (!this.isConnected || this.nodeType !== 1) return { detached: true };
   const clip = text => String(text).slice(0, 1000), tag = this.tagName.toLowerCase();
   const result = { tag, id: clip(this.id || '') || null };
@@ -171,8 +172,8 @@ export function readControlDOM(maxOptions) {
     result.omitted_selected_options = Math.max(0, this.selectedOptions.length - result.selected_options.length);
   }
   const text = this.innerText ?? '';
-  result.text = clip(text); result.text_source = 'inner_text';
-  if (text.length > 1000) result.text_truncated = true;
+  result.text = text.slice(0, textLimit); result.text_source = 'inner_text';
+  if (text.length > textLimit) result.text_truncated = true;
   const rect = this.getBoundingClientRect(), win = this.ownerDocument.defaultView;
   result.rect = { x: rect.x, y: rect.y, width: rect.width, height: rect.height };
   result.visible = rect.width > 0 && rect.height > 0 && win.getComputedStyle(this).visibility === 'visible';

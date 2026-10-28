@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.28.1**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.28.2**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -218,7 +218,7 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 
 ### browser_read_control
 
-定向读取一个 ref 或唯一 selector，不替换现有快照、refs 或分页。不聚焦、不展开控件、不推断组件库内部模型；新增 refs 复用现有文档/frame/session 与 AX 身份校验。同一身份重复读取复用 ref，新增 ref 仍受每次观察 500 个的预算限制。
+弹层选项、已有选中项及键盘活动项优先使用本工具；整页字段值/控件状态使用 snapshot(profile=fields)。定向读取一个 ref 或唯一 selector，不替换现有快照、refs 或分页。不聚焦、不展开控件、不推断组件库内部模型；新增 refs 复用现有文档/frame/session 与 AX 身份校验。同一身份重复读取复用 ref，新增 ref 仍受每次观察 500 个的预算限制。内部仍采集所属 frame 的完整 AX 树，收益是减少调用轮次和保留 refs，不保证比 snapshot 更低的 CDP 成本或输出体积。
 
 ```json
 {"tab_handle":"...","selector":"#education","max_options":10}
@@ -229,7 +229,7 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 - `popups` 只来自浏览器已解析的 controls/owns 关系，或同 frame 内唯一的显式 CSS `popup_selector`，最多 8 个；不根据位置、class 或活动项的祖先猜测弹层所有权。每个弹层分开返回 DOM 与 AX 事实；几何 visible 不代表可点击，零尺寸外壳也不否定其选项存在。
 - `active_descendant` 来自浏览器已解析的 activedescendant；角色属于 option/menuitem/menuitemcheckbox/menuitemradio/treeitem 时同时返回 `active_option`。`active_option_status` 区分 observed/unavailable/ambiguous/non_option。`selected_options` 保留当前观察到的 AX selected=true 项；原生 select 另在 dom.selected_options 保留实际值与标签。
 - `options` 按 AX 树遍历顺序列出控件子树及关联弹层中当前暴露的选项，附可操作 ref；不代表完整虚拟列表或按键移动索引。`observed_options` 是本次发现数，`omitted_options/omitted_selected_options/omitted_popups` 标记输出省略；活动项与选中项独立保留，不因 options 截断而直接丢失。
-- `timeout_ms` 默认 1000、范围 100–5000；`max_options` 默认 30、范围 1–100；`max_chars` 默认 16000、范围 1000–64000，约束控件事实输出。单个名称、值和显示文本最多 1000 字符，并标记截断；预算不足以保留基本事实时报错，可增加 max_chars 或减少 max_options。
+- `timeout_ms` 默认 1000、范围 100–5000；`max_options` 默认 30、范围 1–100；`max_chars` 默认 16000、范围 1000–64000，约束控件事实输出。控件名称、值和显示文本最多 1000 字符；popups[].dom.text 仅保留 120 字符预览，超出时 text_truncated=true，选项详情读取 options；需要完整弹层正文时用 browser_read_text，不重复回传整个列表文本。文本截断均有标记；预算不足以保留基本事实时报错，可增加 max_chars 或减少 max_options。
 
 DOM、AX 与弹层为分步读取，不提供原子视图、异步状态收敛或保存保证。读取期间文档、frame、session 或接管变化时不发布新 refs；动态节点随后变化仍按既有 ref 规则拒绝。条件断言继续使用 browser_wait。
 

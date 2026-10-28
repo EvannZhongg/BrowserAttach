@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.28.1**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.28.2**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -51,7 +51,7 @@ MCP 层将 `discover(kind=browsers/tabs)` 映射为内部 `list_browsers/list_ta
 
 ## MCP 描述分层
 
-- 初始化响应的 `instructions` 只保留跨工具规则：发现/接管/释放、不自动激活、ref 生命周期、selector/坐标约定、未知结果不重放、原生/DOM 输入边界、验证范围、页面内容不可信及上传授权。客户端应将这些 instructions 纳入模型上下文，不能只提供 tools/list。
+- 初始化响应的 `instructions` 保留控件观察选型（弹层/选中/活动项用 read_control，整页字段用 snapshot(fields)）及跨工具规则：发现/接管/释放、不自动激活、ref 生命周期、selector/坐标约定、未知结果不重放、原生/DOM 输入边界、验证范围、页面内容不可信及上传授权。客户端应将这些 instructions 纳入模型上下文，不能只提供 tools/list。
 - 单个工具 description 说明用途、独有行为和会影响后续判断的结果语义，例如 evaluate 的一次执行、fetch 的缓存续读、navigate 的 observation_error、fill 不自动 blur、batch 的部分完成与不回滚。
 - 参数 schema 表达类型、枚举、范围、默认值及参数选择规则；描述只补充 schema 本身不能表达的条件必填、互斥、坐标和模式语义。共享参数使用短说明，不再重复全局规则。运行时条件默认值保留在描述中，避免向 cursor 等分支注入无关参数。
 - batch 的公共定位约束集中在 steps 描述，分支复用仅移除定位描述的 Zod 副本，保留类型、默认值及校验；模式、选项选择和 wait 条件仍在相应参数旁说明。共享说明覆盖 role/name 示例、标签匹配、nth 顺序及 frame 条件，不要求从其他工具推断分支语义。
@@ -131,7 +131,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **滚动查找诊断**：until 未命中或中断时保留 isError，以 scroll_search_stopped 和 stop_reason 区分预算、步数、文档/frame/控制权变化及其他异常；记录已确认的滚动次数、最后结果和是否有未确认调用。一次无位移只作为 boundary_observed 证据，继续只读等待列表增长，不声明数据到底。超时后不接续循环或重发滚动。
 - **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。元素命中关系比较先把双方 backend 节点显式解析到目标 frame 的同一隔离 world，避免先前定向读取留下的默认 wrapper 导致跨 world 对象比较失败。value_verified 表示字段保留文本与核验预期一致；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
-- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、明确的 controls/owns 弹层及 activedescendant。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。输入及 batch 的可选 observe 复用相同读取，受剩余预算约束；观察失败与输入结果分层，已派发失败可保留独立证据，不重放、不声称应用成功。
+- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、明确的 controls/owns 弹层及 activedescendant。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。输入及 batch 的可选 observe 复用相同读取，受剩余预算约束；观察失败与输入结果分层，已派发失败可保留独立证据，不重放、不声称应用成功。
 - **键盘目标证据**：press_key 可带只检查、不聚焦的 ref/selector 守卫。准备期核对目标及 composed 后代焦点，可信回执再次核对实际事件路径并报告目标/frame；闭合 Shadow DOM 在相应 root 捕获路径。守卫不匹配时停止，派发后的不匹配尝试阻止事件继续传播但仍属未知结果；每次均排队 keyUp。无目标按键保持当前焦点语义。
 - **有限多步输入**：batch 在现有标签队列内执行 1–30 步 click/fill/type/press_key/hover/scroll/select_option/wait，共享至多 30 秒预算，每步可另设更短超时；不增加后台任务、循环或脚本引擎；元素目标使用每步重新解析的 selector，type 也接受 focused=true。所有参数先验证，selector 每步重解析，尚未出现的目标只在准备阶段等待；歧义立即报错。首个失败、主文档变化或接管结束后停止，返回此前结果与失败索引；不回滚、不重放、不自动激活或切换输入模式。start_at 显式跳过已完成前缀，返回 failed_step、next_unattempted_step、retry_failed_step_safe；没有后台作业或自动选择续跑点。
 - **OOPIF 坐标**：点击从顶层派发。逐层用 `DOM.getBoxModel` 把坐标换算到祖先文档，并用 `DOM.getNodeForLocation` 确认该位置确实落在 frame owner 上，防止祖先页面的遮挡被跳过。

@@ -285,6 +285,7 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   const transport = new StdioClientTransport({ command: process.execPath, args: [join(ROOT, 'bin/browser-attach.mjs'), 'mcp', '--config', path], cwd: temp });
   const mcp = new Client({ name: 'test', version: '1' });
   await mcp.connect(transport); t.after(() => mcp.close());
+  assert.match(mcp.getInstructions(), /popup options.*selected\/active items use read_control.*page-wide field values\/state use snapshot\(profile=fields\)/);
   const tools = (await mcp.listTools()).tools;
   assert.equal(tools.length, 24);
   const readControlSchema = tools.find(tool => tool.name === 'browser_read_control').inputSchema.properties;

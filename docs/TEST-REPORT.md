@@ -1,8 +1,10 @@
 # 验证报告
 
-当前版本 **0.28.1**（2026-10-28）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.28.2**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
 ## 0.28（当前）
+
+- 0.28.2：popups[].dom.text 在 CDP 返回前改为最多 120 字符预览，超过上限保留 text_truncated=true；控件文本仍为 1000，选项、选中/活动项与 refs 不变。共享 instructions 明确弹层选项/选中活动项用 read_control，整页字段值/状态用 snapshot(fields)；仍采集整个 frame AX，不宣称协议成本或总输出一定更低。全套单测 346 项通过（control.test.mjs 16 项，含新增的弹层文本预览边界用例；hub stdio 断言 24 个工具与 instructions 选型）；隔离 controls 组在 Chrome 156.0.8078.48 与 Edge 156.0.4314.42 通过；打包检查通过（69 文件、24 工具）；Hub 与 Chrome/Edge 扩展为 0.28.2 / ready，45 个非生成文件哈希一致，新 stdio 会话确认为 24 个工具且 instructions 含选型规则。测试脚本改用 CDP Extensions.loadUnpacked 加载扩展：品牌 Chrome/Edge 已忽略 --load-extension，且 --disable-extensions-except 会让 CDP 加载的扩展不启动。记录：control-preview-unit-0282.log、package-0282.log、controls-0282-chromium.log、controls-0282-edge.log、deployment-0.28.2.json、runtime-mcp-0.28.2.json。
 
 - 0.28.1：拖拽与动作后观察共用原动作截止时间，不另开观察预算；增加截止时间回归测试。
 

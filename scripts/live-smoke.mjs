@@ -17,7 +17,7 @@ import { startHub } from '../src/hub.mjs';
 import { AttachClient } from '../src/client.mjs';
 
 const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, connected: { type: 'boolean', default: false }, files: { type: 'boolean', default: false }, tabs: { type: 'boolean', default: false } } });
-if (!values.executable) throw new Error('Pass --executable PATH to a Chromium/Edge browser that permits --load-extension');
+if (!values.executable) throw new Error('Pass --executable PATH to a Chrome or Edge 125+ build that permits --enable-unsafe-extension-debugging');
 if (values.files && values.connected) throw new Error('--files requires a disposable browser profile');
 if (values.tabs && (values.connected || values.files)) throw new Error('--tabs requires a disposable browser profile and cannot combine with --files');
 const temp = await mkdtemp(join(tmpdir(), 'attach-live-'));
@@ -131,7 +131,7 @@ try {
   const pairing = await setup({ configPath, port }); hub = await startHub(pairing.config);
   const profile = join(temp, 'profile'); await mkdir(profile);
   browser = spawn(values.executable, [
-    `--user-data-dir=${profile}`, `--disable-extensions-except=${pairing.extensionDir}`, `--load-extension=${pairing.extensionDir}`,
+    `--user-data-dir=${profile}`,
     '--remote-debugging-port=0', '--no-first-run', '--no-default-browser-check', '--headless=new',
     '--enable-unsafe-extension-debugging', '--site-per-process', 'about:blank',
   ], { windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] });
@@ -144,12 +144,14 @@ try {
   let id = 0; const pending = new Map();
   cdp.on('message', raw => { const data = JSON.parse(raw.toString()); const item = pending.get(data.id); if (item) { pending.delete(data.id); data.error ? item.reject(new Error(data.error.message)) : item.resolve(data.result); } });
   command = (method, params, sessionId) => new Promise((resolve, reject) => { const requestId = ++id; pending.set(requestId, { resolve, reject }); cdp.send(JSON.stringify({ id: requestId, method, params, sessionId })); });
+  // Branded Chrome/Edge ignore --load-extension, and --disable-extensions-except keeps a CDP-loaded extension from starting; load it through the Extensions domain instead.
+  try { await command('Extensions.loadUnpacked', { path: pairing.extensionDir }); } catch (error) { if (!/not found|wasn't found/i.test(error.message)) throw error; }
   await command('Target.createTarget', { url });
   }
   mcp = new Client({ name: 'live-test', version: '1' });
   await mcp.connect(new StdioClientTransport({ command: process.execPath, args: [join(ROOT, 'bin/browser-attach.mjs'), 'mcp', '--config', configPath], cwd: temp }));
   const tools = (await mcp.listTools()).tools;
-  assert.equal(tools.length, 23);
+  assert.equal(tools.length, 24);
   assert.ok(tools.some(tool => tool.name === 'browser_logs'));
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const rawCall = async (method, args = {}) => {
@@ -941,7 +943,7 @@ async function checkFiles({ browserId, call, rawCall, configPath }) {
   };
   let localTarget;
   try {
-    // --load-extension permits initial loading without persisting developer mode.
+    // The Extensions domain permits initial loading without persisting developer mode.
     const developerMode = await command('Runtime.evaluate', { expression: 'chrome.developerPrivate.updateProfileConfiguration({inDeveloperMode:true})', awaitPromise: true }, sessionId);
     if (developerMode.exceptionDetails) throw new Error(developerMode.exceptionDetails.exception?.description || developerMode.exceptionDetails.text);
     await fileAccess(false);

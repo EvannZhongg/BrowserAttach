@@ -15,7 +15,7 @@ import { AttachClient } from '../src/client.mjs';
 import { normalizeHit } from '../extension/pointer.js';
 
 const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
-if (!values.executable) throw new Error('Pass --executable PATH to a browser that permits --load-extension');
+if (!values.executable) throw new Error('Pass --executable PATH to a Chrome or Edge 125+ build that permits --enable-unsafe-extension-debugging');
 const dir = await mkdtemp(join(tmpdir(), 'attach-interaction-'));
 const rows = Array.from({ length: 200 }, (_, i) => `<li>Row ${i+1}: alpha beta gamma delta epsilon</li>`).join('');
 const fixture = `<!doctype html><meta charset="utf-8"><title>Attach issue probe</title>
@@ -54,7 +54,7 @@ const paired = await setup({ configPath:join(dir,'config.json'), port });
 const hub=await startHub(paired.config);
 const profile=join(dir,'profile');await mkdir(profile);
 const browser=spawn(values.executable,[
- `--user-data-dir=${profile}`,`--disable-extensions-except=${paired.extensionDir}`,`--load-extension=${paired.extensionDir}`,
+ `--user-data-dir=${profile}`,
  '--remote-debugging-port=0','--no-first-run','--no-default-browser-check','--enable-unsafe-extension-debugging','--window-size=1000,800','about:blank',
  ...(values.headless?['--headless=new']:[]), ...(values.extended || values.issues?['--site-per-process']:[]),
 ],{windowsHide:true,stdio:'ignore'});
@@ -68,6 +68,8 @@ try {
  const pending=new Map();let serial=0;
  ws.on('message',raw=>{const data=JSON.parse(raw);const p=pending.get(data.id);if(p){pending.delete(data.id);data.error?p.reject(new Error(data.error.message)):p.resolve(data.result)}});
  const cdp=(method,params={},sessionId)=>new Promise((resolve,reject)=>{const id=++serial;pending.set(id,{resolve,reject});ws.send(JSON.stringify({id,method,params,...(sessionId?{sessionId}:{})}))});
+ // Branded Chrome/Edge ignore --load-extension, and --disable-extensions-except keeps a CDP-loaded extension from starting; load it through the Extensions domain instead.
+ try{await cdp('Extensions.loadUnpacked',{path:paired.extensionDir})}catch(error){if(!/not found|wasn't found/i.test(error.message))throw error}
  closeBrowser=async()=>{let timer;try{await Promise.race([cdp('Browser.close'),new Promise(resolve=>{timer=setTimeout(resolve,3000)})])}finally{clearTimeout(timer)}};
  client=new AttachClient(paired.config);
  if(process.env.ATTACH_TEST_VERBOSE){const call=client.call.bind(client);client.call=(method,args)=>{console.error(method,args);return call(method,args)};}
@@ -121,6 +123,12 @@ try {
   await assert.rejects(call('press_key',{selector:'#control-picker',key:'Enter'}),error=>error.input_dispatched===false&&error.diagnostics.reason==='keyboard_focus_mismatch');
   const unguarded=await call('press_key',{key:'Enter'});assert.equal(unguarded.target_verified,null);assert.equal(unguarded.keyboard_target.received.id,'control-other');
   const reopened=await call('click',{selector:'#control-picker',observe:{selector:'#control-picker'}});
+  await page(`(() => {const hint=document.createElement('span');hint.id='control-long-preview';hint.textContent='p'.repeat(700);document.querySelector('#control-portal').append(hint)})()`);
+  const preview=await call('read_control',{selector:'#control-picker'});
+  assert.equal(preview.popups[0].dom.text.length,120);assert.equal(preview.popups[0].dom.text_truncated,true);
+  assert.deepEqual(preview.options.map(option=>option.ax.name),['本科','硕士']);
+  assert.equal(preview.active_option.ref,reopened.observation.active_option.ref);
+  await page('document.querySelector("#control-long-preview").remove();true');
   const option=reopened.observation.options.find(option=>option.ax.name==='硕士');
   await call('click',{ref:option.ref,observe:{selector:'#control-picker'}});assert.equal(await page('controlWrites'),2);
   const missing=await call('click',{selector:'#control-keep',observe:{selector:'#missing-control',timeout_ms:100}});
@@ -157,7 +165,7 @@ try {
   const suffix=await call('batch',{steps,start_at:29,observe:{selector:'#control-picker'}});
   assert.equal(suffix.completed,true);assert.equal(suffix.results.length,1);assert.equal(suffix.observation.available,true);
   await assert.rejects(call('batch',{steps:[...steps,steps[0]]}),/1..30/);
-  results.cases.push({scenario:'control_popup_active_option_observation_and_keyboard_targets',opened,moved,committed,missing,suffix,shadowKey,frameKey,remoteKey,writes:await page('controlWrites')});
+  results.cases.push({scenario:'control_popup_active_option_observation_and_keyboard_targets',opened,moved,committed,preview,missing,suffix,shadowKey,frameKey,remoteKey,writes:await page('controlWrites')});
  } else if (values.preparation) {
   const call=(method,args={})=>client.call(method,{...h,...args});
   await page(`(() => {

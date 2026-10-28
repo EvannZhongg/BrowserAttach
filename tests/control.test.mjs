@@ -61,6 +61,34 @@ test('control observation budgets truncate options without losing the active ite
   await assert.rejects(f.exec('click', { ref: result.active_option.ref }), error => error.diagnostics.cause === 'identity_changed');
 });
 
+test('popup text is a bounded preview at the CDP boundary without shrinking control text or option facts', async () => {
+  const f = controlFixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+  let popupText = '';
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function readControlDOM')) {
+      assert.equal(args.functionDeclaration, readControlDOM.toString());
+      const popup = args.objectId === 'object-20';
+      const element = { nodeType: 1, tagName: 'DIV', isConnected: true, id: popup ? 'portal' : 'education',
+        innerText: popup ? popupText : 'c'.repeat(700), getAttribute: () => null, contains: () => false,
+        getRootNode: () => ({ activeElement: null }), getBoundingClientRect: () => ({ x: 0, y: 0, width: 100, height: 887 }),
+        ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: 'visible' }) } } };
+      return { result: { value: readControlDOM.call(element, ...args.arguments.map(arg => arg.value)) } };
+    }
+    return send(target, method, args);
+  };
+  for (const length of [0, 120, 121, 700]) {
+    popupText = 'p'.repeat(length);
+    const before = f.calls.filter(call => call.method === 'Accessibility.getFullAXTree').length;
+    const result = await f.exec('read_control', { selector: '#education' });
+    assert.equal(result.popups[0].dom.text, popupText.slice(0, 120));
+    assert.equal(result.popups[0].dom.text_truncated, length > 120 ? true : undefined);
+    assert.equal(result.control.dom.text.length, 700); assert.equal(result.control.dom.text_truncated, undefined);
+    assert.deepEqual(result.options.map(option => option.ax.name), ['本科', '硕士']);
+    assert.equal(result.active_option.ax.name, '硕士'); assert.equal(result.selected_options[0].ax.name, '本科');
+    assert.equal(f.calls.filter(call => call.method === 'Accessibility.getFullAXTree').length - before, 1);
+  }
+});
+
 test('explicit popup scopes are honored, active descendants do not imply popup ownership, and non-options stay distinct', async () => {
   const f = controlFixture(); await f.claim();
   f.nodes[2].properties = f.nodes[2].properties.filter(property => property.name !== 'controls');
