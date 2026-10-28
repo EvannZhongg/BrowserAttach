@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.25.2"
+  version: "0.26.0"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -29,7 +29,7 @@ Read only the reference needed for the task:
 3. For a requested new page, `browser_open_tab(browser_id, url, claim=true)` opens in the background and returns a handle. Observe readiness separately.
 4. Use this connection's `tab_handle`. Finish with `browser_tab_control(action="release")` to leave the page open.
 
-For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in in a temporary background tab and closes it. To inspect the current page's unsaved fields, expanded UI or navigation state, claim that page instead.
+For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in in a temporary background tab and closes it. Site scripts run and may affect other tabs. To inspect the current page's unsaved fields, expanded UI or navigation state, claim that page instead.
 
 ## Choose the observation
 

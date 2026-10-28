@@ -825,6 +825,35 @@ async function checkOpenTabs({ browserId, call, rawCall, configPath }) {
     await assert.rejects(other.call('snapshot', h), /belongs to another/);
     await other.call('list_tabs', { browser_id: browserId });
     await assert.rejects(other.call('claim_tab', { browser_id: browserId, tab_id: created.tab_id }), /another MCP/);
+
+    const oldTree = await call('snapshot', h);
+    const oldRef = oldTree.snapshot.match(/\[([^\]]+)\] textbox "Name"/)[1];
+    const tabIds = (await list()).map(t => t.tab_id).sort();
+    const blank = async method => {
+      await call('evaluate', { ...h, expression: `(setTimeout(() => location.${method}('about:blank'), 100), true)` });
+      const tab = await until(async () => (await list()).find(t => t.tab_id === created.tab_id && t.url === 'about:blank'), 'page-initiated blank navigation');
+      assert.equal(tab.control, 'yours'); assert.equal(tab.controllable, false);
+    };
+    await blank('replace');
+    const unavailable = await rawCall('snapshot', h);
+    assert.equal(unavailable.isError, true); assert.match(unavailable.content[0].text, /about:blank.*browser_navigate/);
+    await assert.rejects(other.call('navigate', { ...h, url }), /belongs to another/);
+    for (const target of ['about:blank', 'chrome://settings/', 'edge://settings/', 'javascript:alert(1)', 'https://user:pass@example.com/']) {
+      const denied = await rawCall('navigate', { ...h, url: target });
+      assert.equal(denied.isError, true); assert.match(denied.content[0].text, /Only http/);
+    }
+    const destination = url + '?recovered';
+    const restored = await call('navigate', { ...h, url: destination });
+    assert.equal(restored.tab_id, created.tab_id); assert.equal(restored.tab_handle, created.tab_handle);
+    assert.equal(restored.url, destination); assert.match(restored.snapshot, /textbox "Name"/);
+    const stale = await rawCall('fill', { ...h, ref: oldRef, text: 'must not write' });
+    assert.equal(stale.isError, true); assert.match(stale.content[0].text, /stale/);
+    await blank('assign');
+    const back = await call('navigate', { ...h, direction: 'back' });
+    assert.equal(back.url, destination); assert.equal(back.tab_id, created.tab_id);
+    assert.deepEqual((await list()).map(t => t.tab_id).sort(), tabIds);
+    assert.deepEqual((await list()).filter(t => t.active).map(t => t.tab_id), activeBefore);
+    checks.push('page-initiated about:blank preserves ownership; explicit URL/history recover the same tab/handle without creating or activating; stale refs, unsafe destinations and cross-owner actions remain rejected');
     await call('tab_control', { ...h, action: 'release' });
     const next = await other.call('claim_tab', { browser_id: browserId, tab_id: created.tab_id });
     await other.call('close_tab', { tab_handle: next.tab_handle });
@@ -871,12 +900,13 @@ async function checkFiles({ browserId, call, rawCall, configPath }) {
   const { targetId: settingsTarget } = await command('Target.createTarget', { url: values.family === 'edge' ? 'edge://extensions/' : 'chrome://extensions/', background: true });
   const { sessionId } = await command('Target.attachToTarget', { targetId: settingsTarget, flatten: true });
   async function fileAccess(enabled) {
+    const previousBrowser = browserId;
     const result = await command('Runtime.evaluate', { expression: `new Promise((resolve,reject)=>chrome.developerPrivate.updateExtensionConfiguration({extensionId:${JSON.stringify(config.extension_id)},fileAccess:${enabled}},()=>chrome.runtime.lastError?reject(Error(chrome.runtime.lastError.message)):resolve(true)))`, awaitPromise: true, returnByValue: true }, sessionId);
     if (result.exceptionDetails) throw new Error(result.exceptionDetails.exception?.description || result.exceptionDetails.text);
     // File access changes reload the extension and replace its connection identity.
     await until(async () => {
       const browser = (await call('discover', { kind: 'browsers' })).browsers[0];
-      if (!browser) return false;
+      if (!browser || browser.browser_id === previousBrowser) return false;
       browserId = browser.browser_id;
       return true;
     }, 'extension after file permission change');
@@ -897,6 +927,14 @@ async function checkFiles({ browserId, call, rawCall, configPath }) {
     assert.equal(tab.controllable, false);
     await rejected('claim_tab', { browser_id: browserId, tab_id: tab.tab_id }, /Local file access is disabled/);
     checks.push('file access off: discovery marks unavailable, claim fails before attach');
+    const blankCreated = await call('open_tab', { browser_id: browserId, url, claim: true });
+    const blankHandle = { tab_handle: blankCreated.tab_handle };
+    await call('evaluate', { ...blankHandle, expression: `(setTimeout(() => location.replace('about:blank'), 100), true)` });
+    await until(async () => (await list()).tabs.some(t => t.tab_id === blankCreated.tab_id && t.url === 'about:blank'), 'blank tab with file access off');
+    await rejected('navigate', { ...blankHandle, url: fileUrl }, /Local file access is disabled/);
+    assert.equal((await call('navigate', { ...blankHandle, url })).tab_id, blankCreated.tab_id);
+    await call('tab_control', { ...blankHandle, action: 'close' });
+    checks.push('blank recovery rejects file destinations with file access off, then recovers to HTTP in the same tab');
     await fileAccess(true);
     tab = (await list()).tabs.find(t => t.tab_id === tab.tab_id); assert.equal(tab.controllable, true);
     await assert.rejects(other.call('claim_tab', { browser_id: browserId, tab_id: tab.tab_id }), /latest/);
@@ -927,6 +965,11 @@ async function checkFiles({ browserId, call, rawCall, configPath }) {
     checks.push('Unicode/space/# file path: exclusive observed claim, no activation, main/iframe AX, PNG, native ref fill/type/key/click with trusted events, DOM batch');
     const paged = await call('snapshot', { ...handle, max_nodes: 1 });
     assert.ok(paged.next_cursor);
+    await call('evaluate', { ...handle, expression: `(setTimeout(() => location.replace('about:blank'), 100), true)` });
+    await until(async () => (await list()).tabs.some(t => t.tab_id === tab.tab_id && t.url === 'about:blank'), 'blank tab with file access on');
+    const restoredFile = await call('navigate', { ...handle, url: fileUrl });
+    assert.equal(restoredFile.url, fileUrl); assert.equal(restoredFile.tab_id, tab.tab_id);
+    checks.push('blank recovery accepts an authorized Unicode file URL in the same tab');
     const moved = await call('navigate', { ...handle, url: nextUrl }); assert.equal(moved.url, nextUrl); assert.match(moved.snapshot, /Next document/);
     await rejected('click', { ...handle, ref: button }, /stale/);
     await rejected('snapshot', { ...handle, cursor: paged.next_cursor }, /stale/);

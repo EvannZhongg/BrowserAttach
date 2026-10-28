@@ -1,8 +1,18 @@
 # 验证报告
 
-当前版本 **0.25.2**（2026-10-28）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.26.0**（2026-10-28）。浏览器验证使用本地 fixture；临时 profile 与本机已配对配置的测试链路在各项下说明。
 
 ## 当前版本
+
+- controller 区分当前页检查与导航目标校验：已有 claim 的标签变为 about:blank 后，显式 URL 或前进/后退导航可在原标签恢复；目标 URL、文件授权、所有权、队列和 ref 失效规则沿用已有实现。普通页面操作和新 claim 仍拒绝空白页，错误分别说明原句柄恢复或在浏览器中导航后重新发现接管的路径。
+- instructions 提醒复用已有任务标签；open_tab 描述明确同 URL 已开仍创建新标签，fetch 描述明确临时页会执行站点脚本并可能影响其他标签。工具数量、参数、权限与依赖不变；导航恢复范围扩展，版本递增至 0.26.0。同步更新使用、架构及恢复文档。
+- `npm test` 全量 321 项通过，新增 5 项 controller 测试覆盖原标签恢复、不派发被拒绝的普通操作、其他 owner 拒绝、旧 ref 失效、目标/历史条目及文件授权校验、新 claim 拒绝和 detach 失败保留控制权。记录：test-results/blank-recovery-unit-0260.log。
+- Chromium 156 与 Edge 156 的临时 profile 均通过 tabs 5 组、files 7 组集成检查，经真实扩展 → Hub → stdio MCP 验证页面主动 replace/assign 到 about:blank、原标签及句柄 URL/历史恢复、不新增标签或激活、文件授权关闭拒绝及开启允许、旧 ref 失效和生命周期清理。修正 files 测试等待权限切换后的新浏览器连接身份，避免误用正在重载的旧连接。记录：test-results/blank-recovery-{chromium,edge}-0260.log、test-results/blank-recovery-files-{chromium,edge}-0260.log。
+- `npm run test:package` 通过：67 个发布文件、包外安装、23 个 stdio 工具及随包 skill 文件一致性检查通过，无生成配对密钥。记录：test-results/blank-recovery-package-0260.log。
+- 本机既有 F:\.nosis\browser-attach\config.json 完成 Hub stop/start；Hub 与 Chrome/Edge 两个扩展均为 0.26.0 / ready。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致。另在这两个真实已配对浏览器中，仅创建并清理本地 fixture 标签，验证空白错误、原标签/句柄恢复、旧 ref 拒绝及不激活，测试前后标签集合一致。记录：test-results/deployment-0.26.0.json。旧 MCP 连接及句柄需重新连接、发现与接管。
+- 未重复打开猎聘简历页或重新验证其内部互斥机制；恢复导航不能找回已丢失的未保存内容，也不阻止站点再次将页面清空。
+
+## 0.25.2 验证
 
 - 修复 native fill 未核对 input/textarea 完整替换选区的问题；email 不暴露选区偏移，保留 select() 与最终值核验。新增只读预检，在聚焦/赋值前拒绝已识别的 Monaco/CodeMirror 5 代理 textarea；native/DOM、单步/batch 共用检查，不切换模式或回放。成功值核验和相关失败诊断新增 verification_source，与既有 verification_basis 区分实际回读来源和预期来源。
 - editor 读取检查暴露接口的形状、调用结果和唯一模型关联；缺失、污染或异常返回 editor_model_unavailable，多实例返回 editor_model_ambiguous。所选节点调用经 checkedValue 保留页面诊断，不扫描私有全局或拼接可视行。错误提示显式模型回读路径；text wait 保持完整文本比较，预览增加 total_chars/text_truncated 及容器提示。

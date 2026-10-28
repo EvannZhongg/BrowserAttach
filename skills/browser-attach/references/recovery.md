@@ -31,6 +31,8 @@ Keep the handle for ordinary selector, readiness or value errors while the claim
 
 Handles belong to one connection. Another owner's claim is a control conflict; wait for release or ask the user to resolve it. Do not force a takeover. If release/detach failed and the error supplies `control_retained` and a recovery handle, resolve the fault and release that handle; do not assume ownership was transferred.
 
+If a claimed tab navigates to `about:blank` while its handle remains valid, use an explicit `browser_navigate` URL or valid back/forward history entry to recover the same tab. Ordinary page operations and new claims remain unavailable on blank pages. Navigation does not restore lost unsaved state; do not automatically revisit the old URL or open a replacement tab. For an unclaimed blank tab, navigate it in the browser before discovering and claiming it.
+
 ## Preserve completed work
 
 **New tab creation:** `browser_open_tab(claim=true)` can create a page and then fail to claim it. Inspect `error.open_tab` for the known `browser_id`/`tab_id`, `opened`, `claimed` and recovery handle. Discover tabs to locate the existing creation; do not automatically create another. Creation and claim are separate phases.

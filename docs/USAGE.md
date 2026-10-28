@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.25.1**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.26.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -18,7 +18,11 @@
 
 `browser_open_tab({browser_id, url, active:false, claim:true})` 在指定配置中后台打开 HTTP(S) 标签，并直接返回本连接的 `tab_handle`，无需再次发现标签。`claim` 默认 false，此时只返回打开结果和 `claimed:false`，后续控制仍需发现并接管。`active` 默认 false，与是否接管独立。
 
+open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任务时先发现并接管该标签。fetch 也会在临时标签中运行页面脚本，可能影响其他标签，不能用作避免重复打开页面的替代方案。
+
 `claim:true` 最多等待 15 秒让初始 URL 可用，再按创建返回的准确 tab_id 接管；允许正常重定向，不等待页面加载完成。取得句柄后仍应 snapshot/按需 wait，核对当前页面。创建和接管不是可回滚事务：接管失败保留已打开标签，错误中的 `open_tab` 包含 `opened:true`、`claimed:false`、`phase:"claim"`、browser_id、tab_id 等已知创建信息。接管超时或浏览器断连时，`claimed:null`、`outcome_unknown:true` 表示接管结果未知。清理失败且仍保留控制时还返回 `control_retained:true` 和可用于 release 的 tab_handle；排除故障后释放，再发现接管。先观察，不能自动重放 open_tab。
+
+已接管标签变为 `about:blank` 且句柄仍有效时，可以用原句柄显式 browser_navigate 到 HTTP(S)/已授权 file URL 或合法历史条目，在同一标签恢复。普通页面操作仍拒绝空白页，错误会指明当前状态及恢复方式；释放、关闭和显式激活仍可用。恢复导航不还原丢失的未保存内容，不会自动重开或重访旧地址。未接管空白标签仍不可新接管，需先在浏览器中导航到支持的页面，再发现和接管。
 
 `browser_tab_control` 的 action 必填：
 

@@ -99,6 +99,100 @@ test('tab_id claim tolerates title drift; explicitly supplied identity guards st
   await assert.rejects(f.exec('click', { selector: '#submit', mode: 'dom', coordinate_space: 'document' }), /coordinate clicks only/);
 });
 
+test('an owned tab that becomes blank recovers in place without recreating, reattaching or activating', async () => {
+  const f = fixture(); await f.claim();
+  const ref = f.ref(await f.exec('snapshot'));
+  f.tabs.get(9).url = 'about:blank';
+  f.api.tabs.onUpdated.emit(9, { url: 'about:blank' });
+  assert.equal((await f.exec('list_tabs')).tabs[0].controllable, false);
+  const before = f.calls.length;
+  for (const command of ['snapshot', 'evaluate', 'click', 'logs']) {
+    await assert.rejects(f.exec(command, { ref, expression: '1', kind: 'console' }), /claimed tab.*about:blank.*browser_navigate.*release or close/);
+  }
+  await assert.rejects(f.exec('navigate', { url: 'https://example.com/' }, 'two'), /not claimed/);
+  assert.equal(f.calls.length, before);
+  assert.equal(f.controller.claimedCount(), 1);
+
+  const result = await f.exec('navigate', { url: 'https://example.com/' });
+  assert.equal(result.url, 'https://example.com/');
+  assert.equal(result.tab_id, 9);
+  assert.match(result.snapshot, /button "Submit"/);
+  assert.equal(f.controller.claimedCount(), 1);
+  assert.equal(f.calls.filter(c => c.method === 'Page.navigate').length, 1);
+  assert.equal(f.calls.filter(c => c.method === 'attach').length, 1);
+  assert.ok(!f.calls.some(c => ['tabs.create', 'tabs.update', 'windows.update', 'Page.bringToFront'].includes(c.method)));
+  await assert.rejects(f.exec('click', { ref }), /stale/);
+});
+
+test('blank discovery stays unclaimable and explains how to obtain a new claim', async () => {
+  const f = fixture(); f.tabs.get(9).url = 'about:blank';
+  assert.equal((await f.exec('list_tabs')).tabs[0].controllable, false);
+  await assert.rejects(f.exec('claim_tab'), /about:blank.*cannot be claimed.*in the browser.*discover and claim/);
+  assert.equal(f.controller.claimedCount(), 0);
+  assert.ok(!f.calls.some(c => c.method === 'attach'));
+  await assert.rejects(f.exec('navigate', { url: 'https://example.com/' }), /not claimed/);
+});
+
+test('blank recovery still validates destinations and current restricted pages remain blocked', async () => {
+  const f = fixture(); await f.claim();
+  f.tabs.get(9).url = 'about:blank';
+  f.api.extension.isAllowedFileSchemeAccess = async () => false;
+  for (const url of ['about:blank', 'chrome://settings/', 'edge://settings/', 'chrome-extension://other/index.html', 'data:text/html,hello', 'javascript:alert(1)', 'https://user:pass@example.com/']) {
+    await assert.rejects(f.exec('navigate', { url }), /Only http\(s\) and file/);
+  }
+  await assert.rejects(f.exec('navigate', { url: 'file:///C:/sample.html' }), /Local file access is disabled/);
+  assert.ok(!f.calls.some(c => c.method === 'Page.navigate'));
+  assert.equal(f.tabs.get(9).url, 'about:blank');
+  f.api.extension.isAllowedFileSchemeAccess = async () => true;
+  assert.equal((await f.exec('navigate', { url: 'file:///C:/sample.html' })).url, 'file:///C:/sample.html');
+  const dispatched = f.calls.filter(c => c.method === 'Page.navigate').length;
+  for (const url of ['chrome://settings/', 'edge://settings/', 'chrome-extension://other/index.html', 'data:text/html,hello', 'about:srcdoc']) {
+    f.tabs.get(9).url = url;
+    await assert.rejects(f.exec('navigate', { url: 'https://example.com/' }), /Only http\(s\) and file/);
+  }
+  assert.equal(f.calls.filter(c => c.method === 'Page.navigate').length, dispatched);
+});
+
+test('history recovery from blank validates the selected entry before dispatch', async () => {
+  const f = fixture(); await f.claim();
+  f.tabs.get(9).url = 'about:blank';
+  let destination = 'file:///C:/sample.html';
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Page.getNavigationHistory') return { currentIndex: 1, entries: [{ id: 1, url: destination }, { id: 2, url: 'about:blank' }] };
+    if (method === 'Page.navigateToHistoryEntry') {
+      f.calls.push({ method, args, target });
+      f.tabs.get(9).url = destination;
+      f.api.debugger.onEvent.emit(target, 'Page.navigatedWithinDocument', { frameId: 'main', url: destination });
+      return {};
+    }
+    return send(target, method, args);
+  };
+  f.api.extension.isAllowedFileSchemeAccess = async () => false;
+  await assert.rejects(f.exec('navigate', { direction: 'back' }), /Local file access is disabled/);
+  destination = 'chrome://settings/';
+  await assert.rejects(f.exec('navigate', { direction: 'back' }), /Only http\(s\) and file/);
+  assert.ok(!f.calls.some(c => c.method === 'Page.navigateToHistoryEntry'));
+  destination = 'https://example.com/';
+  assert.equal((await f.exec('navigate', { direction: 'back', include_snapshot: false })).url, destination);
+  assert.equal(f.calls.filter(c => c.method === 'Page.navigateToHistoryEntry').length, 1);
+});
+
+test('blank tabs retain cleanup and detach failures retain exclusive ownership', async () => {
+  const f = fixture(); await f.claim(); f.tabs.get(9).url = 'about:blank';
+  const detach = f.api.debugger.detach;
+  f.api.debugger.detach = async () => { throw new Error('detach failed'); };
+  await assert.rejects(f.exec('release_tab'), /detach failed/);
+  assert.equal(f.controller.claimedCount(), 1);
+  await assert.rejects(f.exec('claim_tab', { tab_handle: 'other' }, 'two'), /another session/);
+  f.api.debugger.detach = detach;
+  await f.exec('release_tab');
+  assert.equal(f.controller.claimedCount(), 0);
+  const closed = fixture(); await closed.claim(); closed.tabs.get(9).url = 'about:blank';
+  assert.equal((await closed.exec('close_tab')).closed, true);
+  assert.equal(closed.controller.claimedCount(), 0);
+});
+
 test('hasFocus false alone does not reject an active visible page in a focused window', async () => {
   const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
   f.api.debugger.sendCommand = async (target, method, args) => method === 'Runtime.evaluate' && args.expression.includes('visibility_state: document.visibilityState')

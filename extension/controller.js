@@ -80,6 +80,14 @@ export function createController(api, notify = () => {}) {
     return normalized;
   }
 
+  async function controlCurrentUrl(url, command) {
+    if (url !== 'about:blank') return await controlUrl(url);
+    // An existing claim can navigate away without making blank pages controllable.
+    if (command === 'navigate') return;
+    if (command === 'claim_tab') throw new Error('Tab is currently at about:blank and cannot be claimed. Navigate it to an HTTP(S) or authorized file page in the browser, then discover and claim it again.');
+    throw new Error('The claimed tab is currently at about:blank. Use browser_navigate to an HTTP(S) or authorized file URL to recover this tab, or browser_tab_control to release or close it.');
+  }
+
   function cdp(target, method, params = {}) { return dialogs.send(target, method, params); }
 
   function value(result) {
@@ -188,7 +196,7 @@ export function createController(api, notify = () => {}) {
         try {
           if (claims.get(tabId) !== claim) throw new Error('Tab control ended during batch; observe before continuing');
           if (observations.version(tabId) !== documentVersion) throw new Error('Document changed during batch; observe before continuing');
-          await budget.run(async () => controlUrl((await api.tabs.get(tabId)).url));
+          await budget.run(async () => controlCurrentUrl((await api.tabs.get(tabId)).url, step.action));
           const { action: command, ...inputArgs } = step;
           const stepBudget = budget.child(step.timeout_ms ?? 30000, command === 'wait' ? 'wait' : 'input');
           results.push(await perform(tabId, command, { ...inputArgs, dialog_policy: step.dialog_policy ?? args.dialog_policy ?? 'ask', budget: stepBudget }));
@@ -407,7 +415,7 @@ export function createController(api, notify = () => {}) {
             }
           }
           if ((args.expected_url != null && tab.url !== args.expected_url) || (args.expected_title != null && tab.title !== args.expected_title)) throw new Error('Tab title/URL changed. List tabs again or omit optional identity guards to claim by tab_id.');
-          await controlUrl(tab.url);
+          await controlCurrentUrl(tab.url, command);
           if (claims.get(tabId) !== claim) throw new Error('Tab detached during claim');
           if (existing) return { claimed: true };
           return await attach(tabId, owner, args, tab);
@@ -435,7 +443,7 @@ export function createController(api, notify = () => {}) {
         return { closed: true, tab_id: tabId };
       }
       if (command === 'release_tab') return await action(tabId, command, args);
-      await controlUrl((await api.tabs.get(tabId)).url);
+      await controlCurrentUrl((await api.tabs.get(tabId)).url, command);
       const result = await perform(tabId, command, args);
       // A batch can stop because its tab closed. Preserve the partial results
       // instead of losing them to a metadata lookup on the vanished tab.
