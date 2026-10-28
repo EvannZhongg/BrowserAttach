@@ -829,12 +829,35 @@ async function checkOpenTabs({ browserId, call, rawCall, configPath }) {
     const oldTree = await call('snapshot', h);
     const oldRef = oldTree.snapshot.match(/\[([^\]]+)\] textbox "Name"/)[1];
     const tabIds = (await list()).map(t => t.tab_id).sort();
+    await call('evaluate', { ...h, expression: `(async()=>{
+      console.trace('diagnostic evidence before blank');
+      await (await fetch('/api/ok')).text();
+      setTimeout(() => history.replaceState(null, '', location.pathname + '?diagnostics#same-document'), 100);
+      return true;
+    })()` });
+    await until(async () => (await list()).some(t => t.tab_id === created.tab_id && t.url.endsWith('#same-document')), 'same-document diagnostic navigation');
     const blank = async method => {
       await call('evaluate', { ...h, expression: `(setTimeout(() => location.${method}('about:blank'), 100), true)` });
       const tab = await until(async () => (await list()).find(t => t.tab_id === created.tab_id && t.url === 'about:blank'), 'page-initiated blank navigation');
       assert.equal(tab.control, 'yours'); assert.equal(tab.controllable, false);
     };
     await blank('replace');
+    const trace = (await call('logs', { ...h, kind: 'console' })).entries.find(row => row.text.includes('diagnostic evidence before blank'));
+    assert.ok(trace.stack.length > 0 && trace.stack.length <= 8);
+    const request = (await call('logs', { ...h, kind: 'network' })).entries.find(row => row.event === 'request' && row.url.endsWith('/api/ok'));
+    assert.equal(request.initiator.type, 'script'); assert.equal(typeof request.loader_id, 'string');
+    const firstNavigation = await call('logs', { ...h, kind: 'navigation', limit: 1 });
+    let navigation = firstNavigation, navigationRows = [...navigation.entries];
+    while (navigation.has_more) {
+      navigation = await call('logs', { ...h, kind: 'navigation', after_seq: navigation.next_seq, limit: 1 });
+      navigationRows.push(...navigation.entries);
+    }
+    assert.ok(navigationRows.some(row => row.event === 'same_document' && row.url.endsWith('#same-document')));
+    assert.ok(navigationRows.some(row => row.event === 'requested' && row.url === 'about:blank' && row.reason === 'scriptInitiated' && row.disposition === 'currentTab'));
+    assert.ok(navigationRows.some(row => row.event === 'committed' && row.url === 'about:blank' && row.loader_id && Number.isFinite(row.observed_at) && !row.reason));
+    await assert.rejects(other.call('logs', { ...h, kind: 'navigation' }), /belongs to another/);
+    for (const enabled of [true, false]) assert.equal((await rawCall('logs', { ...h, kind: 'network', capture: { enabled } })).isError, true);
+    checks.push('buffered console/network/navigation evidence survives about:blank; available stacks, initiators, loader identity and independent pagination cross stdio MCP; capture changes and other owners remain blocked');
     const unavailable = await rawCall('snapshot', h);
     assert.equal(unavailable.isError, true); assert.match(unavailable.content[0].text, /about:blank.*browser_navigate/);
     await assert.rejects(other.call('navigate', { ...h, url }), /belongs to another/);

@@ -426,6 +426,12 @@ export function createController(api, notify = () => {}) {
       }
       const claim = claims.get(tabId);
       if (!claim || claim.owner !== owner || claim.handle !== args.tab_handle) throw new Error('Tab is not claimed by this connection');
+      if (command === 'logs') {
+        // Buffered reads belong to the claim, not the current document. Only
+        // capture changes need live-page access; neither path needs DOM probes.
+        if (args.capture != null) await controlCurrentUrl((await api.tabs.get(tabId)).url, command);
+        return { ...await action(tabId, command, args), tab_id: tabId };
+      }
       if (command === 'activate_tab') {
         if (args.focus_window != null && typeof args.focus_window !== 'boolean') throw new Error('focus_window must be a boolean');
         const tab = await api.tabs.update(tabId, { active: true });

@@ -23,7 +23,7 @@ Drive the Chrome / Edge tabs you already have open and already signed in from an
 - Read the accessibility tree, query names/values/nearby field context, inspect field values and supported editor models; click, fill and type through refs or strict CSS/XPath, HTML label, placeholder and AX role/name locators. Type can also target the currently focused field explicitly.
 - Native pointer hover, stepped drags and conditional waits; select HTML options without opening a native popup.
 - Navigate and go back/forward, open or close tabs, handle JavaScript dialogs, upload local files, and capture the whole page or a single element.
-- Evaluate JavaScript expressions in the main page; read console, page-error and network lifecycle logs captured after claiming; opt in to bounded, redacted request/response details when XHR/fetch needs verification.
+- Evaluate JavaScript expressions in the main page; read console, page-error, network and navigation logs captured after claiming, with bounded available stacks and request initiators; opt in to bounded, redacted request/response details when XHR/fetch needs verification.
 - Read one HTTP(S) URL in a temporary background tab with the profile's sign-in, returning rendered text, current DOM, or complete JSON with the main-document HTTP status when observed.
 - Standard stdio MCP with 23 tools. The Hub listens on loopback only and pairs with the extension through a random key.
 
@@ -106,7 +106,7 @@ Claiming and ordinary input never activate a tab or window; call `browser_tab_co
 | `browser_upload_file` | Native file input or an intercepted file chooser |
 | `browser_screenshot` | Viewport or full-page PNG with coordinate mapping |
 | `browser_evaluate` | Main-page JS evaluation, promise awaiting, bounded results |
-| `browser_logs` | Select console, error or request logs with `kind=console/network`; supports filters and cursor continuation |
+| `browser_logs` | Read `kind=console/network/navigation` with independent cursors; buffered reads survive blank or unresponsive pages |
 
 ## Local data and upgrades
 
@@ -135,7 +135,7 @@ MCP client → Node.js stdio MCP → 127.0.0.1 Hub
 
 Each MCP connection holds its own control and handles cannot be used across connections. Disconnecting or stopping debugging releases control. The client endpoint requires a Bearer key and rejects web page Origins; the extension verifies a fixed Origin, key and version. `browser_evaluate` can read and write data with the page's existing sign-in state; a timeout or error may already have had an effect and must not be replayed automatically. No generic CDP tool is exposed.
 
-Logs are collected from claim time, survive navigation and are cleared on release, with bounded buffers that report `data_loss` on eviction. Network logs store lifecycle metadata only by default; an explicit capture reads bounded, redacted headers/bodies of subsequent XHR/fetch requests without changing caches or intercepting traffic. Buffer limits and parameters: [usage guide](docs/USAGE.md#诊断日志).
+Logs are collected from claim time, survive navigation and are cleared on release, with bounded buffers that report `data_loss` on eviction. Buffered reads use the existing claim without requiring a supported or responsive current page; capture changes still require page access. Network logs store lifecycle metadata and available initiators by default; an explicit capture reads bounded, redacted headers/bodies of subsequent XHR/fetch requests without changing caches or intercepting traffic. Navigation requests and commits remain separate observations. Buffer limits and parameters: [usage guide](docs/USAGE.md#诊断日志).
 
 The extension holds debugger permission and client actions can use existing site sign-in state; only connect clients you trust. Web page content must not be treated as user authorization. The pairing key and the generated `config.generated.js` must not be committed or published; the packaging check rejects packages that contain that file.
 

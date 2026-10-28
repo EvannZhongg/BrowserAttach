@@ -48,9 +48,44 @@ function location(frame = {}) {
   return { url: clip(frame.url), line: frame.lineNumber, column: frame.columnNumber };
 }
 
+function stackData(trace) {
+  if (!trace) return {};
+  const stack = [];
+  let depth = 0, truncated = false;
+  while (trace) {
+    const frames = trace.callFrames || [], available = 8 - stack.length;
+    for (const frame of frames.slice(0, available)) stack.push({
+      function: clip(frame.functionName, 200), ...location(frame),
+      script_id: clip(frame.scriptId, 100), async_depth: depth,
+    });
+    if (frames.length > available || trace.parentId) truncated = true;
+    if (!trace.parent) break;
+    if (stack.length >= 8 || depth >= 2) { truncated = true; break; }
+    trace = trace.parent; depth++;
+  }
+  return { stack, stack_truncated: truncated };
+}
+
+function initiatorData(initiator) {
+  if (!initiator) return {};
+  return { initiator: { type: clip(initiator.type, 100),
+    ...(initiator.url != null ? location(initiator) : {}),
+    ...(initiator.requestId != null ? { request_id: clip(initiator.requestId, 200) } : {}),
+    ...stackData(initiator.stack) } };
+}
+
+function validateQuery(args) {
+  if (!['console', 'network', 'navigation'].includes(args.kind)) throw new Error('kind must be console, network or navigation');
+  if (args.kind !== 'network' && args.capture != null) throw new Error('capture is only valid for network logs');
+  if (args.kind !== 'network' && args.url_contains != null) throw new Error('url_contains is only valid for kind=network');
+  if (args.kind !== 'console' && args.level != null) throw new Error('level is only valid for kind=console');
+  if (args.level != null && !['log', 'debug', 'info', 'warning', 'error'].includes(args.level)) throw new Error('Invalid console level');
+  if (args.url_contains != null && (typeof args.url_contains !== 'string' || args.url_contains.length > 2000)) throw new Error('url_contains must be at most 2000 characters');
+}
+
 export function createDiagnostics(cdp) {
   const tabs = new Map();
-  function start(tabId) { tabs.set(tabId, { started: Date.now(), console: buffer(), network: buffer(), contexts: new Map(), capture: { enabled: false, max_body_bytes: 65536 }, captureVersion: 0, detailed: new Set(), pending: new Set() }); }
+  function start(tabId) { tabs.set(tabId, { started: Date.now(), console: buffer(), network: buffer(), navigation: buffer(), contexts: new Map(), capture: { enabled: false, max_body_bytes: 65536 }, captureVersion: 0, detailed: new Set(), pending: new Set() }); }
   function event(source, method, params, tracked) {
     const state = tabs.get(source.tabId);
     if (!state) return;
@@ -68,16 +103,28 @@ export function createDiagnostics(cdp) {
         : ['debug', 'trace'].includes(type) ? 'debug' : type === 'info' ? 'info' : 'log';
       state.console.add({ ...origin, frame_id: state.contexts.get(contextKey), timestamp, source: 'console', type, level,
         text: clip((params.args || []).slice(0, 20).map(remoteText).join(' '), 8000),
-        location: location(params.stackTrace?.callFrames?.[0]), execution_context_id: params.executionContextId });
+        location: location(params.stackTrace?.callFrames?.[0]), execution_context_id: params.executionContextId, ...stackData(params.stackTrace) });
     } else if (method === 'Runtime.exceptionThrown') {
       const details = params.exceptionDetails || {};
       state.console.add({ ...origin, frame_id: state.contexts.get(contextKey), timestamp, source: 'exception', type: 'exception', level: 'error',
         text: clip(details.exception?.description || details.text, 8000), location: location(details),
-        stack: (details.stackTrace?.callFrames || []).slice(0, 8).map(frame => ({ function: clip(frame.functionName, 200), ...location(frame) })) });
+        stack: [], ...stackData(details.stackTrace) });
     } else if (method === 'Log.entryAdded') {
       const entry = params.entry;
       state.console.add({ ...origin, frame_id: state.contexts.get(contextKey), timestamp, source: clip(entry.source, 100), type: 'browser', level: clip(entry.level, 100),
-        text: clip(entry.text, 8000), location: location(entry) });
+        text: clip(entry.text, 8000), location: location(entry), ...stackData(entry.stackTrace),
+        ...(entry.networkRequestId != null ? { request_id: clip(entry.networkRequestId, 200) } : {}) });
+    } else if (method === 'Page.frameRequestedNavigation') {
+      state.navigation.add({ ...origin, event: 'requested', observed_at: Date.now(), frame_id: params.frameId,
+        url: clip(params.url), reason: clip(params.reason, 100), disposition: clip(params.disposition, 100) });
+    } else if (method === 'Page.frameNavigated') {
+      const frame = params.frame;
+      state.navigation.add({ ...origin, event: 'committed', observed_at: Date.now(), frame_id: frame.id,
+        parent_frame_id: frame.parentId ?? null, loader_id: frame.loaderId, url: clip(frame.url),
+        ...(frame.unreachableUrl ? { unreachable_url: clip(frame.unreachableUrl) } : {}), navigation_type: params.type });
+    } else if (method === 'Page.navigatedWithinDocument') {
+      state.navigation.add({ ...origin, event: 'same_document', observed_at: Date.now(), frame_id: params.frameId,
+        url: clip(params.url), navigation_type: params.navigationType });
     } else if (method.startsWith('Network.')) {
       if (!tracked) return;
       const id = params.requestId, { key } = tracked;
@@ -90,7 +137,7 @@ export function createDiagnostics(cdp) {
         if (tracked.evicted) state.detailed.delete(tracked.evicted);
         state.detailed.delete(key);
         if (state.capture.enabled && ['XHR', 'Fetch'].includes(params.type)) state.detailed.add(key);
-        add('request', { wall_time: params.wallTime, ...(state.detailed.has(key) ? {
+        add('request', { wall_time: params.wallTime, ...initiatorData(params.initiator), ...(state.detailed.has(key) ? {
           headers: redactHeaders(params.request.headers), ...(params.request.postData != null ? { request_body: boundedBody(params.request.postData, state.capture.max_body_bytes) } : params.request.hasPostData ? { request_body_unavailable: 'not present in bounded request event' } : {}),
         } : {}) });
       } else if (method === 'Network.responseReceived') {
@@ -126,12 +173,8 @@ export function createDiagnostics(cdp) {
   function read(tabId, args) {
     const state = tabs.get(tabId);
     if (!state) throw new Error('Diagnostics are unavailable; claim the tab again');
+    validateQuery(args);
     const { kind } = args;
-    if (!['console', 'network'].includes(kind)) throw new Error('kind must be console or network');
-    if (kind === 'console' && args.url_contains != null) throw new Error('url_contains is only valid for kind=network');
-    if (kind === 'network' && args.level != null) throw new Error('level is only valid for kind=console');
-    if (args.level != null && !['log', 'debug', 'info', 'warning', 'error'].includes(args.level)) throw new Error('Invalid console level');
-    if (args.url_contains != null && (typeof args.url_contains !== 'string' || args.url_contains.length > 2000)) throw new Error('url_contains must be at most 2000 characters');
     return { ...state[kind].read(args, record => kind === 'console' ? !args.level || record.level === args.level
       : !args.url_contains || record.url?.includes(args.url_contains)),
       kind, ...(kind === 'network' ? { capture: state.capture, pending_bodies: state.pending.size } : {}), capture_started_at: state.started, scope: 'tab_and_iframes', retained_across_navigation: true };
@@ -150,8 +193,8 @@ export function createDiagnostics(cdp) {
     state.capture = next; state.captureVersion++; state.detailed.clear();
   }
   async function readDetails(tabId, args, targets) {
+    validateQuery(args);
     if (args.capture != null) {
-      if (args.kind !== 'network') throw new Error('capture is only valid for network logs');
       await configure(tabId, args.capture, targets);
     }
     const state = tabs.get(tabId);

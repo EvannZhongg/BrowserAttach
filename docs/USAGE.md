@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.26.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.27.0**：Node.js 22+、Chrome / Edge 125+、23 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -22,7 +22,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 
 `claim:true` 最多等待 15 秒让初始 URL 可用，再按创建返回的准确 tab_id 接管；允许正常重定向，不等待页面加载完成。取得句柄后仍应 snapshot/按需 wait，核对当前页面。创建和接管不是可回滚事务：接管失败保留已打开标签，错误中的 `open_tab` 包含 `opened:true`、`claimed:false`、`phase:"claim"`、browser_id、tab_id 等已知创建信息。接管超时或浏览器断连时，`claimed:null`、`outcome_unknown:true` 表示接管结果未知。清理失败且仍保留控制时还返回 `control_retained:true` 和可用于 release 的 tab_handle；排除故障后释放，再发现接管。先观察，不能自动重放 open_tab。
 
-已接管标签变为 `about:blank` 且句柄仍有效时，可以用原句柄显式 browser_navigate 到 HTTP(S)/已授权 file URL 或合法历史条目，在同一标签恢复。普通页面操作仍拒绝空白页，错误会指明当前状态及恢复方式；释放、关闭和显式激活仍可用。恢复导航不还原丢失的未保存内容，不会自动重开或重访旧地址。未接管空白标签仍不可新接管，需先在浏览器中导航到支持的页面，再发现和接管。
+已接管标签变为 `about:blank` 且句柄仍有效时，可以用原句柄显式 browser_navigate 到 HTTP(S)/已授权 file URL 或合法历史条目，在同一标签恢复。普通页面操作仍拒绝空白页，错误会指明当前状态及恢复方式；读取已有日志（不带 capture）、释放、关闭和显式激活仍可用。恢复导航不还原丢失的未保存内容，不会自动重开或重访旧地址。未接管空白标签仍不可新接管，需先在浏览器中导航到支持的页面，再发现和接管。
 
 `browser_tab_control` 的 action 必填：
 
@@ -60,7 +60,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 | `browser_screenshot` | 视口、整页或元素 PNG 截图 |
 | `browser_upload_file` | 设置本机文件或处理已拦截的选择器 |
 | `browser_evaluate` | 一次执行页面表达式，返回 JSON 或元素 ref |
-| `browser_logs` | 读取控制台或网络日志，按需捕获 XHR/fetch 详情 |
+| `browser_logs` | 读取控制台、网络或导航日志，按需捕获 XHR/fetch 详情 |
 
 ## 通用规则与结果
 
@@ -542,7 +542,9 @@ expression 在页面世界执行一次，默认主 frame，可用 frame/frame_id
 {"tab_handle":"...","kind":"console","level":"error","after_seq":0,"limit":100,"max_chars":24000}
 ```
 
-kind 必填为 console 或 network，各自独立缓冲与序列。将 next_seq 作为同一标签、同次 claim、同一 kind 的 after_seq；切换过滤条件回看旧事件时从 0 开始。has_more 表示还有事件可扫描，过滤掉的事件也会推进游标。读取不消费日志，也可在 JS 对话框打开时进行。
+kind 必填为 console、network 或 navigation，各自独立缓冲与序列。将 next_seq 作为同一标签、同次 claim、同一 kind 的 after_seq；切换过滤条件回看旧事件时从 0 开始。has_more 表示还有事件可扫描，过滤掉的事件也会推进游标。
+
+不带 capture 时只读取本次 claim 已保存的缓冲，仍校验所有权并遵守标签队列，不访问当前页面或读取实时标签元数据；即使页面变空白、变为不支持的 URL、元数据不可用或存在 JS 对话框也可读取。不消费日志，不重新取得已撤销权限下的页面内容。日志响应不再附带实时 title/url/active；当前标签信息由 browser_discover 获取。携带 capture（包括 enabled=false）属于配置修改，仍要求当前页面受支持且文件访问已授权；不会因为页面故障而自动改变配置。
 
 | 参数 / 返回 | 说明 |
 |---|---|
@@ -551,7 +553,15 @@ kind 必填为 console 或 network，各自独立缓冲与序列。将 next_seq 
 | `url_contains` | 仅 network：最多 2000 字符；只过滤读取，不限制 capture 范围 |
 | `data_loss` / `dropped_through_seq` | 缓冲淘汰及缺口；每类最多 500 条 / 1048576 个 JSON 字符 |
 
-日志从 claim 开始，导航保留，释放、detach、关闭或断连清除，不落盘。控制台含 console、异常/rejection 及浏览器 Log 消息，对象为浅层预览；行列号从 0 开始，timestamp/capture_started_at 为 Unix 毫秒。网络事件为 request/redirect/response/finished/failed/cache，按 session_id/request_id/hop 关联；timestamp 为单调时钟秒，request.wall_time 为 Unix 秒。独立 worker、WebSocket 消息不在覆盖范围。
+日志从 claim 开始，导航保留，释放、detach、关闭或断连清除，不落盘。控制台含 console、异常/rejection 及浏览器 Log 消息，对象为浅层预览；行列号从 0 开始，timestamp/capture_started_at 为 Unix 毫秒。网络事件为 request/redirect/response/finished/failed/cache，按 session_id/request_id/hop 关联，已知时保留 frame_id/loader_id；timestamp 为单调时钟秒，request.wall_time 为 Unix 秒。request 可带 initiator 的 type、位置、request_id 和已有调用栈，浏览器 Log 可带 request_id；不据此推断业务成功。独立 worker、WebSocket 消息不在覆盖范围。
+
+console、异常、浏览器 Log 和网络 initiator 仅保留事件已提供的调用栈：最多 8 帧、最多两层内联异步父栈，async_depth=0 为当前栈，1/2 为父栈；函数名/URL/script_id 分别最多 200/2000/100 字符。stack_truncated 标记帧数、父链或未展开 parentId 造成的缺口，长字段带截断标记。不额外启用 Debugger、不查询远端父栈；stack 缺失不代表没有脚本发起者。
+
+```json
+{"tab_handle":"...","kind":"navigation","after_seq":0}
+```
+
+navigation 的 event=requested/committed/same_document 分别表示渲染器请求导航、文档提交和同文档导航。requested 保留浏览器提供的 reason/disposition，但不保证提交，也不覆盖全部浏览器发起的导航；committed 保留 frame_id、parent_frame_id、loader_id、URL 和可用的 unreachable_url，navigation_type 按事件原样保留。observed_at 是扩展收到事件时的 Unix 毫秒，不是浏览器导航发生时间，不能与网络单调秒直接混排。事件独立记录，不将相邻请求与提交自动配对，也不把 scriptInitiated 推断为某段安全脚本导致跳转。
 
 默认不保存 headers/正文。需要检查 XHR/fetch 时先启用捕获，再触发请求：
 

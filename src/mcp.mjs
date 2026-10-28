@@ -126,17 +126,17 @@ export function createMcp(client) {
     if (args.cursor && (args.frame || args.frame_id || args.result_type === 'element')) throw new Error('Cursor continuation uses cached JSON; omit frame and result_type=element');
     return args;
   });
-  tool('logs', 'Read console or network events since claim, retained across navigation. Continue next_seq as after_seq for the same claim/kind; restart at 0 when changing filters. data_loss reports eviction.', {
-    ...handle, kind: z.enum(['console', 'network']),
+  tool('logs', 'Read buffered console, network or navigation events since claim, even if the page is blank or unresponsive. Capture changes require a supported page. Continue next_seq as after_seq for the same claim/kind; restart at 0 when changing filters. data_loss reports eviction.', {
+    ...handle, kind: z.enum(['console', 'network', 'navigation']),
     after_seq: integerRange('after_seq', 0, Number.MAX_SAFE_INTEGER).default(0),
     limit: integerRange('limit', 1, 200).default(100), max_chars: integerRange('max_chars', 1000, 100000).default(24000),
     level: z.enum(['log', 'debug', 'info', 'warning', 'error']).optional().describe('Only valid for kind=console.'),
     url_contains: z.string().max(2000).optional().describe('Only valid for kind=network.'),
     capture: z.object({ enabled: z.boolean(), max_body_bytes: integerRange('max_body_bytes', 1024, 262144).default(65536) }).strict().optional().describe('Network only: opt in before XHR/fetch for bounded headers/bodies, with credential headers and named secrets redacted; unavailable bodies are explicit.'),
   }, null, args => {
-    if (args.kind === 'console' && args.capture != null) throw new Error('capture is only valid for kind=network');
-    if (args.kind === 'console' && args.url_contains != null) throw new Error('url_contains is only valid for kind=network');
-    if (args.kind === 'network' && args.level != null) throw new Error('level is only valid for kind=console');
+    if (args.kind !== 'network' && args.capture != null) throw new Error('capture is only valid for kind=network');
+    if (args.kind !== 'network' && args.url_contains != null) throw new Error('url_contains is only valid for kind=network');
+    if (args.kind !== 'console' && args.level != null) throw new Error('level is only valid for kind=console');
     return args;
   });
   tool('click', 'Click exactly one ref/selector/x+y; elements auto-scroll and may recenter once before dispatch, with hit checks. Unmodified left single clicks may target inactive tabs. Native target_verified requires an element; coordinates return null and verify trusted delivery to the hit only. Native select requires select_option.', {

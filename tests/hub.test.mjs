@@ -289,7 +289,7 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
   assert.equal(tools.length, 23);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const logSchema = tools.find(tool => tool.name === 'browser_logs').inputSchema;
-  assert.deepEqual(logSchema.properties.kind.enum, ['console', 'network']);
+  assert.deepEqual(logSchema.properties.kind.enum, ['console', 'network', 'navigation']);
   assert.ok(logSchema.required.includes('kind'));
   assert.equal(logSchema.properties.after_seq.default, 0);
   for (const name of ['click', 'fill']) {
@@ -394,14 +394,15 @@ test('real stdio MCP exposes 23 tools including ordered batch, unified logs, sin
     assert.equal((await call('batch', { tab_handle: handle, steps })).isError, true);
   }
   assert.equal(f.requests.filter(r => r.command === 'batch').length, batchCount);
-  for (const [name, query] of [['evaluate', { expression: 'document.title' }], ['logs', { kind: 'console' }], ['logs', { kind: 'network' }]]) {
+  for (const [name, query] of [['evaluate', { expression: 'document.title' }], ['logs', { kind: 'console' }], ['logs', { kind: 'network' }], ['logs', { kind: 'navigation' }]]) {
     const args = { tab_handle: handle, ...query };
     assert.ok(!(await call(name, args)).isError);
     assert.ok(f.requests.some(item => item.command === name));
     assert.equal((await call(name, { ...args, tab_handle: 'expired' })).isError, true);
   }
   const logCount = f.requests.filter(item => item.command === 'logs').length;
-  for (const query of [{}, { kind: 'all' }, { kind: 'console', url_contains: '/api' }, { kind: 'network', level: 'error' }]) {
+  for (const query of [{}, { kind: 'all' }, { kind: 'console', url_contains: '/api' }, { kind: 'network', level: 'error' },
+    { kind: 'navigation', level: 'error' }, { kind: 'navigation', url_contains: '/api' }, { kind: 'navigation', capture: { enabled: false } }]) {
     const invalid = await call('logs', { tab_handle: handle, ...query });
     assert.equal(invalid.isError, true);
   }

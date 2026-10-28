@@ -1,8 +1,18 @@
 # 验证报告
 
-当前版本 **0.26.0**（2026-10-28）。浏览器验证使用本地 fixture；临时 profile 与本机已配对配置的测试链路在各项下说明。
+当前版本 **0.27.0**（2026-10-28）。浏览器验证使用本地 fixture；临时 profile 与本机已配对配置的测试链路在各项下说明。
 
 ## 当前版本
+
+- `browser_logs` 新增 `kind=navigation`，独立缓冲与游标：`event=requested/committed/same_document` 分别保留浏览器上报的 reason/disposition、frame_id/parent_frame_id/loader_id/URL/可用的 unreachable_url 与 navigation_type。不把相邻请求与提交自动配对，也不把 scriptInitiated 推断为某段脚本导致跳转。
+- 网络事件保留 loader_id；request 记录附带可用的 initiator（type、位置、request_id 与调用栈），浏览器 Log 记录附带 request_id。console、异常、浏览器 Log 与网络 initiator 只保留事件已提供的调用栈：最多 8 帧、最多两层内联异步父栈，async_depth 标注层级，函数名/URL/script_id 分别裁剪到 200/2000/100 字符，stack_truncated 标记帧数、父链或未展开 parentId 造成的缺失；不额外启用 Debugger，也不查询远端父栈。
+- 不带 capture 的日志读取只校验所有权并遵守标签队列，不访问当前页面、不读取实时标签元数据，页面变空白、变为不支持的 URL、元数据不可用或存在 JS 对话框时仍可读；带 capture（含 enabled=false）仍要求当前页面受支持且文件访问已授权，不会因页面故障自动改配置。工具数量、参数数量、权限与依赖不变，版本递增至 0.27.0。同步更新使用、架构与 README 描述。
+- `npm test` 全量 329 项通过，新增 8 项覆盖 navigation 事件与淘汰/生命周期、栈与 initiator 裁剪及隐私字段、空白与受限页面及元数据失败下的缓冲读取、capture 修改仍需页面访问、所有权与释放/断连/关闭顺序。记录：test-results/logs-navigation-unit-0270.log。
+- Chromium 156 无头临时 profile 的 tabs 组 6 项检查、71 次调用通过；新增检查经真实扩展 → Hub → stdio MCP 验证 about:blank 前后的 console/network/navigation 证据、可用栈与 initiator、loader 身份、独立分页，以及 capture 修改与其他 owner 仍被拒绝。记录：test-results/npm-live-chromium-tabs.json。Edge tabs 组与 files 组本版未重跑。
+- `npm run test:package` 通过：67 个发布文件、包外安装、23 个 stdio 工具及随包 skill 文件一致性检查通过，无生成配对密钥。记录：test-results/logs-navigation-package-0270.log。
+- 本机既有 F:\\.nosis\\browser-attach\\config.json 完成 Hub stop/start；Chrome 与 Edge 扩展在 Hub 重启后自动重载至 0.27.0 / ready，未手工重新加载。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致。在这两个真实已配对浏览器中各创建并关闭一个本地 fixture 标签，验证 navigation 日志（historyApi、requested/committed）、console 栈与 network initiator/loader_id、变为 about:blank 后三种缓冲读取仍可读、带 capture 仍被拒绝、普通操作仍拒绝空白页，且未新增或激活其他标签。记录：test-results/deployment-0.27.0.json。旧 MCP 连接及句柄需重新连接、发现与接管。
+
+## 0.26.0 验证
 
 - controller 区分当前页检查与导航目标校验：已有 claim 的标签变为 about:blank 后，显式 URL 或前进/后退导航可在原标签恢复；目标 URL、文件授权、所有权、队列和 ref 失效规则沿用已有实现。普通页面操作和新 claim 仍拒绝空白页，错误分别说明原句柄恢复或在浏览器中导航后重新发现接管的路径。
 - instructions 提醒复用已有任务标签；open_tab 描述明确同 URL 已开仍创建新标签，fetch 描述明确临时页会执行站点脚本并可能影响其他标签。工具数量、参数、权限与依赖不变；导航恢复范围扩展，版本递增至 0.26.0。同步更新使用、架构及恢复文档。
@@ -10,7 +20,7 @@
 - Chromium 156 与 Edge 156 的临时 profile 均通过 tabs 5 组、files 7 组集成检查，经真实扩展 → Hub → stdio MCP 验证页面主动 replace/assign 到 about:blank、原标签及句柄 URL/历史恢复、不新增标签或激活、文件授权关闭拒绝及开启允许、旧 ref 失效和生命周期清理。修正 files 测试等待权限切换后的新浏览器连接身份，避免误用正在重载的旧连接。记录：test-results/blank-recovery-{chromium,edge}-0260.log、test-results/blank-recovery-files-{chromium,edge}-0260.log。
 - `npm run test:package` 通过：67 个发布文件、包外安装、23 个 stdio 工具及随包 skill 文件一致性检查通过，无生成配对密钥。记录：test-results/blank-recovery-package-0260.log。
 - 本机既有 F:\.nosis\browser-attach\config.json 完成 Hub stop/start；Hub 与 Chrome/Edge 两个扩展均为 0.26.0 / ready。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致。另在这两个真实已配对浏览器中，仅创建并清理本地 fixture 标签，验证空白错误、原标签/句柄恢复、旧 ref 拒绝及不激活，测试前后标签集合一致。记录：test-results/deployment-0.26.0.json。旧 MCP 连接及句柄需重新连接、发现与接管。
-- 未重复打开猎聘简历页或重新验证其内部互斥机制；恢复导航不能找回已丢失的未保存内容，也不阻止站点再次将页面清空。
+- 后续在用户明确授权下复测已登录 Chrome 猎聘简历页：后台展示态两轮重复打开各观察 30 秒未清空；进入优势亮点编辑态后，同完整 URL 新标签使原页约 14.1 秒后变空白，但其后单标签接管亦在约 8 秒后清空，重复标签不是必要条件。独立 Browser Use 读取实际加载的 security.min.js 并捕获其 action_dev_tool_open 上报、同源安全脚本调用栈及紧随其后的 Page.frameRequestedNavigation(reason=scriptInitiated,url=about:blank)，证据对应站点 DevTools 检测白屏策略。此前“同页互斥”的定性不充分。原句柄导航入口可用，但不保证站点恢复后持续稳定；未修改或提交简历，也未屏蔽站点检测。记录：test-results/liepin-browser-use-diagnosis-0.26.0.md、liepin-real-repro-0.26.0.json、liepin-edit-real-repro-0.26.0.json、liepin-unclaimed-real-repro-0.26.0.json。
 
 ## 0.25.2 验证
 

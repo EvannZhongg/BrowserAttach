@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.26.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.27.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -72,7 +72,7 @@ claim 与普通输入都不激活标签或窗口，也不移动系统鼠标；�
 
 普通 file:// 文档复用同一套 claim、队列、CDP session、观察与输入流程。page-url.js 统一 HTTP(S)/file URL 及凭据校验，controller 通过 chrome.extension.isAllowedFileSchemeAccess 检查用户文件授权；发现结果反映该开关，接管、普通操作和 batch 每一步重新检查。navigation 对 URL 及历史目标调用同一个校验器，检查计入派发前的准备预算；权限检查迟到不会触发导航。释放、关闭和显式激活不受文件权限校验阻塞，detach 失败仍保留控制权。open_tab 与 fetch 保持 HTTP(S) 范围，不新增 host 权限或本地文件读取接口。内置 PDF 内容仍受浏览器调试边界约束，不承诺其 AX 或截图覆盖。
 
-当前页检查与导航目标校验分开：已接管标签变为 `about:blank` 时，controller 仅允许显式 navigate 经过现有导航流程恢复，URL 和前进/后退目标仍须通过 page-url 与文件授权校验；普通观察、输入和新 claim 继续拒绝空白页。沿用已有控制权和队列，不创建标签、不自动导航或激活；文档变化仍使旧 ref 失效。其他不支持的当前页及已撤销文件权限的页面不获得此例外。
+当前页检查与导航目标校验分开：已接管标签变为 `about:blank` 时，controller 允许显式 navigate 经过现有导航流程恢复，URL 和前进/后退目标仍须通过 page-url 与文件授权校验；普通观察、输入和新 claim 继续拒绝空白页。沿用已有控制权和队列，不创建标签、不自动导航或激活；文档变化仍使旧 ref 失效。其他不支持的当前页及已撤销文件权限的页面不获得导航恢复例外。纯日志读取只访问 claim 缓冲，不使用当前页准入条件；捕获配置修改仍使用当前页检查。
 
 ## 单页读取
 
@@ -144,10 +144,13 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 
 ## 诊断模型
 
-`browser_logs` 通过必填 `kind=console/network` 读取控制台与网络日志。两类日志共享只读权限、生命周期、分页和预算接口；事件结构与过滤条件由 `kind` 区分，各自维护独立缓冲。工具层只有一套 schema 和调用路由，不引入聚合状态机。
+`browser_logs` 通过必填 `kind=console/network/navigation` 读取控制台、网络与导航日志。三类日志共享所有权、生命周期、分页和预算接口；事件结构与过滤条件由 `kind` 区分，各自维护独立缓冲。工具层只有一套 schema 和调用路由，不引入聚合状态机。
 
 - 每次 claim 开启 Runtime / Log / Network 观察，默认 `Network.enable` 把正文缓冲区设为 0；显式 capture 才启用每 session 2 MiB 总量和单资源上限，OOPIF 新 session 继承本次 claim 配置。
-- 两类 append-only 缓冲各自维护 `seq`：读取使用 `after_seq` + `limit` + `max_chars`；续读位置必须与 tab claim 和 kind 一起保存。网络突发流量不会挤掉控制台错误。console 的 level 与 network 的 url_contains 不得跨类使用。两种 timestamp 基准不同，不混排或伪造统一时间轴。同一 requestId 的重定向用 `hop` 区分，完成事件后追加而不是覆盖请求行。
+- 三类 append-only 缓冲各自维护 `seq`：读取使用 `after_seq` + `limit` + `max_chars`；续读位置必须与 tab claim 和 kind 一起保存。网络和导航流量不会挤掉控制台错误。console 的 level 与 network 的 url_contains 不得跨类使用。同一 requestId 的重定向用 `hop` 区分，完成事件后追加而不是覆盖请求行。
+- controller 在标签队列内先检查 owner/handle；不带 capture 的读取直接访问诊断模块，不经过 perform 的页面结果探测、当前 URL 校验或实时标签元数据读取。capture 修改仍校验当前页面和文件授权；保留已取得的历史缓冲不授予新的页面访问权限。日志响应只附 tab_id/tab_handle，不再补实时 title/url/active。
+- 导航记录复用 Page 事件，区分 requested、committed 和 same_document；请求原因不当作提交结果，不新增关联或因果推断状态。observed_at 为扩展接收时间；控制台与网络 timestamp 各自保留原始时钟基准，不混排为统一时间轴。
+- 统一裁剪事件已有栈：总共最多 8 帧、两层内联异步父栈，保留 async_depth 和截断标记，不查询 parentId 或启用 Debugger。网络 initiator 仅写入 request 行，网络事实表只增加 loader_id，不保存调试栈；浏览器 Log 保留可用的 request_id。
 - 上限为每类 500 条 / 1,048,576 字符，活跃请求表 500 项；淘汰记录 `dropped_through_seq`，读取返回 `data_loss`。
 - 导航保留缓冲，tab_control(action=release) / detach / 关闭 / 断连清理；不落盘、不修改缓存策略与 service worker。默认不读取 headers/正文；按需开启只捕获之后的 XHR/fetch，凭据头和命名敏感字段脱敏，解压后体积、并发读取、浏览器缓存和扩展日志均有界，未捕获/超限明示 unavailable。
 - 正文读取最多 8 个并发任务；已知解压后超限的响应不读取。请求关联表溢出时可能缺少 URL/hop，但保留 request_id；控制台与网络时间戳分别采用 Unix 毫秒和 CDP 单调秒，不合并为统一时间轴。

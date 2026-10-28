@@ -106,7 +106,7 @@ test('an owned tab that becomes blank recovers in place without recreating, reat
   f.api.tabs.onUpdated.emit(9, { url: 'about:blank' });
   assert.equal((await f.exec('list_tabs')).tabs[0].controllable, false);
   const before = f.calls.length;
-  for (const command of ['snapshot', 'evaluate', 'click', 'logs']) {
+  for (const command of ['snapshot', 'evaluate', 'click']) {
     await assert.rejects(f.exec(command, { ref, expression: '1', kind: 'console' }), /claimed tab.*about:blank.*browser_navigate.*release or close/);
   }
   await assert.rejects(f.exec('navigate', { url: 'https://example.com/' }, 'two'), /not claimed/);

@@ -56,13 +56,102 @@ test('document status matches the frame and loader, survives log eviction and ex
 
 test('unified log query requires a kind and refuses irrelevant filters', () => {
   const f = fixture();
-  for (const kind of [undefined, '', 'all', '__proto__']) assert.throws(() => f.read(kind), /kind must be console or network/);
+  for (const kind of [undefined, '', 'all', '__proto__']) assert.throws(() => f.read(kind), /kind must be console, network or navigation/);
   assert.throws(() => f.read('console', { url_contains: '' }), /only valid for kind=network/);
   assert.throws(() => f.read('network', { level: 'error' }), /only valid for kind=console/);
   assert.throws(() => f.read('console', { level: 'unknown' }), /console level/);
   assert.throws(() => f.read('network', { url_contains: 5 }), /url_contains/);
   assert.equal(f.read('console').kind, 'console');
   assert.equal(f.read('network').kind, 'network');
+  assert.equal(f.read('navigation').kind, 'navigation');
+  assert.throws(() => f.read('navigation', { level: 'error' }), /only valid for kind=console/);
+  assert.throws(() => f.read('navigation', { url_contains: '' }), /only valid for kind=network/);
+  assert.throws(() => f.read('navigation', { capture: { enabled: true } }), /only valid for network/);
+});
+
+test('navigation preserves requests separately from commits, same-document changes and child-session identity', () => {
+  const f = fixture();
+  f.emit('Page.frameRequestedNavigation', { frameId: 'main', url: 'https://fixture.test/cancelled', reason: 'anchorClick', disposition: 'newTab' });
+  f.emit('Page.frameRequestedNavigation', { frameId: 'main', url: 'about:blank', reason: 'scriptInitiated', disposition: 'currentTab' });
+  f.emit('Page.frameNavigated', { frame: { id: 'main', loaderId: 'blank-document', url: 'about:blank' }, type: 'Navigation' });
+  f.emit('Page.navigatedWithinDocument', { frameId: 'main', url: 'about:blank#fragment', navigationType: 'fragment' });
+  f.emit('Page.frameNavigated', { frame: { id: 'child', parentId: 'main', loaderId: 'child-document', url: 'chrome-error://chromewebdata/', unreachableUrl: 'https://fixture.test/failed' }, type: 'Navigation' }, { tabId: 9, sessionId: 'oopif' });
+  const page = f.read('navigation', { limit: 2 });
+  assert.deepEqual(page.entries.map(row => row.event), ['requested', 'requested']);
+  assert.deepEqual(page.entries.map(row => row.reason), ['anchorClick', 'scriptInitiated']);
+  assert.equal(page.entries[0].disposition, 'newTab');
+  assert.equal(page.has_more, true);
+  const next = f.read('navigation', { after_seq: page.next_seq });
+  assert.deepEqual(next.entries.map(row => row.event), ['committed', 'same_document', 'committed']);
+  assert.equal(next.entries[0].loader_id, 'blank-document');
+  assert.equal(next.entries[0].parent_frame_id, null);
+  assert.equal(next.entries[1].navigation_type, 'fragment');
+  assert.equal(next.entries[2].session_id, 'oopif');
+  assert.equal(next.entries[2].parent_frame_id, 'main');
+  assert.equal(next.entries[2].unreachable_url, 'https://fixture.test/failed');
+  assert.ok(next.entries.every(row => Number.isFinite(row.observed_at) && !('timestamp' in row) && !('reason' in row)));
+  assert.equal(f.read('console').entries.length, 0);
+  assert.equal(f.read('network').entries.length, 0);
+});
+
+test('navigation eviction and lifecycle stay independent of network and console buffers', () => {
+  const f = fixture();
+  f.emit('Runtime.consoleAPICalled', { type: 'log', args: [{ value: 'retained' }] });
+  f.emit('Network.requestWillBeSent', { requestId: 'r', request: { url: 'https://fixture.test/', method: 'GET' } });
+  for (let i = 0; i < 700; i++) f.emit('Page.navigatedWithinDocument', { frameId: 'main', url: `https://fixture.test/#${i}` });
+  const page = f.read('navigation', { limit: 1 });
+  assert.equal(page.entries[0].seq, 201); assert.equal(page.data_loss, true);
+  assert.equal(page.dropped_through_seq, 200);
+  assert.equal(f.read('console').entries[0].text, 'retained');
+  assert.equal(f.read('network').entries[0].request_id, 'r');
+  f.logs.detach(9, 'oopif');
+  assert.equal(f.read('navigation').latest_seq, 700);
+  f.logs.forget(9);
+  assert.throws(() => f.read('navigation'), /unavailable/);
+  f.logs.start(9);
+  assert.equal(f.read('navigation').latest_seq, 0);
+});
+
+test('bounded stacks preserve asynchronous boundaries and network initiators without retaining remote ids or request secrets', () => {
+  const f = fixture();
+  const frame = { functionName: 'report', scriptId: 'script-1', url: 'https://fixture.test/security.js', lineNumber: 7, columnNumber: 2, objectId: 'private-handle' };
+  const trace = { callFrames: [frame], parent: { callFrames: [frame], parentId: { id: 'private-stack-id' } } };
+  f.emit('Runtime.consoleAPICalled', { type: 'trace', args: [], stackTrace: trace });
+  f.emit('Runtime.exceptionThrown', { exceptionDetails: { text: 'failure', stackTrace: trace } });
+  f.emit('Log.entryAdded', { entry: { level: 'error', source: 'javascript', text: 'failure', stackTrace: trace, networkRequestId: 'r' } });
+  f.emit('Network.requestWillBeSent', { requestId: 'r', frameId: 'main', loaderId: 'document-1', type: 'Fetch',
+    request: { url: 'https://fixture.test/report', method: 'POST', headers: { Cookie: 'secret-cookie' }, postData: 'secret-body' },
+    initiator: { type: 'script', url: frame.url, lineNumber: 7, columnNumber: 2, requestId: 'parent-request', stack: trace } });
+  const consoleRows = f.read('console').entries, request = f.read('network').entries[0];
+  for (const row of [...consoleRows, request.initiator]) {
+    assert.deepEqual(row.stack.map(item => item.async_depth), [0, 1]);
+    assert.equal(row.stack[0].script_id, 'script-1');
+    assert.equal(row.stack[0].line, 7); assert.equal(row.stack_truncated, true);
+  }
+  assert.equal(consoleRows[2].request_id, 'r');
+  assert.equal(request.initiator.type, 'script'); assert.equal(request.initiator.request_id, 'parent-request');
+  assert.equal(request.loader_id, 'document-1');
+  assert.doesNotMatch(JSON.stringify({ consoleRows, request }), /private-handle|private-stack-id|secret-cookie|secret-body/);
+  f.emit('Network.loadingFinished', { requestId: 'r' });
+  const finished = f.read('network').entries[1];
+  assert.equal(finished.loader_id, 'document-1');
+  assert.equal(finished.initiator, undefined);
+});
+
+test('stack frame count, parent traversal and strings are bounded with explicit truncation', () => {
+  const f = fixture();
+  const frame = { functionName: 'f'.repeat(10000), url: 'u'.repeat(10000), scriptId: 's'.repeat(10000) };
+  const emit = stackTrace => f.emit('Runtime.consoleAPICalled', { type: 'trace', args: [], stackTrace });
+  emit({ callFrames: Array(9).fill(frame) });
+  emit({ callFrames: [], parent: { callFrames: [], parent: { callFrames: [], parent: { callFrames: [frame] } } } });
+  emit({ callFrames: [frame], parent: { callFrames: [frame] } });
+  emit({ callFrames: Array(8).fill(frame) });
+  const rows = f.read('console', { max_chars: 100000 }).entries;
+  assert.equal(rows[0].stack.length, 8); assert.equal(rows[0].stack_truncated, true);
+  assert.equal(rows[1].stack.length, 0); assert.equal(rows[1].stack_truncated, true);
+  assert.equal(rows[2].stack.length, 2); assert.equal(rows[2].stack_truncated, false);
+  assert.equal(rows[3].stack.length, 8); assert.equal(rows[3].stack_truncated, false);
+  assert.ok(rows[0].stack.every(item => item.function.length <= 200 && item.url.length <= 2000 && item.script_id.length <= 100));
 });
 
 test('network traffic cannot evict console messages; kind-specific cursors and loss stay independent', () => {

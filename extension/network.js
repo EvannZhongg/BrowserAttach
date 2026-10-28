@@ -18,7 +18,7 @@ export function createNetworkTracker() {
     if (method === 'Network.requestWillBeSent') {
       if (params.type === 'Document') state.documentResponses.delete(JSON.stringify([source.sessionId ?? null, params.frameId]));
       request = { url: clip(params.request.url), method: clip(params.request.method, 50), resource_type: clip(params.type, 50),
-        frame_id: params.frameId, hop: request ? request.hop + 1 : 0 };
+        frame_id: params.frameId, loader_id: params.loaderId, hop: request ? request.hop + 1 : 0 };
       Object.defineProperty(request, 'decodedBytes', { value: 0, writable: true });
       state.requests.delete(key); state.requests.set(key, request);
       if (state.requests.size > MAX_ENTRIES) { state.requestsOverflow = true; const removed = state.requests.keys().next().value; state.requests.delete(removed); evicted = removed; }
