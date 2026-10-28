@@ -77,6 +77,7 @@ export function fixture() {
         if (method === 'Runtime.evaluate') return { result: { value: { width: 1024, height: 768, scroll_x: 0, scroll_y: 0, device_pixel_ratio: 1 } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function installGuard')) return { result: { objectId: 'guard' } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function inspectTarget')) return { result: { value: { ready: true, x: 10, y: 10, width: 90, height: 40 } } };
+        if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function prepareFill')) return { result: { value: { verification_source: 'dom_value' } } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function hitRelation')) return { result: { value: blocked ? null : 'same_node' } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes("input.type !== 'file'")) return { result: { objectId: 'file-input' } };
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes("this.value = '';")) fileCount = 0;

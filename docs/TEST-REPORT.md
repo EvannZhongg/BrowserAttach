@@ -1,8 +1,17 @@
 # 验证报告
 
-当前版本 **0.25.1**（2026-10-28）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
+当前版本 **0.25.2**（2026-10-28）。浏览器验证使用本地 fixture 和临时 profile；测试链路在各项下说明。
 
 ## 当前版本
+
+- 修复 native fill 未核对 input/textarea 完整替换选区的问题；email 不暴露选区偏移，保留 select() 与最终值核验。新增只读预检，在聚焦/赋值前拒绝已识别的 Monaco/CodeMirror 5 代理 textarea；native/DOM、单步/batch 共用检查，不切换模式或回放。成功值核验和相关失败诊断新增 verification_source，与既有 verification_basis 区分实际回读来源和预期来源。
+- editor 读取检查暴露接口的形状、调用结果和唯一模型关联；缺失、污染或异常返回 editor_model_unavailable，多实例返回 editor_model_ambiguous。所选节点调用经 checkedValue 保留页面诊断，不扫描私有全局或拼接可视行。错误提示显式模型回读路径；text wait 保持完整文本比较，预览增加 total_chars/text_truncated 及容器提示。
+- 相关 10 个测试文件共 163 项通过，覆盖选区折叠/部分选择/空值、代理拦截无焦点/写入且 batch 停止、模型接口缺失/非函数/异常/歧义、CDP 诊断保留、长文本匹配，以及原生指针、观察与 Hub 回归。记录：test-results/editor-fixes-unit-0252.log。
+- Chromium 与 Edge headless 的 preparation 集成各通过 7 组场景，经真实扩展与 Hub 操作临时 profile/本地 fixture；新增六种 input、textarea、多行 contenteditable 两种模式的回读来源、选区丢失无插入、代理预检无焦点/输入事件、公有/私有模型回读路径及超出诊断预览的文本等待。模型接口使用受控 fixture，未在原业务站点复现其 Monaco 自动缩进。记录：test-results/preparation-chromium.json、preparation-edge.json。
+- npm run test:package 通过：67 个发布文件、包外安装与 23 个 stdio 工具检查成功，已安装 skill 文件与源文件一致，无生成配对密钥。版本递增至 0.25.2；未新增工具、参数、权限或依赖。结果字段为增量变化；对已识别代理 textarea 的 fill 改为提前拒绝，调用方须显式选择模型操作路径。
+- 本机使用既有 F:\.nosis\browser-attach\config.json 完成 Hub stop/start，两个已连接扩展均已重载至 0.25.2 / ready。稳定副本 manifest 版本和身份一致，其余 42 个非生成文件 SHA-256 全部一致；记录：test-results/deployment-0.25.2.json。重启已释放旧控制权，原 MCP 客户端需重连并重新发现、接管。
+
+## 0.25.1 验证
 
 - 随 npm 包分发 `skills/browser-attach/`：75 行主干、setup/recovery/recipes 三份按需参考及 MCP JSON 模板。description 按 Agent 触发场景编写；正文首段说明 MCP、Hub 与配对扩展的运行前提。frontmatter 的 name 与目录一致，description/compatibility 长度和 metadata 版本检查通过，目录内链接及 JSON/TOML 示例有效。
 - Setup reference 以通用 stdio 启动参数和 JSON/TOML 配置为主，不逐宿主展开配置流程；SKILL.md 按安装、配对或连接配置任务引导阅读。Agent 集成文档改为入口和仓库验证说明，README 增加可选 skill 入口。未增加宿主自动注册或 Claude 插件外壳。

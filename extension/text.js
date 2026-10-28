@@ -11,9 +11,9 @@ export async function readText(cdp, value, tabId, args) {
     if (!args.selector) throw new Error(`${mode} requires selector to identify exactly one field/editor`);
   }
   const options = { selector: args.selector, selector_type: args.selector_type, nth: args.nth, mode, offset, max_chars: max };
-  if (args.node) return value(await cdp(tabId, 'Runtime.callFunctionOn', { objectId: args.node.objectId, returnByValue: true,
-    functionDeclaration: `function(args) { return (${extractText.toString()})(args, () => this); }`, arguments: [{ value: options }] }));
   const send = (method, params) => cdp(tabId, method, params);
+  if (args.node) return await checkedValue(await send('Runtime.callFunctionOn', { objectId: args.node.objectId, returnByValue: true,
+    functionDeclaration: `function(args) { return (${extractText.toString()})(args, () => this); }`, arguments: [{ value: options }] }), send, value);
   return await checkedValue(await send('Runtime.evaluate', { returnByValue: true, ...(args.context_id != null ? { contextId: args.context_id } : {}),
     expression: `(${extractText.toString()})(${JSON.stringify(options)},${queryElement.toString()})` }), send, value);
 }
@@ -28,11 +28,29 @@ export function extractText(args, query) {
     else if (element.isContentEditable) { text = element.innerText; complete = false; }
     else throw new Error('value mode requires input, textarea or contenteditable');
   } else {
-    const editors = globalThis.monaco?.editor?.getEditors?.() ?? [];
-    const matches = editors.filter(editor => { const dom = editor.getDomNode(); return dom && (dom === element || element.contains(dom) || dom.contains(element)); });
-    if (matches.length === 1 && matches[0].getModel()) { text = matches[0].getModel().getValue(); source = 'monaco_model'; }
-    else if (element.CodeMirror?.getValue) { text = element.CodeMirror.getValue(); source = 'codemirror5_model'; }
-    else throw new Error('No supported editor model found. Use a site-specific evaluate adapter; DOM text cannot guarantee virtualized editor completeness.');
+    const hint = 'Use browser_evaluate with a known site-specific model API to read the editor text. DOM text and proxy textarea values cannot guarantee virtualized editor completeness; DOM presence alone does not expose a model. Do not retry fill on the proxy input or automatically switch to typing/paste.';
+    const fail = (detail, reason = 'editor_model_unavailable', matched) => Object.assign(new Error(`${detail} ${hint}`), {
+      diagnostics: { reason, ...(matched != null ? { matched } : {}), hint },
+    });
+    let matches;
+    try {
+      const api = globalThis.monaco?.editor;
+      const editors = typeof api?.getEditors === 'function' ? api.getEditors() : [];
+      if (!Array.isArray(editors)) throw new Error('Invalid editor list');
+      matches = editors.filter(editor => {
+        if (typeof editor?.getDomNode !== 'function') return false;
+        const dom = editor.getDomNode();
+        return dom && (dom === element || element.contains(dom) || dom.contains(element));
+      });
+    } catch { throw fail('No supported editor model found: the exposed Monaco editor list could not be read.'); }
+    if (matches.length > 1) throw fail('Editor selector matches multiple Monaco editors; scope the selector to one editor.', 'editor_model_ambiguous', matches.length);
+    try {
+      if (matches.length === 1) {
+        const model = typeof matches[0].getModel === 'function' ? matches[0].getModel() : null;
+        if (typeof model?.getValue === 'function') { text = model.getValue(); source = 'monaco_model'; }
+      } else if (typeof element.CodeMirror?.getValue === 'function') { text = element.CodeMirror.getValue(); source = 'codemirror5_model'; }
+    } catch { throw fail('No supported editor model found: the exposed editor model could not be read.'); }
+    if (typeof text !== 'string') throw fail('No supported editor model found. Select a container with an exposed Monaco getEditors() model or a CodeMirror 5 instance.');
   }
   const end = Math.min(text.length, args.offset + args.max_chars);
   return { title: document.title, url: location.href, text: text.slice(args.offset, end), returned_chars: Math.max(0, end - args.offset),

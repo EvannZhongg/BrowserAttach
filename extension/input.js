@@ -1,6 +1,7 @@
 import { deadline, waitForTarget, delivery } from './actionability.js';
 import { clickOptions } from './click.js';
 import { timingOption, pause } from './motion.js';
+import { checkedValue } from './errors.js';
 
 const BUSY = 'Browser UI may be capturing input (a tab drag or native menu). Finish that interaction, then observe the page before deciding whether to try again. Never replay an unknown outcome automatically.';
 
@@ -128,23 +129,32 @@ export function createInput(cdp, value, sessions) {
     const budget = args.budget || deadline(args.timeout_ms), target = node.target;
     const send = (method, params) => budget.run(() => cdp(target, method, params));
     await waitForTarget(cdp, value, target, node, budget, { editable: true });
+    async function prepare(apply) {
+      try {
+        return await checkedValue(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
+          functionDeclaration: prepareFill.toString(), arguments: [{ value: mode }, { value: args.text }, { value: apply }] }), send, value);
+      } catch (error) {
+        if (error.diagnostics) error.diagnostics.frame_id = node.frameId;
+        throw error;
+      }
+    }
+    await prepare(false);
     budget.dispatch();
-    value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
-      functionDeclaration: prepareFill.toString(), arguments: [{ value: mode }, { value: args.text }] }));
+    const { verification_source } = await prepare(true);
     if (mode === 'native') {
       const selected = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
         functionDeclaration: verifyReplacementSelection.toString() }));
-      if (selected !== true) throw Object.assign(new Error('Fill replacement selection was lost before text insertion; no replacement text was inserted. Observe the field before continuing. For an editor that manages its own selection, an explicit alternative is browser_click on the editable surface, browser_press_key key="Control+A", then browser_type focused=true for printable text. Verify the editor content afterward; use browser_press_key Enter/Tab for control keys. Do not automatically switch modes or replay this sequence.'), {
-        outcome_unknown: true, diagnostics: { reason: 'fill_selection_lost', frame_id: node.frameId },
+      if (selected !== true) throw Object.assign(new Error('Fill replacement selection was lost before text insertion; no replacement text was inserted. Observe the field with browser_read_text mode="value" before continuing. For an editor, use browser_read_text mode="editor" on its container, or browser_evaluate with a known site-specific model API. DOM text and proxy textarea values cannot verify a virtualized editor. An explicit keyboard alternative is browser_click, browser_press_key key="Control+A", then browser_type focused=true for printable text and browser_press_key Enter/Tab for control keys; it may trigger editor formatting. Verify the editor content afterward. Do not automatically switch modes or replay this sequence.'), {
+        outcome_unknown: true, diagnostics: { reason: 'fill_selection_lost', frame_id: node.frameId, verification_source },
       });
       await send('Input.insertText', { text: args.text });
     }
     const matches = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
       functionDeclaration: verifyFill.toString(), arguments: [{ value: expected }, { value: mode }] }));
-    if (matches !== true) throw Object.assign(new Error(`Fill did not retain the expected text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Outcome is unknown. ${BUSY}`), {
-      outcome_unknown: true, diagnostics: { reason: 'value_not_retained', frame_id: node.frameId, verification_basis: basis },
+    if (matches !== true) throw Object.assign(new Error(`Fill did not retain the expected text. Input may have been swallowed, focus may have moved, or the page may have reformatted it. Read ordinary fields with browser_read_text mode="value"; for virtualized editors use mode="editor" on the editor container, or browser_evaluate with a known site-specific model API. DOM text and proxy textarea values cannot verify the editor model. Outcome is unknown. ${BUSY}`), {
+      outcome_unknown: true, diagnostics: { reason: 'value_not_retained', frame_id: node.frameId, verification_basis: basis, verification_source },
     });
-    return { filled: true, method: mode, value_verified: true, verification_basis: basis, ...(mode === 'dom' ? { events_trusted: false } : {}), application_result: 'not_checked', observe_again: true };
+    return { filled: true, method: mode, value_verified: true, verification_basis: basis, verification_source, ...(mode === 'dom' ? { events_trusted: false } : {}), application_result: 'not_checked', observe_again: true };
   }
 
   async function domClick(tabId, node, args) {
@@ -267,12 +277,22 @@ export function keyParameters(chord) {
   return { params: { key, code: entry[1], windowsVirtualKeyCode: entry[0], nativeVirtualKeyCode: entry[0], modifiers: mask }, text };
 }
 
-function prepareFill(mode, text) {
+function prepareFill(mode, text, apply = true) {
   const tag = this.tagName?.toLowerCase();
   if (!this.isConnected) throw new Error('Field is detached');
   if (this.disabled || this.readOnly || this.closest('[inert]')) throw new Error('Field is disabled, read-only or inert');
   if (!['input', 'textarea'].includes(tag) && !this.isContentEditable) throw new Error('Ref is not an editable field');
   if (tag === 'input' && !['text', 'search', 'email', 'password', 'tel', 'url', ''].includes(this.type)) throw new Error('Input type cannot be filled with text');
+  const editor = tag === 'textarea' && this.closest('.monaco-editor') && this.classList.contains('inputarea') ? 'monaco'
+    : tag === 'textarea' && this.closest('.CodeMirror') ? 'codemirror5' : null;
+  if (editor) {
+    const hint = 'Read the editor container with browser_read_text mode="editor". If its model is not exposed, use browser_evaluate with a known site-specific model API to read and explicitly edit it, then read the model again. DOM text and proxy textarea values cannot verify editor content. Do not fall back automatically to typing or synthetic paste.';
+    throw Object.assign(new Error(`fill cannot replace the ${editor} model through its proxy textarea. ${hint}`), {
+      diagnostics: { reason: 'editor_proxy', editor, verification_source: 'dom_value', hint },
+    });
+  }
+  const verification_source = this.isContentEditable ? mode === 'native' ? 'selection_text' : 'inner_text' : 'dom_value';
+  if (!apply) return { verification_source };
   if (mode === 'dom') {
     const win = this.ownerDocument.defaultView;
     if (this.isContentEditable) this.innerText = text;
@@ -291,14 +311,18 @@ function prepareFill(mode, text) {
       const selection = this.ownerDocument.getSelection(); selection.removeAllRanges(); selection.addRange(range);
     } else this.select();
   }
-  return true;
+  return { verification_source };
 }
 
 function verifyReplacementSelection() {
   if (!this.isConnected) return false;
   const active = this.getRootNode().activeElement;
   if (active !== this && !this.contains(active)) return false;
-  if (!this.isContentEditable) return true;
+  if (!this.isContentEditable) {
+    // Email inputs support select() in Chromium but do not expose selection offsets.
+    if (this.tagName === 'INPUT' && this.type === 'email') return true;
+    return this.selectionStart === 0 && this.selectionEnd === this.value.length;
+  }
   const selection = this.ownerDocument.getSelection();
   if (!selection || selection.rangeCount !== 1) return false;
   const expected = this.ownerDocument.createRange(); expected.selectNodeContents(this);

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.25.1"
+  version: "0.25.2"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---

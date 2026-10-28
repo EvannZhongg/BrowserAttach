@@ -48,7 +48,7 @@ export function createMcp(client) {
   const waitFields = {
     condition: z.enum(WAIT_CONDITIONS).describe('Element conditions require selector; url/network_idle forbid locator fields.'),
     expected: z.union([z.string().max(100000), z.boolean()]).optional().describe('Required for url (substring), value (exact), checked/selected/expanded (boolean; checked also "mixed"). text: expected substring XOR previous. Omit otherwise.'),
-    previous: z.string().max(100000).optional().describe('text only: wait for full rendered innerText to change; exclusive with expected.'),
+    previous: z.string().max(100000).optional().describe('text only: complete prior innerText, not a truncated preview; exclusive with expected. Change does not establish new-run completion.'),
     idle_ms: integerRange('idle_ms', 100, 10000).default(500).describe('network_idle quiet interval.'),
   };
   function tool(name, description, schema, method, transform) {
@@ -114,7 +114,7 @@ export function createMcp(client) {
     verbose: z.boolean().default(false).describe('Include viewport and snapshot_id.'),
   });
   tool('read_text', 'Read page/frame text. Visible text excludes input/textarea values; use value for one field or snapshot profile=fields for forms. complete_source is source coverage, not pagination; next_offset continues live text, which may change.', {
-    ...handle, ...selector, ...frameScope, nth: target.nth, mode: z.enum(['visible', 'text_content', 'value', 'editor']).default('visible').describe('value: input/textarea/contenteditable; editor: exposed Monaco/CM5 model. Both require selector.'),
+    ...handle, ...selector, ...frameScope, nth: target.nth, mode: z.enum(['visible', 'text_content', 'value', 'editor']).default('visible').describe('value: DOM field text; editor: exposed Monaco/CM5 model, otherwise error with evaluate guidance. Both require selector. Virtualized editor DOM/proxy values are not model text.'),
     offset: integerRange('offset', 0, Number.MAX_SAFE_INTEGER).default(0), max_chars: integerRange('max_chars', 1, 100000).default(20000),
   });
   tool('evaluate', 'Evaluate expression once; call a returned function once and await its Promise, without user activation. Use an async IIFE for statements. capture_truncated marks capture loss; required_chars/next_item signal page-budget needs. cursor reads cache without re-execution.', {
@@ -157,7 +157,7 @@ export function createMcp(client) {
     ...settle, trajectory: z.object({ curve_px: z.number().min(-100).max(100), duration_ms: integerRange('duration_ms', 100, 5000) }).strict().optional().describe('Opt-in curved, variable-speed steps/intervals; curve_px is signed CSS-pixel offset. Duration covers interpolation waits only.'),
     ...handle, ...inputTimeout, source: dragTarget, destination: dragTarget, mode: z.enum(['pointer', 'html5']).default('pointer').describe('pointer for mouse-driven dragging; html5 for HTML drag-and-drop.'), steps: integerRange('steps', 2, 100).default(20),
   }, null, args => { dragOptions(args); return args; });
-  tool('wait', 'Read-only wait for condition. State uses native properties/ARIA; missing state is unavailable, not false. Role absence need not mean DOM removal. Timeout reports last state; field values are omitted.', {
+  tool('wait', 'Read-only wait for condition. State uses native properties/ARIA; missing state is unavailable, not false. Role absence need not mean DOM removal. Prefer a result/status container for text; compares full text, reports a bounded preview with length/truncation. Timeout reports last state; field values are omitted.', {
     ...handle, ...dialogPolicy, timeout_ms: integerRange('timeout_ms', 100, 30000).default(5000), ...selector, ...frameScope, nth: target.nth,
     ...waitFields,
   }, null, args => { waitOptions(args); return args; });
@@ -169,7 +169,7 @@ export function createMcp(client) {
   tool('type', 'Type printable characters with trusted keys without clearing. Choose exactly one ref/selector/focused=true; stop on focus loss/detachment. Enter/Tab use press_key; ordinary multiline replacement uses fill.', { ...handle, ...inputTimeout, ...target, ...focused, text: z.string().max(10000), delay_ms: typeDelay }, null, args => { targetOptions(args, { focused: true }); typeOptions(args); return args; });
   const expectedValue = { expected_value: z.string().optional().describe('Expected retained text, default text. Verification only; insertion unchanged. No normalization or blur/async wait.') };
   const fillMode = z.enum(['native', 'dom']).default('native').describe('native: focus/select and insert without character keydown. dom: write visible line breaks without focus, emit synthetic input/change.');
-  tool('fill', 'Replace one ref/selector input/textarea/contenteditable and verify retained text; verification_basis identifies the expectation. Contenteditable readback: native temporarily selects/reads plain text, then restores selection; DOM uses innerText. CR/CRLF count as LF; requested spaces may retain NBSP. No blur or dropdown commit.', { ...handle, ...inputTimeout, ...target, text: z.string(), ...expectedValue, mode: fillMode }, null, args => { targetOptions(args); fillOptions(args); return args; });
+  tool('fill', 'Replace one ref/selector input/textarea/contenteditable and verify retained text. Known Monaco/CM5 proxy textareas are rejected before focus/writes. verification_basis identifies the expectation; verification_source identifies DOM value, selected text or innerText. Native contenteditable readback temporarily selects/reads plain text, then restores selection. CR/CRLF count as LF; requested spaces may retain NBSP. No editor model write, paste, blur or dropdown commit.', { ...handle, ...inputTimeout, ...target, text: z.string(), ...expectedValue, mode: fillMode }, null, args => { targetOptions(args); fillOptions(args); return args; });
   // Common locator semantics live on steps once; clone metadata without changing validation.
   const batchLocator = Object.fromEntries(Object.entries({ ...selector, ...frameScope, nth: target.nth })
     .map(([key, schema]) => [key, schema.meta({ description: undefined })]));

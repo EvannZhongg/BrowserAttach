@@ -43,7 +43,8 @@ test('fill verifies an explicit retained value without changing the inserted tex
     f.api.debugger.sendCommand = async (target, method, args) => {
       if (method === 'Input.insertText') inserted = args.text;
       if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function prepareFill')) {
-        writes++; assert.equal(args.arguments[1].value, '06');
+        if (args.arguments[2].value) writes++;
+        assert.equal(args.arguments[1].value, '06');
       }
       if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function verifyFill')) return { result: { value:
         vm.runInNewContext(`(${args.functionDeclaration})`).call({ isConnected: true, value: retained }, ...args.arguments.map(arg => arg.value)) } };
@@ -52,10 +53,13 @@ test('fill verifies an explicit retained value without changing the inserted tex
     const operation = f.exec('fill', { selector: '#month', text: '06', mode, ...(expected === undefined ? {} : { expected_value: expected }) });
     if (expected === '6' || expected === '') {
       const result = await operation; assert.equal(result.verification_basis, 'expected_value'); assert.equal(result.value_verified, true);
+      assert.equal(result.verification_source, 'dom_value');
       assert.equal(result.application_result, 'not_checked');
     } else await assert.rejects(operation, error => {
       assert.equal(error.diagnostics.reason, 'value_not_retained'); assert.equal(error.input_dispatched, true);
       assert.equal(error.diagnostics.verification_basis, expected === undefined ? 'text' : 'expected_value');
+      assert.equal(error.diagnostics.verification_source, 'dom_value');
+      assert.match(error.message, /browser_read_text mode="value".*mode="editor".*browser_evaluate/);
       assert.ok(!error.message.includes('06')); return true;
     });
     assert.equal(inserted, mode === 'native' ? '06' : undefined); assert.equal(writes, 1);
@@ -157,7 +161,7 @@ test('contenteditable fill verifies the mode-specific text without hiding conten
       return true;
     });
     assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, mode === 'native' ? 1 : 0);
-    assert.equal(f.calls.filter(call => call.args?.functionDeclaration?.includes('function prepareFill')).length, 1);
+    assert.equal(f.calls.filter(call => call.args?.functionDeclaration?.includes('function prepareFill') && call.args.arguments[2].value).length, 1);
     if (mode === 'native') assert.deepEqual(restored, [anchorNode, 2, focusNode, 1]);
     else assert.equal(restored, undefined);
   });
@@ -179,6 +183,67 @@ test('native fill does not insert text after losing the replacement selection', 
   });
   assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, 0);
   assert.equal(f.calls.filter(call => call.method === 'Input.dispatchKeyEvent' || call.method === 'Input.dispatchMouseEvent' || call.method === 'tabs.update').length, 0);
+});
+
+test('native fill rejects collapsed/partial field selections without inserting or replaying text', async () => {
+  for (const [tagName, type, text, start, end, allowed] of [
+    ['TEXTAREA', undefined, 'original', 2, 2, false],
+    ['TEXTAREA', undefined, 'original', 0, 7, false],
+    ['INPUT', 'text', 'original', 1, 8, false],
+    ['INPUT', 'password', 'original', 0, 8, true],
+    ['TEXTAREA', undefined, 'original', 0, 8, true],
+    ['TEXTAREA', undefined, '', 0, 0, true],
+    ['INPUT', 'email', 'old@example.test', null, null, true],
+  ]) {
+    const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+    const field = { tagName, type, isConnected: true, isContentEditable: false, value: text, selectionStart: start, selectionEnd: end };
+    field.getRootNode = () => ({ activeElement: field });
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      const result = await send(target, method, args);
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function verifyReplacementSelection')) {
+        result.result.value = vm.runInNewContext(`(${args.functionDeclaration})`).call(field);
+      }
+      return result;
+    };
+    const operation = f.exec('fill', { selector: '#field', text: 'replacement' });
+    if (allowed) assert.equal((await operation).value_verified, true);
+    else await assert.rejects(operation, error => error.diagnostics.reason === 'fill_selection_lost' && error.input_dispatched === true);
+    assert.equal(f.calls.filter(call => call.method === 'Input.insertText').length, allowed ? 1 : 0);
+  }
+});
+
+test('fill rejects recognized editor proxies before focus or writes in both modes and batch', async () => {
+  for (const editor of ['monaco', 'codemirror5']) for (const mode of ['native', 'dom']) for (const batch of [false, true]) {
+    const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+    let focused = 0, changed = 0, diagnostic;
+    const field = { tagName: 'TEXTAREA', isConnected: true, value: 'proxy',
+      classList: { contains: name => editor === 'monaco' && name === 'inputarea' },
+      closest: selector => selector === (editor === 'monaco' ? '.monaco-editor' : '.CodeMirror') ? {} : null,
+      focus() { focused++; }, dispatchEvent() { changed++; } };
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      const result = await send(target, method, args);
+      if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function prepareFill')) {
+        assert.equal(args.arguments[2].value, false);
+        try { result.result.value = vm.runInNewContext(`(${args.functionDeclaration})`).call(field, ...args.arguments.map(arg => arg.value)); }
+        catch (error) { diagnostic = error.diagnostics; return { exceptionDetails: { text: error.message, exception: { objectId: 'proxy-error' } } }; }
+      }
+      if (method === 'Runtime.callFunctionOn' && args.objectId === 'proxy-error') return { result: { value: diagnostic } };
+      return result;
+    };
+    const args = { selector: '#proxy', text: 'replacement', mode };
+    let error;
+    if (batch) {
+      const result = await f.exec('batch', { steps: [{ action: 'fill', ...args }, { action: 'click', selector: '#submit' }] });
+      assert.equal(result.completed, false); assert.equal(result.failed_step, 0); assert.equal(result.retry_failed_step_safe, true);
+      error = result;
+    } else {
+      try { await f.exec('fill', args); } catch (caught) { error = caught; }
+    }
+    assert.equal(error.input_dispatched, false); assert.equal(error.diagnostics.reason, 'editor_proxy'); assert.equal(error.diagnostics.editor, editor);
+    assert.match(error.diagnostics.hint, /mode="editor".*browser_evaluate.*model again/);
+    assert.equal(field.value, 'proxy'); assert.equal(focused, 0); assert.equal(changed, 0);
+    assert.ok(!f.calls.some(call => call.method.startsWith('Input.')));
+  }
 });
 
 test('DOM click invokes HTML activation once without native input, rejects coordinates and disabled targets', async () => {

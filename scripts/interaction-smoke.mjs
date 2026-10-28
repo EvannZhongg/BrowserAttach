@@ -142,6 +142,63 @@ try {
   await page(`document.querySelector('#prep-format').remove()`);
 
   await page(`(() => {
+    const section=document.createElement('section');section.id='prep-inputs';section.style='position:fixed;top:100px;left:20px';
+    section.innerHTML=['text','search','email','password','tel','url'].map(type=>'<input id="prep-'+type+'" type="'+type+'" value="old">').join('')+'<textarea id="prep-textarea">original</textarea><div id="prep-contenteditable" contenteditable="true">old</div>';
+    document.body.append(section);window.prepInputEvents=0;
+    section.addEventListener('input',()=>prepInputEvents++);
+  })()`);
+  for(const type of ['text','search','email','password','tel','url']){
+    const text=type==='email'?'new@example.test':'replacement';
+    const filled=await call('fill',{selector:'#prep-'+type,text});
+    assert.equal(filled.verification_source,'dom_value');assert.equal((await call('read_text',{selector:'#prep-'+type,mode:'value'})).text,text);
+  }
+  await page(`document.querySelector('#prep-textarea').select=function(){this.setSelectionRange(2,2)}`);
+  const eventsBefore=await page('prepInputEvents');
+  await assert.rejects(call('fill',{selector:'#prep-textarea',text:'must not append'}),error=>error.diagnostics.reason==='fill_selection_lost'&&error.input_dispatched===true);
+  assert.equal(await page('document.querySelector("#prep-textarea").value'),'original');assert.equal(await page('prepInputEvents'),eventsBefore);
+  await page(`delete document.querySelector('#prep-textarea').select`);
+  assert.equal((await call('fill',{selector:'#prep-textarea',text:'first\nsecond'})).verification_source,'dom_value');
+  for(const mode of ['native','dom']){
+    const filled=await call('fill',{selector:'#prep-contenteditable',text:'first\nsecond',mode});
+    assert.equal(filled.verification_source,mode==='native'?'selection_text':'inner_text');
+    assert.equal((await call('read_text',{selector:'#prep-contenteditable',mode:'value'})).text,'first\nsecond');
+  }
+  results.cases.push({scenario:'native_fill_field_types_and_collapsed_textarea_selection_no_insert',events:await page('prepInputEvents')});
+  await page(`document.querySelector('#prep-inputs').remove()`);
+
+  await page(`(() => {
+    const section=document.createElement('section');section.id='prep-editors';section.style='position:fixed;top:100px;left:20px';
+    section.innerHTML='<div class="monaco-editor"><textarea id="prep-monaco" class="inputarea">proxy</textarea></div><div class="CodeMirror"><textarea id="prep-cm">proxy</textarea></div><input id="prep-editor-focus">';
+    document.body.append(section);document.querySelector('#prep-editor-focus').focus();
+    window.prepEditorEvents=[];for(const type of ['focusin','input','change'])section.addEventListener(type,e=>prepEditorEvents.push(type));
+    window.__privateTestEditor={getValue:()=> 'private full model'};
+    window.monaco={_prevClass:'private'};
+  })()`);
+  for(const selector of ['#prep-monaco','#prep-cm'])for(const mode of ['native','dom']){
+    await assert.rejects(call('fill',{selector,text:'must not write',mode}),error=>error.input_dispatched===false&&error.diagnostics.reason==='editor_proxy');
+    assert.equal((await call('read_text',{selector,mode:'value'})).text,'proxy');
+  }
+  assert.equal(await page('document.activeElement.id'),'prep-editor-focus');assert.deepEqual(await page('prepEditorEvents'),[]);
+  await assert.rejects(call('read_text',{selector:'.monaco-editor',mode:'editor'}),error=>error.diagnostics.reason==='editor_model_unavailable'&&/browser_evaluate/.test(error.message));
+  assert.equal((await call('evaluate',{expression:'() => window.__privateTestEditor.getValue()'})).value,'private full model');
+  await page(`window.monaco={editor:{getEditors:()=>[{getDomNode:()=>document.querySelector('.monaco-editor'),getModel:()=>({getValue:()=> 'full model\\nsecond line'})}]}}`);
+  const model=await call('read_text',{selector:'.monaco-editor',mode:'editor'});assert.equal(model.text,'full model\nsecond line');assert.equal(model.complete_source,true);
+  await page(`window.monaco.editor.getEditors=1`);
+  await assert.rejects(call('read_text',{selector:'.monaco-editor',mode:'editor'}),error=>error.diagnostics.reason==='editor_model_unavailable'&&!/TypeError/.test(error.message));
+  await page(`document.querySelector('#prep-cm').parentElement.CodeMirror={getValue:()=> 'CM full model'}`);
+  assert.equal((await call('read_text',{selector:'.CodeMirror',mode:'editor'})).source,'codemirror5_model');
+  results.cases.push({scenario:'editor_proxy_no_focus_or_input_and_public_private_model_readback',events:await page('prepEditorEvents')});
+  await page(`document.querySelector('#prep-editors').remove();delete window.monaco;delete window.__privateTestEditor`);
+
+  await page(`(() => {const state=document.createElement('div');state.id='prep-long-status';state.textContent='x'.repeat(1200)+'Completed';document.body.append(state)})()`);
+  const longWait=await call('wait',{selector:'#prep-long-status',condition:'text',expected:'Completed'});
+  assert.equal(longWait.current.total_chars,1209);assert.equal(longWait.current.text_truncated,true);assert.equal(longWait.current.text.length,500);
+  const prior=(await call('read_text',{selector:'#prep-long-status'})).text;
+  await assert.rejects(call('wait',{selector:'#prep-long-status',condition:'text',previous:prior,timeout_ms:150}),error=>error.diagnostics.current.total_chars===1209&&error.diagnostics.current.text_truncated);
+  results.cases.push({scenario:'full_text_wait_comparison_beyond_truncated_diagnostics',current:longWait.current});
+  await page(`document.querySelector('#prep-long-status').remove()`);
+
+  await page(`(() => {
     const section=document.createElement('section');section.id='prep-related';
     section.innerHTML='<input role="combobox" aria-label="Preparation source" aria-expanded="true" aria-controls="prep:portal"><div id="prep:other" role="listbox"><button role="option">China</button></div><div id="prep:portal" role="listbox"><button role="option">China</button></div>';
     document.body.append(section);window.prepPicked=[];for(const b of section.querySelectorAll('button'))b.onclick=()=>prepPicked.push(b.parentElement.id);

@@ -8,7 +8,7 @@ export function waitOptions(args) {
   if (!WAIT_CONDITIONS.includes(args.condition)) throw new Error('Unknown wait condition');
   const element = !['url', 'network_idle'].includes(args.condition);
   if (element) {
-    if (!args.selector || args.ref != null) throw new Error(`${args.condition} wait requires a reusable selector${args.condition === 'text' ? '; use selector="body" for whole-page rendered text' : ''}`);
+    if (!args.selector || args.ref != null) throw new Error(`${args.condition} wait requires a reusable selector${args.condition === 'text' ? '; prefer the result/status container, or use selector="body" for whole-page rendered text' : ''}`);
     targetOptions(args);
   } else if (args.selector != null || args.ref != null || args.frame_id != null || args.frame != null || args.nth != null || args.selector_type != null || args.name != null) throw new Error('This wait condition does not use an element target');
   if (args.condition === 'text' && (Number(typeof args.expected === 'string') + Number(typeof args.previous === 'string') !== 1)) throw new Error('text wait requires exactly one of expected (substring) or previous (full prior text)');
@@ -92,7 +92,9 @@ export function inspectWait(query, inspect, args) {
   if (args.condition === 'absent') return { satisfied: false, state: 'attached' };
   if (args.condition === 'text') {
     const text = element.innerText ?? '';
-    return { satisfied: args.previous != null ? text !== args.previous : text.includes(args.expected), text: text.slice(0, 500) };
+    return { satisfied: args.previous != null ? text !== args.previous : text.includes(args.expected), text: text.slice(0, 500),
+      total_chars: text.length, text_truncated: text.length > 500,
+      ...(text.length > 500 ? { hint: 'Comparison used the full rendered text; only this diagnostic preview is truncated. Scope selector to the result/status container and inspect it with browser_read_text. previous must be its complete prior innerText, not a truncated preview; text changes alone do not prove a new run completed.' } : {}) };
   }
   if (args.condition === 'value') {
     const text = ['INPUT', 'TEXTAREA', 'SELECT'].includes(element.tagName) ? element.value : element.isContentEditable ? element.innerText : undefined;

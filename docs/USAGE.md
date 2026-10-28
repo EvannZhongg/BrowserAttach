@@ -85,6 +85,8 @@
 | `selector_ambiguous` | CSS/XPath/label/placeholder/AX role 匹配不唯一；附有界候选与匹配总数 |
 | `selector_invalid` / `selector_not_element` | 选择器解析失败 / 结果不是元素 |
 | `value_not_retained` | fill 后实际文本与请求不一致；不回显请求值或实际值，不推断是格式化还是输入被吞 |
+| `editor_proxy` | fill 识别到 Monaco / CodeMirror 5 的代理 textarea，在聚焦或写入前拒绝；按 hint 读取编辑器模型 |
+| `editor_model_unavailable` / `editor_model_ambiguous` | editor 模式无法读取暴露的完整模型，或所选容器包含多个 Monaco 实例；不退回 DOM 拼接 |
 | `delivery_unverified` | 可信输入事件回执未在回执预算内完成 |
 | `document_changed` / `snapshot_timeout` | snapshot 两次采集仍遇文档变化 / 观察总预算耗尽，不能使用失败采集的 refs |
 | `target_changed` | click/hover 派发期间的目标核验被拒绝，可能已有前序输入送达 |
@@ -220,7 +222,11 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 | `value` | 唯一选中的 input、textarea 或 contenteditable 的值 |
 | `editor` | Monaco / CodeMirror 5 的完整模型 |
 
-编辑器须暴露 monaco.editor.getEditors() 或所选节点上的 CodeMirror 5 实例，否则明确报错。返回 source、complete_source、total_chars、returned_chars、truncated 和 next_offset；max_chars 默认 20000，范围 1–100000，offset 默认 0。
+编辑器须暴露可调用的 monaco.editor.getEditors()，且所选容器只能关联一个编辑器模型，或所选节点上有 CodeMirror 5 实例。全局符号缺失、形状不符、调用失败或模型没有返回字符串时报告 editor_model_unavailable；多个匹配实例报告 editor_model_ambiguous，须缩小 selector，不猜选模型。DOM 上出现 Monaco 并不意味着模型已暴露。错误保留 diagnostics 和 browser_evaluate 回读指引；不扫描站点私有全局，不退回可视行拼接。
+
+已知页面暴露私有模型 API 时，可显式执行 `browser_evaluate({tab_handle, expression:"() => window.__ncMonacoEditorApi.getValue()"})`。此处 API 名只是站点示例，须先确认当前页面实际接口。代理 textarea 的 value、ARIA value 与可视行 DOM 均不能据此当作完整编辑器内容。写入也须使用已确认的接口并再次读取模型核验。
+
+返回 source、complete_source、total_chars、returned_chars、truncated 和 next_offset；max_chars 默认 20000，范围 1–100000，offset 默认 0。complete_source=false 表示来源不能保证覆盖完整文档，即使 truncated=false 也不能视作完整代码。
 
 next_offset 是下一次实时读取位置，内容变化可造成重复或遗漏；需要一致结果时用 evaluate 一次捕获再分页。DOM 正文不包含未渲染的虚拟行或所有 Shadow DOM，complete_source=false 表示覆盖边界；字段值及支持的编辑器模型为 true。
 
@@ -286,6 +292,8 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 
 原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 附带 hit_target、命中点及受阻 frame，前序输入可能已经送达。
 
+布局可能变化时优先传 selector 或 ref：每次操作重新计算点击位置，无须缓存 getBoundingClientRect 坐标。无 AX role 的 div 也可用唯一 CSS/XPath 定位；复杂查询可通过 evaluate 的 result_type=element 返回 ref，再调用 click，继续使用相同的命中和事件路径核验。纯坐标调用无法推断此前截图中期望的元素。
+
 hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
 
 DOM 模式调用一次 HTMLElement.click()，返回 method=dom、events_trusted=false。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
@@ -340,7 +348,11 @@ pointer 用于鼠标驱动控件，核验 pointerdown/move/up；html5 用真实�
 | `url` | 主 frame URL 含 expected |
 | `network_idle` | 已观察的请求 inflight=0，且连续 idle_ms 无活动 |
 
-元素条件必须提供严格 selector，可带 frame/nth；全页渲染文字使用 `selector:"body"`。url/network_idle 不使用元素目标。工具只读等待，超时附带条件及最后状态。
+元素条件必须提供严格 selector，可带 frame/nth；文本优先限定结果或状态容器，全页渲染文字可用 `selector:"body"`。url/network_idle 不使用元素目标。工具只读等待，超时附带条件及最后状态。
+
+text 比较始终使用完整 innerText。current.text 只预览前 500 字符，total_chars 与 text_truncated 说明长度和预览截断；超出时附缩小容器和回读提示。不要将预览截断误解为匹配范围受限，也不要用预览作为 previous。
+
+不知道下一条文案时，先用 read_text 读取该容器，确认 offset=0、truncated=false，并将完整旧文本传给 previous。容器文字变化只证明观察到了不同文本，不证明新一轮业务已完成；旧结果和新结果相同、或中间变化短于轮询间隔时可能无法区分。应结合站点实际提供的运行状态、请求或结果标识核验，不用工具调用时间戳推断业务新鲜度。
 
 控件状态不要求可见或启用。缺失或无效的 ARIA 状态报告 state=unavailable，不按 false 处理；checkbox.indeterminate 对应 mixed。每次轮询重新解析 selector，节点在重渲染中被替换可继续等待，歧义立即报错；frame 不可用不能证明元素消失。等待只验证明确条件，不证明保存或服务端业务完成，超时不使前序动作变得可安全重放。单步和 batch 使用相同的条件与校验。
 
@@ -361,13 +373,15 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 
 支持文本类 input（text/search/email/password/tel/url）、textarea 和 contenteditable。native（默认）聚焦、选中并插入文本，不产生逐字 keydown；dom 写入值并派发合成 input/change，不主动聚焦。
 
-两种模式均核对写入后的文本，返回 value_verified=true。默认预期为 text；可显式传 expected_value 指定页面格式化后的保留值，例如 `{text:"06", expected_value:"6"}`。expected_value 只改变核验内容，实际仍写入 text；允许显式空字符串，单步和 batch 使用相同规则。verification_basis=text/expected_value 说明比较依据；不回显字段内容或预期值，也不据此声称输入事件送达或业务成功。不自动按数字/日期归一化，不等待异步格式化或主动 blur。
+两种模式均核对写入后的文本，返回 value_verified=true。默认预期为 text；可显式传 expected_value 指定页面格式化后的保留值，例如 `{text:"06", expected_value:"6"}`。expected_value 只改变核验内容，实际仍写入 text；允许显式空字符串，单步和 batch 使用相同规则。verification_basis=text/expected_value 说明预期的来源；verification_source=dom_value/selection_text/inner_text 说明实际回读来源，也出现在选区丢失或保留值不符的诊断中。不回显字段内容或预期值，也不据此声称输入事件送达或业务成功。不自动按数字/日期归一化，不等待异步格式化或主动 blur。
 
-input/textarea 按 value 精确比较。contenteditable 的 native 模式在插入前确认替换选区仍覆盖字段，选区丢失时以 fill_selection_lost 停止，不插入文本；插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
+input/textarea 按 value 精确比较。native 在插入前确认焦点与完整替换选区：textarea 和支持选区偏移的 input 必须 selectionStart=0、selectionEnd=value.length；email 不暴露选区偏移，保留 select() 路径并核验最终值。contenteditable 比较选区是否覆盖全部节点内容。选区丢失时以 fill_selection_lost 停止，不插入替换文本；此前聚焦/选择仍可能产生页面副作用，因此不自动重放。contenteditable 插入后临时选择字段内容，按浏览器所选纯文本核验并立即恢复原选区及方向。这能区分真实空行与空 div/br 的编辑占位，不用 innerText 的额外换行判定失败；临时选择可能产生 selectionchange。dom 模式通过 innerText setter 写入文本与可见 br 换行，不使用 innerHTML 或 TrustedHTML，也不主动聚焦，按 innerText 核验。
 
 contenteditable 比较将 CRLF/CR 视为 LF；两种模式均允许请求中的普通空格在相同位置以 NBSP 保留（显式请求的 NBSP 仍须原样保留）。不裁剪首尾空白、不合并空格或空行。节点替换、失焦、页面格式化或异步重建仍可能导致结果未知；不回显字段内容，不自动重放，也不等待编辑器保存。read_text 的 visible/value 仍是 innerText，不是浏览器所选纯文本。
 
-fill 不提供编辑器模型写入。遇编辑器管理选区导致的 fill_selection_lost，先观察并确认可编辑表面，可显式改用 click → press_key(Control+A) → type(focused=true) 输入可打印文本，换行/Tab 分别用 press_key Enter/Tab；随后读取编辑器内容核验。此路径不保证适用于所有编辑器，也不会自动执行或切换模式。普通 textarea/contenteditable 的多行替换可直接使用 fill。
+fill 不提供编辑器模型写入或 paste 语义。两种模式都会在聚焦/写入前拒绝已识别的 Monaco `.monaco-editor textarea.inputarea` 和 CodeMirror 5 `.CodeMirror textarea`，返回 editor_proxy、input_dispatched=false 及模型回读指引。识别不是所有编辑器的完整名单；未识别的代理框仍可能不适用普通字段语义。优先读取容器的 editor 模式；模型未暴露时，通过 evaluate 显式使用已确认的站点 API 读写并再次核验，不将 DOM/ARIA 值当模型，也不以 expected_value="" 绕过代理校验。
+
+遇其他编辑器管理选区导致的 fill_selection_lost，先观察；可显式选择 click → press_key(Control+A) → type(focused=true)，换行/Tab 分别用 press_key Enter/Tab。这仍可能触发自动缩进/补全，不能保证多行代码保真，也不会自动执行或切换模式。普通 textarea/contenteditable 的多行替换可直接使用 fill。需要撤销时可显式 press_key(Control+Z)，但其作用取决于当前焦点和编辑器撤销栈，不保证恢复本次操作；工具不自动回滚。
 
 工具不自动 blur 或按 Enter。需要失焦校验时显式 Tab 或点击其他目标；自定义下拉须在输入过滤后点击具体选项。
 
@@ -464,6 +478,8 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 元素截图不自动滚动，可直接采集顶层视口外已渲染的区域；祖先 overflow 裁剪仍保留，因此有渲染 box 不代表截图里能看到该元素。需要滚入视口时先显式滚动，再重新截图并使用新映射。
 
 返回 PNG 与 capture：scope、viewport、css_width/css_height、image_origin_css、image_to_viewport_css。图片像素换算为视口 CSS 坐标：`css = 像素 × scale + offset`。整页图的视口外位置需先滚动再输入。
+
+分别使用 image_to_viewport_css.scale_x/scale_y 和 offset_x/offset_y，不直接用 DPR 相除。例如 2561×1263 图片对应 1707×842 CSS 视口时，按返回映射换算两个轴，避免尺寸取整误差。映射只属于本次截图；布局或滚动变化后应重新观察，元素目标可直接交给 click 计算位置。
 
 超时 5 秒，超过 4000 万像素被拒绝；元素无渲染 box、负文档坐标或透视 frame 也会失败。后台渲染停滞时显式 activate，或改读 AX/正文。默认隐藏约 1.2 秒的点击反馈，include_indicators=true 可保留。
 

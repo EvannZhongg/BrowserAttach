@@ -101,8 +101,12 @@ test('text waits use rendered text for both substring and full previous-value co
   assert.equal(inspectWait(query, null, { condition: 'text', expected: 'Ready' }).satisfied, true);
   assert.equal(inspectWait(query, null, { condition: 'text', previous: field.innerText }).satisfied, false);
   assert.equal(inspectWait(query, null, { condition: 'text', expected: 'Ready' }).text.length, 500);
+  const diagnostic = inspectWait(query, null, { condition: 'text', previous: field.innerText });
+  assert.equal(diagnostic.total_chars, 606); assert.equal(diagnostic.text_truncated, true);
+  assert.match(diagnostic.hint, /full rendered text.*result\/status container.*complete prior innerText/);
   field.innerText = '';
   assert.equal(inspectWait(query, null, { condition: 'text', expected: 'Ready' }).satisfied, false);
+  assert.equal(inspectWait(query, null, { condition: 'text', expected: 'Ready' }).text_truncated, false);
 });
 
 test('state waits compare explicit native/ARIA state and never interpret missing state as false', () => {
