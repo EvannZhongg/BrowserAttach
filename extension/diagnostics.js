@@ -1,6 +1,23 @@
 import { clip, redactHeaders, boundedBody } from './log-data.js';
 
 const MAX_ENTRIES = 500, MAX_CHARS = 1024 * 1024;
+export const NETWORK_EVENTS = ['request', 'redirect', 'response', 'finished', 'failed', 'cache', 'body'];
+
+function requestSummaries(entries) {
+  const requests = new Map();
+  for (const { record } of entries) {
+    const key = JSON.stringify([record.session_id, record.request_id, record.hop ?? null]);
+    let item = requests.get(key);
+    if (!item) { item = { first_seq: record.seq, session_id: record.session_id, request_id: record.request_id, hop: record.hop, events: [] }; requests.set(key, item); }
+    for (const field of ['seq', 'url', 'method', 'resource_type', 'frame_id', 'loader_id', 'status', 'mime_type', 'error', 'redirect_to', 'from_cache', 'from_service_worker']) if (record[field] !== undefined) item[field] = record[field];
+    if (!item.events.includes(record.event)) item.events.push(record.event);
+    item.last_event = record.event;
+    if (record.request_body) item.request_body_available = true;
+    if (record.response_body) item.response_body_available = true;
+    for (const field of ['request_body_unavailable', 'response_body_unavailable']) if (record[field]) item[field] = record[field];
+  }
+  return [...requests.values()].sort((a, b) => a.seq - b.seq).map(record => ({ record, size: JSON.stringify(record).length }));
+}
 
 function buffer() {
   const entries = [];
@@ -21,7 +38,8 @@ function buffer() {
       if (!Number.isInteger(maxChars) || maxChars < 1000 || maxChars > 100000) throw new Error('max_chars must be 1000..100000');
       const result = [];
       let next = Math.max(after, droppedThrough), used = 2;
-      for (const { record, size } of entries) {
+      const source = args.view === 'requests' ? requestSummaries(entries) : entries;
+      for (const { record, size } of source) {
         if (record.seq <= after) continue;
         if (!matches(record)) { next = record.seq; continue; }
         if (result.length >= limit || (used + size + 1 > maxChars && result.length)) break;
@@ -74,13 +92,40 @@ function initiatorData(initiator) {
     ...stackData(initiator.stack) } };
 }
 
-function validateQuery(args) {
+export function logOptions(args) {
   if (!['console', 'network', 'navigation'].includes(args.kind)) throw new Error('kind must be console, network or navigation');
   if (args.kind !== 'network' && args.capture != null) throw new Error('capture is only valid for network logs');
   if (args.kind !== 'network' && args.url_contains != null) throw new Error('url_contains is only valid for kind=network');
   if (args.kind !== 'console' && args.level != null) throw new Error('level is only valid for kind=console');
   if (args.level != null && !['log', 'debug', 'info', 'warning', 'error'].includes(args.level)) throw new Error('Invalid console level');
   if (args.url_contains != null && (typeof args.url_contains !== 'string' || args.url_contains.length > 2000)) throw new Error('url_contains must be at most 2000 characters');
+  const networkOnly = ['view', 'url_origin', 'resource_types', 'method', 'status', 'event', 'request_id', 'session_id', 'hop'];
+  if (args.kind !== 'network' && networkOnly.some(key => args[key] !== undefined)) throw new Error('Network filters/view are only valid for kind=network');
+  if (args.view != null && !['events', 'requests'].includes(args.view)) throw new Error('view must be events or requests');
+  if (args.event != null && (!NETWORK_EVENTS.includes(args.event) || args.view === 'requests')) throw new Error('event requires events view and a known network event');
+  if (args.resource_types != null && (!Array.isArray(args.resource_types) || !args.resource_types.length || args.resource_types.length > 20 || args.resource_types.some(type => typeof type !== 'string' || !type || type.length > 50))) throw new Error('resource_types must contain 1..20 resource type names such as XHR or Fetch');
+  if (args.method != null && (typeof args.method !== 'string' || !/^[A-Za-z]{1,50}$/.test(args.method))) throw new Error('method must be an HTTP method');
+  if (args.status != null && (!Number.isInteger(args.status) || args.status < 100 || args.status > 599)) throw new Error('status must be 100..599');
+  if (args.url_origin != null) {
+    let url; try { url = new URL(args.url_origin); } catch {}
+    if (!url || !['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.pathname !== '/' || url.search || url.hash) throw new Error('url_origin must be an HTTP(S) origin without path, credentials, query or fragment');
+  }
+  if (args.request_id != null && (typeof args.request_id !== 'string' || !args.request_id || args.request_id.length > 200)) throw new Error('request_id must contain 1..200 characters');
+  if (args.session_id !== undefined && args.session_id !== null && (typeof args.session_id !== 'string' || !args.session_id || args.session_id.length > 200)) throw new Error('session_id must be null (main session) or 1..200 characters');
+  if (args.hop != null && (!Number.isSafeInteger(args.hop) || args.hop < 0)) throw new Error('hop must be a nonnegative integer');
+}
+
+function networkFilter(args) {
+  const origin = args.url_origin ? new URL(args.url_origin).origin : null;
+  return record => {
+    if (args.url_contains && !record.url?.includes(args.url_contains)) return false;
+    if (origin) { try { if (new URL(record.url).origin !== origin) return false; } catch { return false; } }
+    return (!args.resource_types || args.resource_types.includes(record.resource_type)) &&
+      (!args.method || record.method?.toUpperCase() === args.method.toUpperCase()) &&
+      (args.status == null || record.status === args.status) && (!args.event || record.event === args.event) &&
+      (!args.request_id || record.request_id === args.request_id) &&
+      (args.session_id === undefined || record.session_id === args.session_id) && (args.hop == null || record.hop === args.hop);
+  };
 }
 
 export function createDiagnostics(cdp) {
@@ -173,11 +218,13 @@ export function createDiagnostics(cdp) {
   function read(tabId, args) {
     const state = tabs.get(tabId);
     if (!state) throw new Error('Diagnostics are unavailable; claim the tab again');
-    validateQuery(args);
+    logOptions(args);
     const { kind } = args;
-    return { ...state[kind].read(args, record => kind === 'console' ? !args.level || record.level === args.level
-      : !args.url_contains || record.url?.includes(args.url_contains)),
-      kind, ...(kind === 'network' ? { capture: state.capture, pending_bodies: state.pending.size } : {}), capture_started_at: state.started, scope: 'tab_and_iframes', retained_across_navigation: true };
+    const result = state[kind].read(args, kind === 'network' ? networkFilter(args) : record => !args.level || record.level === args.level);
+    return { ...result,
+      kind, ...(kind === 'network' ? { view: args.view ?? 'events', capture: state.capture, pending_bodies: state.pending.size,
+        ...(result.data_loss ? { recovery: 'Some earlier events were evicted. Read filters cannot recover or protect them; inspect recent XHR/Fetch requests with view=requests and resource_types, then enable bounded capture before the next task-intended request. Do not replay a submission to recover logs.' } : {}),
+      } : {}), capture_started_at: state.started, scope: 'tab_and_iframes', retained_across_navigation: true };
   }
   function networkOptions(tabId, config = tabs.get(tabId)?.capture) {
     return config?.enabled ? { maxTotalBufferSize: 2097152, maxResourceBufferSize: config.max_body_bytes, maxPostDataSize: config.max_body_bytes } : { maxTotalBufferSize: 0, maxResourceBufferSize: 0, maxPostDataSize: 0 };
@@ -193,7 +240,7 @@ export function createDiagnostics(cdp) {
     state.capture = next; state.captureVersion++; state.detailed.clear();
   }
   async function readDetails(tabId, args, targets) {
-    validateQuery(args);
+    logOptions(args);
     if (args.capture != null) {
       await configure(tabId, args.capture, targets);
     }

@@ -12,7 +12,7 @@ test('inactive left single click verifies ref, selector and coordinate delivery 
       ? { result: { value: { visibility_state: 'hidden', has_focus: false } } } : send(tab, method, args);
     const args = target === 'ref' ? { ref } : target === 'selector' ? { selector: '#submit' } :
       { x: 55, y: 30, ...(target === 'document' ? { coordinate_space: 'document' } : {}) };
-    const result = await f.exec('click', { ...args, button: 'left', click_count: 1, modifiers: [] });
+    const result = await f.exec('click', { ...args, detailed: true, button: 'left', click_count: 1, modifiers: [] });
     assert.equal(result.delivery_verified, true); assert.equal(result.events_trusted, true);
     assert.equal(result.target_verified, ['ref', 'selector'].includes(target) ? true : null);
     assert.deepEqual(result.page_state, { visibility_state: 'hidden', has_focus: false, tab_active: false, window_focused: false });
@@ -51,7 +51,7 @@ test('final click readiness permits a tab switch only for a left single click an
       }
       return result;
     };
-    const action = f.exec('click', { x: 20, y: 20, ...(change === 'right_inactive' ? { button: 'right' } : {}) });
+    const action = f.exec('click', { x: 20, y: 20, detailed: true, ...(change === 'right_inactive' ? { button: 'right' } : {}) });
     if (change === 'inactive') assert.equal((await action).page_state.tab_active, false);
     else {
       await assert.rejects(action, /TAB_NOT_READY.*No input was dispatched/);
@@ -66,7 +66,7 @@ test('active occluded and unfocused native click verifies delivery without bring
     f.api.windows.get = async () => ({ focused: false, state: 'maximized' });
     f.api.debugger.sendCommand = async (target, method, args) => method === 'Runtime.evaluate' && args.expression.includes('visibility_state: document.visibilityState')
       ? { result: { value: state } } : send(target, method, args);
-    const result = await f.exec('click', { x: 10, y: 10 });
+    const result = await f.exec('click', { x: 10, y: 10, detailed: true });
     assert.equal(result.target_verified, null); assert.equal(result.delivery_verified, true);
     assert.deepEqual(result.target_verification, { basis: 'coordinate_hit', hit_relation: null });
     assert.equal(result.page_state.visibility_state, state.visibility_state);

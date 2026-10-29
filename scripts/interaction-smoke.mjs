@@ -15,8 +15,9 @@ import { AttachClient } from '../src/client.mjs';
 import { normalizeHit } from '../extension/pointer.js';
 import { checkSnapshotDiff } from './snapshot-diff-cases.mjs';
 import { checkWaitVerification } from './wait-verify-cases.mjs';
+import { checkActionEvidence } from './action-evidence-cases.mjs';
 
-const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, verify: { type: 'boolean', default: false }, snapshots: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, evidence: { type: 'boolean', default: false }, verify: { type: 'boolean', default: false }, snapshots: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
 if (!values.executable) throw new Error('Pass --executable PATH to a Chrome or Edge 125+ build that permits --enable-unsafe-extension-debugging');
 const dir = await mkdtemp(join(tmpdir(), 'attach-interaction-'));
 const rows = Array.from({ length: 200 }, (_, i) => `<li>Row ${i+1}: alpha beta gamma delta epsilon</li>`).join('');
@@ -92,7 +93,9 @@ try {
  const focus = () => evaluate(`chrome.windows.getAll({populate:true}).then(w=>w.map(x=>({id:x.id,focused:x.focused,state:x.state,active:x.tabs.filter(t=>t.active).map(t=>t.id)})).sort((a,b)=>a.id-b.id))`);
  await evaluate(`chrome.tabs.update(${cover.id},{active:true})`);await pause(250);
  const operationsFocus=await focus();
- if (values.verify) {
+ if (values.evidence) {
+  await checkActionEvidence({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, base, focus, results });
+ } else if (values.verify) {
   await checkWaitVerification({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, base, focus, results });
  } else if (values.snapshots) {
   await checkSnapshotDiff({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, base, focus, results });
@@ -714,12 +717,12 @@ try {
   await client.call('press_key',{...h,key:'Tab'});await click('#add');
   assert.equal((await inspect()).state.year,2026);
   const rect=await page('(()=>{const r=document.querySelector("#previous").getBoundingClientRect();return {x:r.x-15,y:r.y+r.height/2}})()');
-  const pseudo=await client.call('click',{...h,...rect});
+  const pseudo=await client.call('click',{...h,...rect,detailed:true});
   assert.equal(pseudo.delivery_verified,true);assert.equal(pseudo.hit_target.pseudo_element,true);assert.equal((await inspect()).state.previous,1);
   const blocker=await evaluate(`chrome.windows.create({url:${JSON.stringify(base+'/cover')},focused:true})`);
   let occludedState;
   try {
-   const result=await click('#add'); assert.equal(result.target_verified,true);
+   const result=await client.call('click',{...h,selector:'#add',detailed:true}); assert.equal(result.target_verified,true);
    occludedState=result.page_state;
    if(!values.headless){assert.equal(result.page_state.window_focused,false);assert.equal((await focus()).find(w=>w.id===blocker.id).focused,true);}
   } finally {await evaluate(`chrome.windows.remove(${blocker.id})`);}
@@ -842,7 +845,7 @@ try {
    const args = target === 'ref' ? {ref:refFor(snap)} : target === 'selector' ? {selector:'#go'} :
     target === 'offset' ? {selector:'#go',offset:{x_ratio:.25,y_ratio:.75},settle_ms:20} :
     {x:260,y:220,...(target==='document'?{coordinate_space:'document'}:{})};
-   const result = await client.call('click', {...h, ...args, ...(run===2?{button:'left',click_count:1,modifiers:[]}:{})});
+   const result = await client.call('click', {...h, ...args, detailed:true, ...(run===2?{button:'left',click_count:1,modifiers:[]}:{})});
    const observed = await state();
    assert.equal(result.delivery_verified,true);assert.equal(result.events_trusted,true);
    assert.equal(result.target_verified,['viewport','document'].includes(target)?null:true);
@@ -885,7 +888,7 @@ try {
   } finally {await page('document.querySelector("#cover-go").remove();true');}
   await client.call('activate_tab',h);
   await page('window.__count=0;true');
-  const settling = call('click',{selector:'#go',settle_ms:500});
+  const settling = call('click',{selector:'#go',settle_ms:500,detailed:true});
   await pause(200);await evaluate(`chrome.tabs.update(${cover.id},{active:true})`);
   assert.equal((await settling).page_state.tab_active,false);assert.equal(await page('window.__count'),1);
   assert.equal((await evaluate(`chrome.tabs.get(${tab.id})`)).active,false);
@@ -979,7 +982,7 @@ try {
    const snap=await client.call('snapshot',h),ref=snap.snapshot.match(/\[([^\]]+)\] button "Go"/)[1];
    const start=performance.now();
    let result, clickError;
-   try { result=await client.call('click',{...h,...(scenario==='background_coordinate'?{x:260,y:220}:{ref})}); }
+   try { result=await client.call('click',{...h,detailed:true,...(scenario==='background_coordinate'?{x:260,y:220}:{ref})}); }
    catch(error) { clickError=error.message; }
    const ms=Math.round(performance.now()-start),observed=await state();
    assert.equal(clickError,undefined);assert.equal(result.target_verified,scenario==='background_coordinate'?null:true);assert.equal(result.delivery_verified,true);assert.equal(observed.count,1);
@@ -1038,13 +1041,13 @@ try {
  assert.equal(fragment.same_document,true);assert.equal(fragment.snapshot,undefined);assert.equal(fragment.url,base+'/slow#fragment');
  }
  results.browser=browserInfo.user_agent;results.extension_version=browserInfo.extension_version;
- console.log(JSON.stringify({verification:values.verify?results.cases:undefined,snapshot_diffs:values.snapshots?results.cases:undefined,controls:values.controls?results.cases:undefined,preparation:values.preparation?results.cases:undefined,issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
+ console.log(JSON.stringify({evidence:values.evidence?results.cases:undefined,verification:values.verify?results.cases:undefined,snapshot_diffs:values.snapshots?results.cases:undefined,controls:values.controls?results.cases:undefined,preparation:values.preparation?results.cases:undefined,issues:values.issues?results.cases:undefined,extended:values.extended?results.cases:undefined,primitives:values.primitives?results.cases:undefined,tab_indicators:values['tab-indicators']?results.cases:undefined,input_capture:values['input-capture']?results.cases:undefined,snapshots:results.snapshots,background_operations:results.background_operations,
   hover:results.cases.find(c=>c.scenario==='hover_shift_30px'),navigation:results.navigation}));
  if(claim)await client.call('release_tab',{tab_handle:claim.tab_handle});claim=null;
 } finally {
  if(claim)await client?.call('release_tab',{tab_handle:claim.tab_handle}).catch(()=>{});
  await client?.close();await closeBrowser?.().catch(()=>{});ws?.terminate();browser.kill();await hub.close();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));
  await mkdir(join(ROOT,'test-results'),{recursive:true});
-  await writeFile(join(ROOT,'test-results',`${values.verify?'wait-verify':values.snapshots?'snapshot-diffs':values.controls?'controls':values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
+  await writeFile(join(ROOT,'test-results',`${values.evidence?'action-evidence':values.verify?'wait-verify':values.snapshots?'snapshot-diffs':values.controls?'controls':values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
  await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100}).catch(()=>{});
 }

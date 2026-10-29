@@ -52,6 +52,8 @@ try {
   assert.match(tools.find(tool => tool.name === 'browser_snapshot').inputSchema.properties.diff_since.description, /latest/);
   assert.ok(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.observe.anyOf.some(schema => schema.properties?.diff_since));
   assert.ok(tools.some(tool => tool.name === 'browser_logs'));
+  assert.ok(tools.find(tool => tool.name === 'browser_logs').inputSchema.properties.view.enum.includes('requests'));
+  assert.equal(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.wait_for.properties.checks.maxItems, 30);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const result = await client.callTool({ name: 'browser_discover', arguments: { kind: 'browsers' } });
   assert.equal(JSON.parse(result.content[0].text).browsers[0].browser_id, 'package:one');

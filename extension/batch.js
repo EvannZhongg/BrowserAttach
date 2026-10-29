@@ -2,7 +2,7 @@ import { targetOptions, frameOptions } from './locator.js';
 import { clickOptions } from './click.js';
 import { inputMode, fillOptions, keyParameters, selectOptions, typeOptions } from './input.js';
 import { scrollOptions } from './scroll.js';
-import { waitOptions } from './wait.js';
+import { waitOptions, actionWaitOptions } from './wait.js';
 import { offsetOption } from './motion.js';
 import { controlOptions } from './control.js';
 
@@ -15,6 +15,10 @@ export function validateSteps(steps, startAt = 0, dialogPolicy = 'ask') {
     if (!step || !['click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'wait'].includes(step.action)) throw new Error('Unsupported batch action');
     if (step.timeout_ms != null && (!Number.isInteger(step.timeout_ms) || step.timeout_ms < 100 || step.timeout_ms > 30000)) throw new Error('step timeout_ms must be 100..30000');
     if (step.dialog_policy != null && !['ask', 'accept', 'dismiss'].includes(step.dialog_policy)) throw new Error('dialog_policy must be ask, accept or dismiss');
+    if (step.wait_for != null) {
+      if (step.action === 'wait') throw new Error('wait steps do not accept wait_for');
+      actionWaitOptions(step.wait_for);
+    }
     if (step.observe != null) {
       controlOptions(step.observe);
       if (step.observe.ref != null) throw new Error('Batch observation uses a fresh selector, not ref');

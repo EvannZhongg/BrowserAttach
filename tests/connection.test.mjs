@@ -55,7 +55,9 @@ test('extension replies preserve only supported structured error evidence', asyn
     open_tab: { opened: true, claimed: false, tab_id: 10, phase: 'claim' } };
   f.controller.execute = async () => { throw Object.assign(new Error('Receipt lost'), evidence, { private_state: 'not transported' }); };
   const result = await f.command('click');
-  assert.deepEqual(result, { id: result.id, error: 'Receipt lost', ...evidence });
+  const { recovery, ...transported } = result;
+  assert.ok(recovery.includes('blocked_by'));
+  assert.deepEqual(transported, { id: result.id, error: 'Receipt lost', ...evidence });
 });
 
 test('popup release reports partial cleanup failures and rejected cleanup, then permits an explicit retry', async t => {

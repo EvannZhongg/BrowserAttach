@@ -54,12 +54,12 @@ test('capture loss is separate from pagination, and forgotten results cannot be 
   await assert.rejects(f.read({ cursor: result.next_cursor }), /stale/);
 });
 
-test('a late evaluation reply cannot resurrect a result after navigation or release cleanup', async () => {
+test('a late evaluation reply cannot resurrect a result after control cleanup', async () => {
   let finish;
   const evaluations = createEvaluations(() => new Promise(resolve => { finish = () => resolve({ result: { value: { value: [1, 2], truncated: false } } }); }));
   const pending = evaluations.read(9, { expression: '[1,2]', max_chars: 3 });
   evaluations.forget(9); finish();
-  await assert.rejects(pending, /Result was discarded.*do not replay/);
+  await assert.rejects(pending, /late result was discarded.*do not replay/);
   await assert.rejects(evaluations.read(9, { cursor: 'unknown' }), /stale/);
 });
 
@@ -73,7 +73,7 @@ test('a returned function is invoked once, its Promise awaited, and JSON cursor 
 test('frame-scoped captured JSON is discarded on that frame navigation', async () => {
   const evaluations=createEvaluations(async()=>({result:{value:{value:[1,2],truncated:false,scope:'frame'}}}));
   const result=await evaluations.read(9,{expression:'[1,2]',evaluation_frame:'child',max_chars:3});
-  evaluations.forgetFrame(9,'other');assert.equal((await evaluations.read(9,{cursor:result.next_cursor,max_chars:3})).value[0],2);
-  const next=await evaluations.read(9,{expression:'[1,2]',evaluation_frame:'child',max_chars:3});evaluations.forgetFrame(9,'child');
+  evaluations.invalidate(9,'frame_changed','other');assert.equal((await evaluations.read(9,{cursor:result.next_cursor,max_chars:3})).value[0],2);
+  const next=await evaluations.read(9,{expression:'[1,2]',evaluation_frame:'child',max_chars:3});evaluations.invalidate(9,'frame_changed','child');
   await assert.rejects(evaluations.read(9,{cursor:next.next_cursor}),/stale/);
 });

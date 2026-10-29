@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.32.0"
+  version: "0.32.1"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -60,6 +60,7 @@ Narrow repeated matches by container or frame. Use `nth` only when the observed 
 | Insert printable characters or drive a keyboard-sensitive editor | `browser_type`; Enter/Tab through `browser_press_key` |
 | Select an HTML select option | `browser_select_option` |
 | Select a custom dropdown option | Open/filter, observe the popup, then click the concrete option |
+| Act once, then wait for explicit conditions | Input `wait_for={checks:[...]}` returns independent `wait_result`; optional observe runs afterwards |
 | Wait for the next step | `browser_wait` with one condition or `checks[]`; both return status and expected/actual results, including unmet checks |
 | Run a short sequence already determined by observations | `browser_batch` with fresh selectors per step |
 

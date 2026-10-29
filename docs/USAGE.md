@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.32.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.32.1**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -326,6 +326,14 @@ frame.url/title 精确匹配子 frame，path 是逐层且每层唯一的 CSS ifr
 
 ## 输入：可操作性与两种模式
 
+输入动作及新 evaluate 可带 `wait_for={checks:[...],timeout_ms:5000}`：动作只执行一次，随后复用 browser_wait 的条件检查，最后执行可选 observe。checks 使用相同的条件、selector/frame 和 expected 规则；不接受 ref。总 timeout_ms 覆盖准备、派发、送达核验、等待和观察，wait_for.timeout_ms 不能延长剩余总预算。
+
+```json
+{"tab_handle":"...","selector":"#submit","timeout_ms":15000,"wait_for":{"checks":[{"condition":"url","expected":"/result"},{"condition":"text","selector":"#status","expected":"已保存"}]},"observe":{"diff_since":"latest"}}
+```
+
+`wait_result.status=pass/fail/unavailable` 与动作回执分开；条件未通过不会覆盖已确认的输入送达，也不自动重放动作。条件等待可跨同文档路由及完整导航，每轮重新解析 selector 并检查当前页面权限和控制权；dialog_policy 只作用于动作，等待始终为 ask。条件可能在动作前就已成立，pass 不证明因果关系或业务成功。已派发动作报错时也可附只读 wait_result，仍保留原动作错误；后续需要重查时单独调用 browser_wait。batch 步骤支持 wait_for；非 pass 停止并保留该步骤的动作回执，retry_failed_step_safe=false。主文档变化后仍在下一步骤前停止，不自动跨页续跑整批。
+
 click/hover/fill/type 的输入准备会检查可见、启用、非 inert 和几何稳定；fill 还要求可编辑且非只读。select_option 不要求可见几何。timeout_ms 默认 5000，范围 100–30000，覆盖准备、派发和校验；click/hover/press_key 的派发及回执另有 1250 ms 上限，清理最多 250 ms，长 timeout 主要用于等待目标。
 
 准备失败的 diagnostics.reason 区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only、unstable_geometry 和 no_visible_click_point；遮挡仍使用 obstructed/frame_obstructed。不可操作时附当前矩形及至多 8 层 composed 祖先（含目标）的 display、visibility、opacity、pointer-events、overflow、可滚动方向及 transition 属性/时长，ancestors_truncated 表示更深信息未采集。这些是当前样式证据，不推断 hover 触发条件或动画是否即将结束；opacity=0 不单独拒绝输入。
@@ -334,7 +342,7 @@ click/hover/fill/type 的输入准备会检查可见、启用、非 inert 和几
 
 原生 click/hover/drag 要求未冻结/丢弃的标签与未最小化窗口，准备前及派发前各检查一次，单次最多 500 ms。无修饰键的左键单击（button=left、click_count=1、modifiers=[]，均为默认值）可在非活动标签尝试执行，支持 ref、selector 及坐标目标；hover、drag、其他按钮、双击及带修饰键的点击仍要求活动标签。普通点击不会自动激活标签，后台事件送达和网站业务成功仍需分别核验，不能据此假设依赖悬停展开的流程也可后台执行。
 
-窗口失焦、document.visibilityState=hidden 或 document.hasFocus()=false 不独立触发拒绝；Click/Hover 成功结果的 page_state 提供这些诊断信号，以及派发前检查观察到的 tab_active。就绪检查通过不保证后台点击每次送达；实际送达仍需可信事件回执，缺失时报告结果未知，不自动重放或切换 DOM 模式。就绪失败的处理见[结果未知时](#结果未知时)。
+窗口失焦、document.visibilityState=hidden 或 document.hasFocus()=false 不独立触发拒绝；Click 的 detailed=true 及 Hover 成功结果的 page_state 提供这些诊断信号，以及派发前检查观察到的 tab_active。就绪检查通过不保证后台点击每次送达；实际送达仍需可信事件回执，缺失时报告结果未知，不自动重放或切换 DOM 模式。就绪失败的处理见[结果未知时](#结果未知时)。
 
 native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件且没有用户激活，不能满足依赖 isTrusted、pointer 事件或用户激活的功能。
 
@@ -349,14 +357,15 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 | `mode` | native（默认）或 dom；DOM 只支持 HTML 元素、左键单击且无修饰键 |
 | `offset` | 原生元素内的 {x_ratio,y_ratio}，各为 0–1；默认可见区域中心 |
 | `settle_ms` | 派发前等待：0–1000 整数或有序 [min,max] 区间，默认 0 |
+| `detailed` | 默认 false；true 在成功时附完整 hit_target、page_state 和点击参数，失败始终保留诊断 |
 
 原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 分开返回 requested_target（请求目标）和 blocked_by（遮挡物），保留 hit_target 表示实际命中，并附命中点及受阻 frame，前序输入可能已经送达。
 
 布局可能变化时优先传 selector 或 ref：每次操作重新计算点击位置，无须缓存 getBoundingClientRect 坐标。无 AX role 的 div 也可用唯一 CSS/XPath 定位；复杂查询可通过 evaluate 的 result_type=element 返回 ref，再调用 click，继续使用相同的命中和事件路径核验。纯坐标调用无法推断此前截图中期望的元素。
 
-hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
+detailed=true 的成功结果或失败诊断中的 hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
 
-DOM 模式调用一次 HTMLElement.click()，返回 method=dom、events_trusted=false。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
+成功点击默认仅返回落点、frame 和核验证据，省略命中元素详情与实时标签元数据。DOM 模式调用一次 HTMLElement.click()，返回 invoked=true、method=dom、delivery_verified=null、events_trusted=false，只确认调用返回，不证明页面处理；需要结果条件时使用 wait_for。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
 
 ### browser_hover / browser_drag
 
@@ -560,7 +569,9 @@ browser_navigate 的 url 与 direction=back/forward 二选一，目的地必须�
 
 ### 对话框
 
-输入、evaluate、navigate、wait 和 batch 可带 dialog_policy=ask/accept/dismiss，默认 ask。显式 accept/dismiss 自动处理操作期间的 JS 对话框，返回 dialogs 的消息、类型和处理结果；自动接受 prompt 使用原默认文本。每个操作/步骤最多自动处理 10 个。
+输入、evaluate、navigate 和 batch 可带 dialog_policy=ask/accept/dismiss，默认 ask。显式 accept/dismiss 自动处理操作期间的 JS 对话框，返回 dialogs 的消息、类型和处理结果；自动接受 prompt 使用原默认文本。每个操作/步骤最多自动处理 10 个。
+
+browser_wait 及 batch 的 wait 步骤仅允许 dialog_policy=ask，不自动处理对话框；若 batch 默认 accept/dismiss，wait 步骤须显式覆盖为 ask。
 
 未处理的对话框由 snapshot 返回 dialog，普通页面动作被拒绝；仍可释放标签、读取日志或调用 browser_handle_dialog。后者传 accept，prompt_text 仅用于 prompt，返回原始 type/message/default_prompt 及 accepted；default_button=null，无法读取默认按钮焦点。
 
@@ -598,6 +609,8 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 
 ## JavaScript 求值
 
+已完成的 JSON 回执返回 execution_completed=true 和 source_current。执行期间来源文档/frame 或同文档路由变化时，仍可返回有界历史结果，source_current=false、source_changed 说明失效原因；不创建续读 cursor，尚未返回的结果标记 continuation_unavailable（单项放不下时为 budget_too_small）。这不证明当前页面状态或业务成功。控制权丢失仍丢弃迟到结果；element 结果在来源变化后仍拒绝创建 ref。若执行上下文销毁或超时而没有完成回执，仍返回未知结果错误，不重放表达式。
+
 expression 在页面世界执行一次，默认主 frame，可用 frame/frame_id 指定子 frame。返回函数时调用一次并等待 Promise；多条语句用 IIFE。脚本可访问页面状态和产生写操作，但不提供用户激活或调用 MCP 原生输入的能力。
 
 ```json
@@ -612,6 +625,8 @@ expression 在页面世界执行一次，默认主 frame，可用 frame/frame_id
 | 捕获预算 | 1000000 个 JSON 字符 / 50000 节点 / 8 层；损失由 capture_truncated 和 $type=truncated 标记 |
 
 默认 result_type=json。数组按完整项、对象按键值对、字符串按片段分页，返回 result_kind、has_more、next_cursor。单项放不下时返回 budget_too_small、required_chars 和 cursor，提高预算续读；分页不拆分嵌套值，单个嵌套值超过 100000 字符时应在表达式中提取更小字段。
+
+大集合优先直接返回 `rows.map(({id,title})=>({id,title}))`，避免返回 `{rows:整份巨大数组}` 使数组成为不可拆分的单项。required_chars 在允许范围内时提高 max_chars 并传 cursor，不重发 expression；capture_truncated 是捕获损失，分页不能恢复。30 秒执行上限不变；长工作流应在明确、可观察的检查点分段，不把超时当作取消成功。
 
 第一页已能返回部分字段、但下一完整项超出当前 max_chars 时，同时返回 `next_item:{key或index,required_chars,exceeds_max_chars}`。直接用该 required_chars 和 next_cursor 续读即可；exceeds_max_chars=true 表示超出允许的最大页预算，需重新设计表达式提取更小结果。重新求值会再次执行脚本，不能自动重放含写入的表达式。
 
@@ -628,6 +643,16 @@ expression 在页面世界执行一次，默认主 frame，可用 frame/frame_id
 只接受所选 frame 中单个、仍连接的 DOM Element，返回 ref/frame_id/AX role/name，失效规则同快照。每份当前观察最多追加 500 个 refs；element 结果无 JSON cursor。异步流程可用 `(async()=>{...})()`，长工作流按可观察检查点拆分。
 
 ## 诊断日志
+
+查找页面实际使用的数据接口时，先读取请求摘要，避免根据路径猜接口：
+
+```json
+{"tab_handle":"...","kind":"network","view":"requests","resource_types":["XHR","Fetch"],"url_origin":"https://jobs.example.com"}
+```
+
+network 的 view 默认 events；requests 按 session_id/request_id/hop 从同一份有界事件缓冲汇总，返回 method/url/status、已保留事件种类、last_event、正文可用性和序列，不回传正文或 headers。历史可能不完整；后续事件会使同一请求作为更新再次出现。用摘要中的 request_id、session_id（null 为主 session）和 hop，切回 view=events、after_seq=0 读取细节。摘要分页按最新事件 seq 排序，next_seq 仍来自同一事件序列。
+
+额外筛选支持 url_origin（精确 HTTP(S) origin）、resource_types（精确 CDP 类型）、method（忽略大小写）、status（精确状态码）、event（仅 events 视图）和请求身份。筛选只影响读取，不能保护事件免于淘汰；更换 view 或筛选条件从 after_seq=0 开始。data_loss 的恢复提示不允许通过重放提交恢复证据；正文捕获仍需提前显式开启。
 
 ```json
 {"tab_handle":"...","kind":"console","level":"error","after_seq":0,"limit":100,"max_chars":24000}

@@ -45,6 +45,10 @@ If a claimed tab navigates to `about:blank` while its handle remains valid, use 
 
 **Virtual scrolling:** review the tool's reported progress, stop reason and any pending scroll. A boundary or exhausted budget does not establish that all data loaded or that the item does not exist. Observe the current container before planning further search.
 
+A post-action `wait_result` is separate from input delivery. If it does not pass, repeat only `browser_wait` if useful; never replay the action to retry its wait. A historical evaluate JSON reply (`source_current=false`) is completed execution evidence with no continuation, not current page state; control loss still discards late replies.
+
+For network API discovery, use `logs(kind="network", view="requests", resource_types=["XHR","Fetch"])`, optionally with an exact `url_origin`. Inspect an observed request identity with `view="events"`; enable bounded body capture before the next task-intended request when needed. Read filters cannot recover evicted events or protect them from eviction.
+
 ## Continue large reads
 
 Use each result's continuation mechanism rather than repeating the initial operation:
@@ -57,4 +61,4 @@ Use each result's continuation mechanism rather than repeating the initial opera
 | Text | Use `next_offset`; this rereads live text, which may change. |
 | Logs | Use `next_seq` as `after_seq` for the same claim and kind; restart at 0 when changing filters. |
 
-For an evaluate item that exceeds the page budget, use `required_chars` or `next_item.required_chars` if within the tool limit. If it exceeds the maximum, extract a smaller result only after considering whether re-execution can have effects. `capture_truncated` marks source loss that pagination cannot recover. Host artifact truncation is separate from BrowserAttach pagination.
+For an evaluate item that exceeds the page budget, use `required_chars` or `next_item.required_chars` if within the tool limit. Prefer top-level arrays of small records over an object wrapping a large nested array. If it exceeds the maximum, extract a smaller result only after considering whether re-execution can have effects. `capture_truncated` marks source loss that pagination cannot recover. Host artifact truncation is separate from BrowserAttach pagination.

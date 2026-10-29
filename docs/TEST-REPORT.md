@@ -1,8 +1,10 @@
 # 验证报告
 
-当前版本 **0.32.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.32.1**（2026-10-30）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
 ## 0.32（当前）
+
+- **0.32.1**：按本次指定版本交付。evaluate 区分来源失效与控制权清理，已完成 JSON 可返回无 cursor 的有界历史回执，ref/控制权仍严格；输入及新 evaluate 的 wait_for.checks 复用只读检查器、共享总预算并独立返回 wait_result，跨导航重解析且不重放动作，batch 非 pass 保留该动作回执后停止。网络新增 origin/type/method/status/event/identity 筛选和从同一缓冲派生的 requests 摘要；成功点击默认精简、detailed=true 提供完整详情，DOM invoked 与可信送达分开；针对性恢复及顶层小记录数组/缓存续读提示已同步。全套单测 413 项通过（并发 4 复跑与串行一致）；早前一次并发运行曾出现 1 项既有 120 ms wait 用例的时序性 unavailable，未因此放宽生产语义。Chrome/Edge 临时 Profile 的 evidence 组均通过（历史 JSON、一次点击后的 SPA/完整导航等待、正文脱敏、焦点保持）；包外安装、71 文件及 24 工具检查通过。Hub 与两浏览器扩展均为 0.32.1/ready，46 个普通扩展资源逐文件哈希一致；真实配对链路以后台本地 fixture 核验历史 JSON、一次 DOM 动作+等待及网络摘要/正文捕获，原活动标签保持，测试页关闭。记录：unit-0321-serial.tap、unit-0321-rerun.log、evaluate-0321-final.tap、evidence-0321-{chrome,edge}-final.log、package-0321.log、runtime-0321-final.log、deployment-0.32.1.json。既有 MCP 客户端需要重连以加载新 schema/instructions；本次含返回结构变化，不保留旧字段兼容层。
 
 - 能力：browser_wait 顶层单条件归一化为单项 checks，只剩一套条件检查器、轮询与结果封装；两种输入均返回 status/results/timed_out/retry_safe，不再返回旧 satisfied/current，条件不符或不可读不设置 isError（参数、定位歧义、权限及控制权错误仍走工具错误）。单项同样支持 count/value_present/not；wait 只接受 dialog_policy=ask，batch 对两种写法的非 pass 均停止。返回契约变更，调用方需改读 status 与 results[i].actual。
 - 精简：公共定位、动作观察预算和对话框策略集中到初始化 instructions，参数及 batch steps 保留短提示与特有约束。tools/list 从 91,189 降至 77,943 字符，含 instructions 的合计从 93,607 降至 81,375（−13.1%）；移除 description 后 24 个工具定义逐项一致，排除说明与注释后 MCP 执行代码一致。

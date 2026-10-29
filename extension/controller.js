@@ -16,7 +16,7 @@ import { NAVIGATION_OBSERVATION_TIMEOUT_MS } from './limits.js';
 import { deadline } from './actionability.js';
 import { scrollOptions, createScrolling } from './scroll.js';
 import { validateSteps } from './batch.js';
-import { waitFor, waitOptions } from './wait.js';
+import { waitFor, waitOptions, actionWaitOptions } from './wait.js';
 import { boundedRead, createOutcomes } from './outcomes.js';
 import { createDialogs } from './dialogs.js';
 import { createDrag, dragOptions } from './drag.js';
@@ -50,11 +50,11 @@ export function createController(api, notify = () => {}) {
   const input = createInput(cdp, value, sessions);
   const evaluations = createEvaluations(cdp);
   const uploads = createUploads(cdp, value);
-  const observations = createObservations(cdp, value, sessions, viewport, tabId => claims.get(tabId), (tabId, affected) => {
+  const observations = createObservations(cdp, value, sessions, viewport, tabId => claims.get(tabId), (tabId, affected, cause) => {
     if (affected) {
-      for (const frameId of affected) evaluations.forgetFrame(tabId, frameId);
+      for (const frameId of affected) evaluations.invalidate(tabId, 'frame_changed', frameId);
       uploads.forgetFrames(tabId, affected);
-    } else { evaluations.forget(tabId); uploads.forget(tabId); }
+    } else { evaluations.invalidate(tabId, cause); uploads.forget(tabId); }
   });
   const outcomes = createOutcomes(cdp, value, sessions, observations, tabId => api.tabs.get(tabId), tabId => dialogs.get(tabId));
   const readControl = createControlReader(cdp, value, sessions, observations, resolveNode, tabId => claims.get(tabId));
@@ -62,6 +62,13 @@ export function createController(api, notify = () => {}) {
   const fetches = createFetches(fetchPages.read);
   const scrolling = createScrolling(cdp, value, sessions, pointer, viewport, position, observations, tabId => claims.get(tabId));
   const screenshots = createScreenshots(cdp, value, viewport, sessions, clickVisuals, resolveNode);
+
+  function historicalEvaluation(tabId, result, cause) {
+    evaluations.invalidate(tabId, cause);
+    return { ...result, source_current: false, source_changed: cause, next_cursor: null,
+      ...(result.has_more || result.budget_too_small ? { continuation_unavailable: true,
+        note: 'Source changed; no continuation remains. Observe current state before considering any new expression; never replay a write to recover its result.' } : {}) };
+  }
 
   function resolveNode(tabId, args, budget) {
     return args.selector ? resolveSelector(cdp, value, sessions, tabId, args, budget) : observations.resolve(tabId, args.ref, budget);
@@ -211,6 +218,12 @@ export function createController(api, notify = () => {}) {
               application_result: 'not_checked', observe_again: true };
           }
           results.push(result);
+          if (result.wait_result && result.wait_result.status !== 'pass') return {
+            completed: false, results, started_at: args.start_at ?? 0, failed_step: index,
+            next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null,
+            retry_failed_step_safe: false, error: 'Action returned, but its post-action condition did not pass. Repeat browser_wait only; inspect the action result before any further input.',
+            application_result: 'not_checked', observe_again: true,
+          };
         } catch (error) {
           const { observation, ...failure } = errorData(error);
           return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index, next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: error.input_dispatched === false, ...failure,
@@ -229,10 +242,23 @@ export function createController(api, notify = () => {}) {
       const frameId = await resolveFrame(cdp, value, sessions, tabId, args, budget), target = sessions.target(tabId, frameId);
       const contextId = args.frame || args.frame_id ? observations.context(tabId, target.sessionId, frameId) : undefined;
       if ((args.frame || args.frame_id) && contextId == null) throw new Error('Page frame context is unavailable; observe again');
+      const frameVersion = observations.frameVersion(tabId, frameId);
       let result;
-      try { result = await budget.run(() => { budget.dispatch(); return evaluations.read(tabId, { ...args, evaluation_frame: frameId, target, context_id: contextId, timeout_ms: Math.max(100, Math.min(args.timeout_ms ?? 10000, budget.remaining())) }); }); }
+      try { result = await budget.run(() => {
+        if (claims.get(tabId) !== claim || observations.version(tabId) !== version || observations.frameVersion(tabId, frameId) !== frameVersion || sessions.target(tabId, frameId).sessionId !== target.sessionId) throw Object.assign(new Error('Evaluation source/control changed during preparation; no expression was executed. Observe the current page before continuing.'), { input_dispatched: false });
+        budget.dispatch(); return evaluations.read(tabId, { ...args, evaluation_frame: frameId, target, context_id: contextId, timeout_ms: Math.max(100, Math.min(args.timeout_ms ?? 10000, budget.remaining())) });
+      }); }
       catch (error) { evaluations.forget(tabId); if (args.result_type === 'element') await boundedRead(() => cdp(target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach-evaluation' }), 100).catch(() => {}); throw error; }
-      if (!result.element) return { ...result, frame_id: frameId, scope: args.frame || args.frame_id ? 'frame' : 'main_frame' };
+      if (!result.element) {
+        if (claims.get(tabId) !== claim) {
+          evaluations.forget(tabId);
+          throw Object.assign(new Error('Tab control ended before the evaluation reply; do not replay automatically.'), { outcome_unknown: true, diagnostics: { reason: 'evaluation_control_changed' } });
+        }
+        if (result.source_current && (observations.version(tabId) !== version || observations.frameVersion(tabId, frameId) !== frameVersion || sessions.target(tabId, frameId).sessionId !== target.sessionId)) {
+          result = historicalEvaluation(tabId, result, 'source_changed_before_reply');
+        }
+        return { ...result, frame_id: frameId, scope: args.frame || args.frame_id ? 'frame' : 'main_frame' };
+      }
       try {
       if (observations.version(tabId) !== version || claims.get(tabId) !== claim) throw new Error('Document or claim changed during evaluation; no element ref was created');
       const owner = value(await budget.run(() => cdp(target, 'Runtime.callFunctionOn', { objectId: result.element.objectId,
@@ -342,6 +368,10 @@ export function createController(api, notify = () => {}) {
     let observationKind, snapshotPlan;
     try {
       if (command === 'wait') waitOptions(args);
+      if (args.wait_for != null) {
+        if (!['click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'upload_file', 'drag', 'evaluate'].includes(command) || command === 'evaluate' && args.cursor != null) throw new Error('wait_for requires a new action, not a read or batch-level operation');
+        actionWaitOptions(args.wait_for);
+      }
       if (args.observe != null) observationKind = actionObservationOptions(args.observe);
       if (observationKind === 'snapshot') snapshotPlan = observations.prepareSnapshot(tabId, args.observe);
     } catch (error) { error.input_dispatched = false; throw error; }
@@ -349,6 +379,19 @@ export function createController(api, notify = () => {}) {
       args = { ...args, budget: deadline(args.timeout_ms ?? (command === 'batch' ? 15000 : command === 'evaluate' ? 10000 : 5000), command === 'evaluate' ? 'evaluation' : 'input') };
     }
     const claim = claims.get(tabId);
+    async function waitAfterAction() {
+      // Waiting always has ask policy, even inside a batch that auto-handles
+      // dialogs during input. It can observe a new document but never resend input.
+      const waiting = dialogs.enter(tabId, 'ask');
+      try {
+        if (!claim || claims.get(tabId) !== claim) throw new Error('Tab control ended before post-action verification');
+        const result = await action(tabId, 'wait', { ...args.wait_for, budget: args.budget.child(args.wait_for.timeout_ms ?? 5000, 'wait') });
+        return result.status === 'pass' ? result : { ...result, recovery: 'Repeat browser_wait with these checks if still useful; do not repeat the preceding action to retry its wait.' };
+      } catch (error) {
+        return { status: 'unavailable', ...errorData(error), retry_safe: true,
+          recovery: 'Repeat browser_wait with the same conditions if still useful; do not repeat the preceding action.' };
+      } finally { dialogs.exit(tabId, waiting); }
+    }
     async function observe() {
       try {
         if (claims.get(tabId) !== claim || !claim) throw new Error('Tab control ended before action observation');
@@ -365,15 +408,21 @@ export function createController(api, notify = () => {}) {
     let outcome;
     try {
       outcome = await outcomes.begin(tabId, command, args);
-      const result = await action(tabId, command, { ...args, observe_start: outcome.start });
+      let result = await action(tabId, command, { ...args, observe_start: outcome.start });
+      const evaluationSource = command === 'evaluate' && result.execution_completed && result.source_current
+        ? { document: observations.version(tabId), frame: observations.frameVersion(tabId, result.frame_id) } : null;
       await dialogs.settle(state);
-      return { ...result, ...(args.observe ? { observation: await observe() } : {}), ...(state.messages.length ? { dialogs: state.messages } : {}) };
+      const waitResult = args.wait_for ? await waitAfterAction() : undefined;
+      const observation = args.observe ? await observe() : undefined;
+      if (evaluationSource && (claims.get(tabId) !== claim || observations.version(tabId) !== evaluationSource.document || observations.frameVersion(tabId, result.frame_id) !== evaluationSource.frame)) result = historicalEvaluation(tabId, result, 'source_changed_after_execution');
+      return { ...result, ...(waitResult ? { wait_result: waitResult } : {}), ...(observation ? { observation } : {}), ...(state.messages.length ? { dialogs: state.messages } : {}) };
     } catch (error) {
       if (command === 'read_control') error.input_dispatched = false;
       if (error.input_dispatched == null && args.budget?.has_dispatched) error.input_dispatched = args.budget.has_dispatched();
       await dialogs.settle(state).catch(() => {});
       if (state.messages.some(d => d.type === 'beforeunload' && d.accepted === false && d.handled) && /ERR_ABORTED|cancel/i.test(error.message)) return { navigated: false, cancelled_by_dialog: true, dialogs: state.messages, observe_again: true };
       if (!await outcome?.enrich(error, state.messages) && state.messages.length) error.message += ` Dialogs: ${JSON.stringify(state.messages)}`;
+      if (args.wait_for && error.input_dispatched !== false) error.wait_result = await waitAfterAction();
       if (args.observe && error.input_dispatched !== false) error.observation = await observe();
       throw error;
     } finally {
@@ -496,11 +545,16 @@ export function createController(api, notify = () => {}) {
       // A batch can stop because its tab closed. Preserve the partial results
       // instead of losing them to a metadata lookup on the vanished tab.
       if (command === 'batch') return { ...result, tab_id: tabId };
-      const tab = await api.tabs.get(tabId);
       const chooser = uploads.pending(tabId);
-      return { ...result, ...(chooser ? { file_chooser: { pending: true, mode: chooser.mode, frame_id: chooser.frame_id,
+      const receipt = { ...result, ...(chooser ? { file_chooser: { pending: true, mode: chooser.mode, frame_id: chooser.frame_id,
         note: 'Use browser_upload_file without ref; files: [] cancels the selection.' } } : {}),
-        tab_id: tabId, title: result.title ?? tab.title, url: result.url ?? tab.url, active: tab.active };
+        tab_id: tabId };
+      if (command === 'click' && !args.detailed) return receipt;
+      try {
+        const tab = await api.tabs.get(tabId);
+        if (!tab) throw new Error('Tab is unavailable');
+        return { ...receipt, title: result.title ?? tab.title, url: result.url ?? tab.url, active: tab.active };
+      } catch (error) { return { ...receipt, metadata_error: error.message }; }
     });
   }
 

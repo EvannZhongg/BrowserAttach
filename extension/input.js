@@ -197,7 +197,7 @@ export function createInput(cdp, value, sessions) {
     budget.dispatch();
     const result = value(await send('Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
       functionDeclaration: clickElement.toString() }));
-    return { ...result, method: 'dom', events_trusted: false, application_result: 'not_checked', observe_again: true };
+    return { ...result, method: 'dom', delivery_verified: null, events_trusted: false, application_result: 'not_checked', observe_again: true };
   }
   async function selectOption(tabId, node, args) {
     selectOptions(args);
@@ -409,7 +409,7 @@ function clickElement() {
   if (style.visibility !== 'visible' || !rect.width || !rect.height) throw new Error('Element is not visible');
   if (!(element instanceof win.HTMLElement)) throw new Error('DOM click supports HTML elements only; use native input for this ref.');
   win.HTMLElement.prototype.click.call(element);
-  return { clicked: true };
+  return { invoked: true };
 }
 
 function activeElement() {

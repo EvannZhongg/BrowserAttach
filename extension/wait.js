@@ -8,6 +8,12 @@ export const MAX_WAIT_CHECKS = 30;
 const locatorFields = ['selector', 'selector_type', 'name', 'frame_id', 'frame', 'nth'];
 const checkFields = [...locatorFields, 'condition', 'expected', 'previous', 'idle_ms', 'not'];
 
+export function actionWaitOptions(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => !['checks', 'timeout_ms'].includes(key))) throw new Error('wait_for accepts checks and timeout_ms only');
+  if (!Number.isInteger(args.timeout_ms ?? 5000) || (args.timeout_ms ?? 5000) < 100 || (args.timeout_ms ?? 5000) > 30000) throw new Error('wait_for timeout_ms must be 100..30000');
+  return waitOptions(args);
+}
+
 export function waitOptions(args) {
   const supplied = args.checks !== undefined;
   if (supplied && checkFields.some(key => args[key] !== undefined)) throw new Error('Provide checks or one top-level check, never both');

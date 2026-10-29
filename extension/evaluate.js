@@ -81,9 +81,16 @@ export function serializeEvaluation(value, maxChars, maxNodes = 1000) {
   return { value: result, truncated };
 }
 
-// One bounded immutable result per claimed tab. Continuations never execute JS.
+// A document change expires continuations, but a completed JSON reply remains
+// useful historical evidence. Control loss must discard even that late reply.
 export function createEvaluations(cdp) {
   const results = new Map();
+  function invalidate(tabId, reason = 'document_changed', frameId) {
+    const state = results.get(tabId);
+    if (!state || frameId != null && state.frameId !== frameId) return;
+    if (state.pending) state.invalidated ??= reason;
+    else results.delete(tabId);
+  }
   async function read(tabId, args) {
     const max = args.max_chars ?? 20000;
     if (!Number.isInteger(max) || max < 1 || max > 100000) throw new Error('max_chars must be 1..100000');
@@ -93,19 +100,24 @@ export function createEvaluations(cdp) {
       if (!state || state.cursor !== args.cursor) throw new Error('Evaluation cursor is stale or unknown; results expire on navigation, release or a new evaluation.');
       if (args.expression != null) throw new Error('Provide cursor or expression, never both');
     } else {
-      // Navigation/detach may arrive while the CDP promise is pending. A late
-      // reply must not resurrect cached page data after cleanup.
-      const pending = { frameId: args.evaluation_frame };
+      const pending = { frameId: args.evaluation_frame, pending: true };
       results.set(tabId, pending);
       let result;
       try { result = await evaluatePage(cdp, args.target || tabId, args); }
       catch (error) { if (results.get(tabId) === pending) results.delete(tabId); throw error; }
-      if (results.get(tabId) !== pending) throw Object.assign(new Error('Document or claim changed during evaluation; effects may already have occurred. Result was discarded. Observe before continuing; do not replay automatically.'), { outcome_unknown: true });
-      if (result.element) { results.delete(tabId); return result; }
+      if (results.get(tabId) !== pending) throw Object.assign(new Error('Tab control ended during evaluation; the late result was discarded. Observe with a valid claim; do not replay automatically.'), { outcome_unknown: true, diagnostics: { reason: 'evaluation_control_changed' } });
+      if (result.element) {
+        results.delete(tabId);
+        if (pending.invalidated) throw Object.assign(new Error('Evaluation completed but its source changed; no element ref was created. Observe the current page; do not replay automatically.'), { outcome_unknown: true, diagnostics: { reason: 'evaluation_source_changed', cause: pending.invalidated } });
+        return result;
+      }
+      result = { ...result, execution_completed: true, source_current: !pending.invalidated,
+        ...(pending.invalidated ? { source_changed: pending.invalidated } : {}) };
       const kind = Array.isArray(result.value) ? 'array' : typeof result.value === 'string' ? 'string' :
         result.value && typeof result.value === 'object' ? 'object' : 'scalar';
-      state = Object.assign(pending, { result, kind, offset: 0, token: crypto.randomUUID(), cursor: null,
+      state = Object.assign(pending, { pending: false, result, kind, offset: 0, token: crypto.randomUUID(), cursor: null,
         items: kind === 'object' ? Object.entries(result.value) : result.value });
+      if (pending.invalidated) results.delete(tabId);
     }
     const { kind, items, offset, result } = state;
     const length = kind === 'scalar' ? 1 : items.length;
@@ -117,17 +129,19 @@ export function createEvaluations(cdp) {
       if (JSON.stringify(make(mid)).length <= max) low = mid; else high = mid - 1;
     }
     if ((length > offset && low === offset) || JSON.stringify(make(low)).length > max) {
-      state.cursor ??= `${state.token}@${offset}`;
-      return { scope: result.scope, ...(result.frame_id ? { frame_id: result.frame_id } : {}), result_kind: kind, budget_too_small: true, next_cursor: state.cursor,
+      if (!state.invalidated) state.cursor ??= `${state.token}@${offset}`;
+      return { execution_completed: true, source_current: result.source_current, ...(result.source_changed ? { source_changed: result.source_changed } : {}), scope: result.scope, ...(result.frame_id ? { frame_id: result.frame_id } : {}), result_kind: kind, capture_truncated: result.truncated, budget_too_small: true, next_cursor: state.cursor,
         required_chars: JSON.stringify(make(Math.min(length, offset + 1))).length,
-        note: 'Increase max_chars (allowed 1..100000) and continue with this cursor. Select smaller fields if an individual item exceeds 100000 characters.' };
+        note: state.invalidated ? 'Source changed; no continuation was retained. Do not repeat a writing expression to retrieve its result. Observe current state first.' : 'Continue with this cursor and max_chars >= required_chars (maximum 100000); do not resend expression. For large collections return a top-level array of small records, not an object wrapping one large nested array.' };
     }
     state.offset = low;
-    state.cursor = low < length ? `${state.token}@${low}` : null;
+    state.cursor = !state.invalidated && low < length ? `${state.token}@${low}` : null;
     const nextRequired = low < length ? JSON.stringify(make(low + 1, low)).length : null;
     return { ...result, value: make(low), result_kind: kind, has_more: low < length,
+      ...(state.invalidated && low < length ? { continuation_unavailable: true, note: 'Source changed; only this bounded historical page is available, with no cursor. Observe current state before considering any new expression.' } : {}),
+      ...(result.truncated ? { capture_hint: 'Capture loss cannot be recovered by pagination. For future reads return a top-level array of small plain records (e.g. rows.map(({id,title})=>({id,title}))); avoid deep or large nested values. Do not automatically rerun an expression with effects.' } : {}),
       ...(nextRequired > max ? { next_item: { ...(kind === 'object' ? { key: items[low][0] } : { index: low }), required_chars: nextRequired, exceeds_max_chars: nextRequired > 100000 } } : {}),
       next_cursor: state.cursor, capture_truncated: result.truncated, truncated: result.truncated || low < length };
   }
-  return { read, forgetFrame(tabId, frameId) { if (results.get(tabId)?.frameId === frameId) results.delete(tabId); }, forget: tabId => results.delete(tabId) };
+  return { read, invalidate, forget: tabId => results.delete(tabId) };
 }

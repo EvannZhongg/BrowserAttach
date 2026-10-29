@@ -66,7 +66,8 @@ export function createClick(cdp, value, { prepare, assertReady }) {
       const verification = { target_verified: node ? true : null, delivery_verified: true, events_trusted: true,
         target_verification: { basis: node ? 'element' : 'coordinate_hit', hit_relation: relation } };
       if (options.hover) return { hovered: rootPoint, hit_target: hitTarget, page_state: pageState, ...verification, application_result: 'not_checked', observe_again: true };
-      return { clicked: rootPoint, hit_target: hitTarget, page_state: pageState, ...verification, application_result: 'not_checked', coordinate_space: 'viewport_css_pixels', frame_id: node?.frameId || frameId, button: options.button, click_count: options.click_count, observe_again: true };
+      return { clicked: rootPoint, ...verification, application_result: 'not_checked', frame_id: node?.frameId || frameId,
+        ...(args.detailed ? { hit_target: hitTarget, page_state: pageState, coordinate_space: 'viewport_css_pixels', button: options.button, click_count: options.click_count } : {}), observe_again: true };
     } finally {
       pending.delete(tabId);
       // A page handler may have opened a modal. Renderer cleanup can finish after
@@ -128,6 +129,7 @@ function installGuard(name, options, expiryMs, verifyDelivery) {
 }
 
 export function clickOptions(args) {
+  if (args.detailed != null && typeof args.detailed !== 'boolean') throw new Error('detailed must be boolean');
   offsetOption(args);
   if (args.settle_ms != null) {
     timingOption(args.settle_ms, 'settle_ms');

@@ -4,6 +4,51 @@ import { createDiagnostics } from '../extension/diagnostics.js';
 import { boundedBody } from '../extension/log-data.js';
 import { createNetworkTracker } from '../extension/network.js';
 
+test('API discovery filters exact origins/types/methods/status and correlates bounded request summaries', () => {
+  const f = fixture();
+  const request = (id, url, type = 'Fetch', source = { tabId: 9 }) => f.emit('Network.requestWillBeSent', { requestId: id, type, frameId: 'main', request: { url, method: 'POST' } }, source);
+  request('api', 'https://jobs.test/api/search');
+  f.emit('Network.responseReceived', { requestId: 'api', type: 'Fetch', response: { status: 200, url: 'https://jobs.test/api/search', mimeType: 'application/json' } });
+  f.emit('Network.loadingFinished', { requestId: 'api', encodedDataLength: 100 });
+  request('analytics', 'https://analytics.test/api');
+  request('image', 'https://jobs.test/api/image', 'Image');
+  request('api', 'https://jobs.test/api/remote', 'XHR', { tabId: 9, sessionId: 'remote' });
+  const query = { view: 'requests', resource_types: ['XHR', 'Fetch'], url_origin: 'https://jobs.test', method: 'post' };
+  const summary = f.read('network', { ...query, status: 200 });
+  assert.equal(summary.entries.length, 1);
+  const api = summary.entries[0];
+  assert.equal(api.request_id, 'api'); assert.equal(api.last_event, 'finished'); assert.equal(api.status, 200);
+  assert.deepEqual(api.events, ['request', 'response', 'finished']); assert.equal(api.first_seq, 1);
+  assert.equal(api.session_id, null); assert.equal(api.hop, 0); assert.equal(api.response_body, undefined);
+  const details = f.read('network', { view: 'events', request_id: api.request_id, session_id: api.session_id, hop: api.hop });
+  assert.deepEqual(details.entries.map(item => item.event), ['request', 'response', 'finished']);
+  assert.equal(f.read('network', { ...query, session_id: 'remote' }).entries.length, 1);
+  const all = f.read('network', query);
+  assert.equal(all.entries.length, 2);
+  const none = f.read('network', { ...query, after_seq: all.next_seq });
+  assert.equal(none.entries.length, 0);
+  f.emit('Network.responseReceived', { requestId: 'api', type: 'XHR', response: { status: 201, url: 'https://jobs.test/api/remote' } }, { tabId: 9, sessionId: 'remote' });
+  const update = f.read('network', { ...query, after_seq: none.next_seq });
+  assert.equal(update.entries.length, 1); assert.equal(update.entries[0].status, 201);
+  for (const args of [{ kind: 'console', view: 'requests' }, { kind: 'network', view: 'requests', event: 'body' },
+    { kind: 'network', url_origin: 'https://jobs.test/path' }, { kind: 'network', url_origin: 'https://user@jobs.test' },
+    { kind: 'network', resource_types: [] }, { kind: 'network', status: 999 }, { kind: 'network', method: 'POST\nGET' }]) assert.throws(() => f.logs.read(9, args));
+});
+
+test('summary pagination orders by last evidence, preserves redirect hops and reports eviction without another network state', () => {
+  const f = fixture();
+  const emit = (id, url) => f.emit('Network.requestWillBeSent', { requestId: id, type: 'Fetch', request: { url, method: 'GET' } });
+  emit('redirect', 'https://a.test/');
+  f.emit('Network.requestWillBeSent', { requestId: 'redirect', type: 'Fetch', request: { url: 'https://b.test/', method: 'GET' }, redirectResponse: { url: 'https://a.test/', status: 302 } });
+  let first = f.read('network', { view: 'requests', limit: 1 });
+  assert.equal(first.entries[0].hop, 0); assert.equal(first.entries[0].status, 302); assert.equal(first.has_more, true);
+  const second = f.read('network', { view: 'requests', limit: 1, after_seq: first.next_seq });
+  assert.equal(second.entries[0].hop, 1); assert.equal(second.has_more, false);
+  for (let i = 0; i < 510; i++) emit(String(i), 'https://noise.test/');
+  first = f.read('network', { view: 'requests', url_origin: 'https://a.test' });
+  assert.equal(first.entries.length, 0); assert.equal(first.data_loss, true); assert.ok(first.recovery.includes('cannot recover'));
+});
+
 function fixture() {
   const network = createNetworkTracker(); network.start(9);
   const logs = createDiagnostics(); logs.start(9);

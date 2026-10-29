@@ -197,7 +197,7 @@ test('hasFocus false alone does not reject an active visible page in a focused w
   const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
   f.api.debugger.sendCommand = async (target, method, args) => method === 'Runtime.evaluate' && args.expression.includes('visibility_state: document.visibilityState')
     ? { result: { value: { visibility_state: 'visible', has_focus: false } } } : send(target, method, args);
-  const result = await f.exec('click', { x: 10, y: 10 });
+  const result = await f.exec('click', { x: 10, y: 10, detailed: true });
   assert.equal(result.delivery_verified, true); assert.equal(result.page_state.has_focus, false); assert.equal(result.page_state.window_focused, true);
 });
 
@@ -216,7 +216,7 @@ test('coordinate pseudo-element hits normalize to their originating element for 
     }
     return send(target, method, args);
   };
-  const result = await f.exec('click', { x: 10, y: 10 });
+  const result = await f.exec('click', { x: 10, y: 10, detailed: true });
   assert.equal(result.delivery_verified, true); assert.equal(result.hit_target.pseudo_element, true);
   assert.ok(f.calls.some(call => call.method === 'DOM.resolveNode' && call.args.executionContextId === 42 && call.args.backendNodeId === 99));
 });

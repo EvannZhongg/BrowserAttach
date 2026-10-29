@@ -437,7 +437,7 @@ try {
     button.onclick=()=>window.extraClicks=(window.extraClicks||0)+1;document.body.append(button);
     const text=document.createElement('textarea');text.id='full-text';text.value='all\\nlines\\nhere';document.body.append(text);
   })()`);
-  const located = await call('click', { ...handle, selector: '#offscreen' });
+  const located = await call('click', { ...handle, selector: '#offscreen', detailed: true });
   assert.equal(located.hit_target.tag, 'span'); assert.equal(located.hit_target.text, 'Offscreen target');
   assert.equal(located.hit_target.clickable_hint, true);
   assert.equal(located.hit_target.clickable_target.tag, 'button');
@@ -449,7 +449,7 @@ try {
   const backgroundCover = await call('open_tab', { browser_id: browserId, url: `${url}?click-cover`, active: true });
   const backgroundPoint = (await evaluate('(()=>{const r=document.querySelector("#offscreen").getBoundingClientRect();return {x:r.x+r.width/2,y:r.y+r.height/2}})()')).value;
   for (const target of [{ selector: '#offscreen' }, { ref: readyRef }, backgroundPoint]) {
-    const clicked = await call('click', { ...handle, ...target });
+    const clicked = await call('click', { ...handle, ...target, detailed: true });
     assert.equal(clicked.delivery_verified, true);assert.equal(clicked.events_trusted, true);assert.equal(clicked.page_state.tab_active, false);
   }
   assert.equal((await evaluate('window.extraClicks')).value, 6);

@@ -319,7 +319,7 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
   function documentChanged(tabId, cause) {
     documents.set(tabId, (documents.get(tabId) || 0) + 1);
     invalidateSnapshot(tabId, cause);
-    changed(tabId);
+    changed(tabId, undefined, cause);
   }
   function contextEvent(source, method, params) {
     const contextKey = JSON.stringify([source.tabId, source.sessionId]);

@@ -304,6 +304,10 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.ok(tools.find(tool => tool.name === 'browser_press_key').inputSchema.properties.ref);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const logSchema = tools.find(tool => tool.name === 'browser_logs').inputSchema;
+  assert.deepEqual(logSchema.properties.view.enum, ['events', 'requests']);
+  assert.ok(logSchema.properties.resource_types && logSchema.properties.url_origin && logSchema.properties.request_id);
+  assert.ok(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.wait_for);
+  assert.equal(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.detailed.default, false);
   assert.deepEqual(logSchema.properties.kind.enum, ['console', 'network', 'navigation']);
   assert.ok(logSchema.required.includes('kind'));
   assert.equal(logSchema.properties.after_seq.default, 0);
@@ -360,6 +364,10 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.deepEqual(f.requests.find(item => item.command === 'list_tabs').arguments, {});
   const result = await call('claim_tab', { browser_id: browser.id, tab_id: 9, expected_title: 'Demo', expected_url: f.tabs[0].url });
   const handle = JSON.parse(result.content[0].text).tab_handle;
+  await call('click', { tab_handle: handle, selector: '#submit', wait_for: { checks: [{ condition: 'url', expected: '/result' }] }, detailed: true });
+  assert.equal(f.requests.at(-1).arguments.wait_for.checks[0].expected, '/result');
+  await call('logs', { tab_handle: handle, kind: 'network', view: 'requests', resource_types: ['XHR', 'Fetch'], url_origin: 'https://jobs.test', method: 'POST', status: 200 });
+  assert.equal(f.requests.at(-1).arguments.view, 'requests');
   const checks = [{ selector: '.row', condition: 'count', expected: 1 }];
   const beforeWait = f.requests.length;
   for (const args of [{}, { checks: [] }, { checks, selector: '.row' }, { checks, condition: 'attached' },
@@ -474,7 +482,7 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   }
   assert.equal(f.requests.filter(item => item.command === 'evaluate').length, evaluationCount);
   assert.ok(!(await call('click', { tab_handle: handle, ref: 'current-ref', mode: 'dom' })).isError);
-  assert.equal(f.requests.find(item => item.command === 'click').arguments.mode, 'dom');
+  assert.equal(f.requests.findLast(item => item.command === 'click').arguments.mode, 'dom');
   for (const [name, input] of [['hover', {selector:'#menu'}], ['drag', {source:{selector:'#source'},destination:{x:10,y:10}}], ['wait', {checks:[{condition:'visible',selector:'#late'}]}], ['select_option', {selector:'select',label:'Beta'}]]) {
     assert.ok(!(await call(name, {tab_handle:handle,...input})).isError);
     assert.ok(f.requests.some(item => item.command === name));
@@ -574,7 +582,9 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   failCommands.add('click');
   const uncertain = await call('click', { tab_handle: handle, selector: '#submit' });
   assert.equal(uncertain.isError, true);
-  assert.deepEqual(JSON.parse(uncertain.content[0].text), { error: 'click failed', ...failure });
+  const { recovery, ...evidence } = JSON.parse(uncertain.content[0].text);
+  assert.ok(recovery.includes('blocked_by'));
+  assert.deepEqual(evidence, { error: 'click failed', ...failure });
   failCommands.delete('click');
   assert.ok(!(await call('open_tab', { browser_id: browser.id, url: 'https://example.com/' })).isError);
   assert.equal(f.requests.find(item => item.command === 'open_tab').arguments.active, false);
