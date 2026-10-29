@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.29.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.30.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -33,7 +33,7 @@ MCP 客户端
 | `extension/dialogs.js` | 当前对话框、嵌套操作策略、自动处理及被模态阻塞的 CDP 请求 |
 | `extension/outcomes.js` | 动作前临时 DOM 观察器、未知结果后的有界只读探测与证据封装，不推断业务成功 |
 | `extension/fetch.js`、`fetch-page.js` | 单页读取参数与缓存分页、临时页创建/导航/采集/关闭；复用 controller 的 attach 和标签队列 |
-| `extension/observation.js`、`snapshot.js`、`snapshot-diff.js` | 文档/frame 观察版本、AX 采集、ref 身份与失效历史；语义渲染、差分和快照分页 |
+| `extension/observation.js`、`snapshot.js`、`snapshot-diff.js`、`observation-options.js` | 文档/frame 观察版本、AX 采集、ref 身份与失效历史；语义渲染、差分、分页和动作观察参数校验 |
 | `extension/fields.js` | 每次观察按 debugger session 采集 DOMSnapshot，按 frame/backend 节点身份关联 AX，提取结构化字段事实和原生文件选择状态 |
 | `extension/control.js`、`target-description.js` | 无持久缓存的定向控件/弹层读取，复用 ref 注册；共享不含输入值的目标描述 |
 | `extension/network.js` | 一份被动请求与文档响应状态，供 fetch、网络空闲等待及诊断日志使用 |
@@ -90,7 +90,8 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **交互视图**：可选 `profile=interactive` 在同一渲染器中仅保留 AX 控件角色、可聚焦/可编辑节点及其祖先链和控件内文本，不以 backendNodeId/ref 是否存在判断交互性。独立文本和合并正文可隐藏或截取预览，控件名称、值和 ref 的原始 AX 身份保留；默认 `full` 行为不变。筛选仍读取完整 AX 树，只降低输出与分页成本；视图参数绑定分页观察。
 - **文本查询与精简输出**：`snapshot(query=...)` 复用同一次 AX 渲染，按当前视图中节点的完整名称（含合并正文）、value 或字段 context 做不区分大小写的字面子串筛选，只输出匹配行和对应 frame 标题；不搜索 role/ref 或任意 DOM 属性，不新增索引缓存。新查询仍采集新观察并使旧 refs 失效，query 与分页绑定。始终返回 snapshot_id，默认省略 viewport 和重复规则说明，`verbose=true` 额外返回 viewport。
 - **语义差分**：full/interactive 的 diff_since 在全量采集后，按 frame/session/AX 节点身份及语义行对齐；最长递增子序列在 O(n log n) 内保留共同节点的顺序，以基线行范围表示新增、删除、移动和属性变化，避免后代变化扩大成整棵祖先树替换。不暴露另一套可操作 ID，不减少 getFullAXTree 成本。复用现有每标签观察，仅保存最新完整视图和当前差分页；旧视图不形成历史链。按 frame/session/backend/role/name/ignored 索引复用已核验身份的 refs，未进入当前查询结果的额外 refs 也需在本次 AX 中核验；普通新 snapshot 仍废弃旧 refs。
-- **差分基线与提交**：最新 snapshot_id 对应的视图必须读完全部分页且 frame 覆盖完整；视图参数绑定基线，fields 不支持增量。输入过早使分页失效不会把未读完的观察标为完成。文档/frame/session 失效、frame 读取失败均明确拒绝增量，不推断删除；只在输出首分页成功后发布新观察并退役消失/身份变化的 refs。采集或输出失败不推进仍有效的基线，迟到结果不能发布；主文档变化不得跨基线重试。变化项可跨页，以 line_offset/complete 拼接后按基线 start_line 倒序应用。
+- **差分基线与提交**：显式 snapshot_id 对应的视图必须读完全部分页且 frame 覆盖完整；视图参数绑定基线，fields 不支持增量。输入过早使分页失效不会把未读完的观察标为完成。文档/frame/session 失效、frame 读取失败均明确拒绝增量，不推断删除；只在输出首分页成功后发布新观察并退役消失/身份变化的 refs。采集或输出失败不推进仍有效的基线，迟到结果不能发布；主文档变化不得跨基线重试差分。变化项可跨页，以 line_offset/complete 拼接后按基线 start_line 倒序应用。
+- **latest 与重置**：latest 由扩展在既有标签队列内解析，不在 Hub 镜像基线 ID。可用完整基线仍走差分；无基线、fields 视图、视图变化或文档/frame/session 失效时返回 mode=full/reset_reason，成功发布时才替换当前观察并退役旧 refs。采集竞态可沿用一次只读重试转为全量，不跨文档比较；仍受原 deadline 和 claim 校验约束。未读分页始终拒绝，错误 diagnostics 给出 snapshot_id/next_cursor；不自动补读、不丢弃未读内容、不新增历史快照。
 - **字段上下文**：表单控件可附带 context 并参与 query，保留至多 160 字符的前一兄弟分支 AX 文本；只在四层以内 generic/none/group 祖先、单控件容器中查找，每次容器/文本遍历分别限制 64/32 节点。不将其伪装为 accessible name，不用于 label 定位或 ref 身份验证；interactive/text=false 也保留提示。
 - **结构化字段**：profile=fields 复用相同观察状态、ref 注册、上下文提取、双预算分页与失效模型，以 fields 数组输出 DOM 与 AX 事实。每个 debugger session 在本次观察内至多一次 DOMSnapshot.captureSnapshot；按文档 frameId 与 backendNodeId 关联，不用选择器或名称推断身份，不逐字段读取普通 DOM 属性。DOMSnapshot 同时保留闭合 Shadow DOM、原生实时值与选项状态；只对文件 input 在隔离世界读取 FileList 的数量/名称，并释放 object group。默认限于 AX 暴露的原生字段与 AX 字段角色；include_hidden 显式加入 AX 缺失的原生字段，其 ref 可空。密码值不进入字段结果及查询。名称来自 AX，labels 来自 HTML label 名称来源，context 保持提示语义；原生/AX 值不合并成业务提交值。会话内 DOM 捕获只存在于本次采集，续读使用既有 entries，不增加持久 DOM 缓存。AX/DOM/FileList 与跨 frame 读取不是原子事务。
 - **ref 解析**：ref 保存 `backendNodeId`、所属 frame/session 和观察时的 AX role/name；动作时重新 `DOM.resolveNode` 并用局部 AX 查询核对语义身份。输入与求值不清空 refs，只使快照分页失效；原节点仍连接时可复用，节点替换、role/name 改变、文档或 frame 变化时安全失败，不按 role/name 猜测替代节点。
@@ -133,7 +134,8 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **滚动查找诊断**：until 未命中或中断时保留 isError，以 scroll_search_stopped 和 stop_reason 区分预算、步数、文档/frame/控制权变化及其他异常；记录已确认的滚动次数、最后结果和是否有未确认调用。一次无位移只作为 boundary_observed 证据，继续只读等待列表增长，不声明数据到底。超时后不接续循环或重发滚动。
 - **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。元素命中关系比较先把双方 backend 节点显式解析到目标 frame 的同一隔离 world，避免先前定向读取留下的默认 wrapper 导致跨 world 对象比较失败。value_verified 表示字段保留文本与核验预期一致；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
-- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、明确的 controls/owns 弹层及 activedescendant。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。输入及 batch 的可选 observe 复用相同读取，受剩余预算约束；观察失败与输入结果分层，已派发失败可保留独立证据，不重放、不声称应用成功。
+- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、明确的 controls/owns 弹层及 activedescendant。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。定位器形式的 observe 复用相同读取。
+- **动作后快照观察**：单个动作或整批末尾的 observe 可用 diff_since，在 perform 入口验证并绑定动作前的基线/视图/claim；派发后复用 snapshot 采集与 latest 重置规则，不重新解析成动作后的另一份基线。参数或未读基线错误在输入前拒绝；派发后观察受剩余动作预算约束，以独立 observation 返回，失败不覆盖动作结果，已派发失败仍可保留证据，不重放或推断业务成功。默认观察上限为 5 秒，可显式调整但不能超过剩余总预算；步骤 observe 保持控件 selector 形式。
 - **键盘目标证据**：press_key 可带只检查、不聚焦的 ref/selector 守卫。准备期核对目标及 composed 后代焦点，可信回执再次核对实际事件路径并报告目标/frame；闭合 Shadow DOM 在相应 root 捕获路径。守卫不匹配时停止，派发后的不匹配尝试阻止事件继续传播但仍属未知结果；每次均排队 keyUp。无目标按键保持当前焦点语义。
 - **有限多步输入**：batch 在现有标签队列内执行 1–30 步 click/fill/type/press_key/hover/scroll/select_option/wait，共享至多 30 秒预算，每步可另设更短超时；不增加后台任务、循环或脚本引擎；元素目标使用每步重新解析的 selector，type 也接受 focused=true。所有参数先验证，selector 每步重解析，尚未出现的目标只在准备阶段等待；歧义立即报错。首个失败、主文档变化或接管结束后停止，返回此前结果与失败索引；不回滚、不重放、不自动激活或切换输入模式。start_at 显式跳过已完成前缀，返回 failed_step、next_unattempted_step、retry_failed_step_safe；没有后台作业或自动选择续跑点。
 - **OOPIF 坐标**：点击从顶层派发。逐层用 `DOM.getBoxModel` 把坐标换算到祖先文档，并用 `DOM.getNodeForLocation` 确认该位置确实落在 frame owner 上，防止祖先页面的遮挡被跳过。

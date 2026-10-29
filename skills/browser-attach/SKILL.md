@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.29.0"
+  version: "0.30.0"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -37,7 +37,8 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | --- | --- |
 | Rendered prose | `browser_read_text` |
 | Controls and actionable refs | `browser_snapshot(profile="interactive")` |
-| Changes since the latest fully read full/interactive snapshot | `browser_snapshot(diff_since=<snapshot_id>)`; retain the baseline and read all diff pages |
+| Changes since the latest fully read full/interactive snapshot | `browser_snapshot(diff_since="latest")`; inspect mode/reset_reason and read all pages |
+| Action followed by page changes in one call | Input or batch-level `observe={diff_since:"latest"}`; use the remaining action budget |
 | A known name, value or nearby field context | `browser_snapshot(query="...")`; use full view when searching prose |
 | Form inventory and current values | `browser_snapshot(profile="fields")` |
 | One control, its related popup and active/selected options | `browser_read_control`; input `observe` can attach this bounded read to an action |
@@ -45,7 +46,7 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | Visual layout or a canvas | `browser_screenshot` with its coordinate mapping |
 | Page data not exposed by these observations | A small, task-specific `browser_evaluate` expression |
 
-Observe when the next decision depends on new state or an action outcome is uncertain; a full snapshot is not required after every action. Queries, interactive views and diffs reduce returned content, not full AX collection cost. Use the connected snapshot tool's description for ref lifetime, diff application and pagination rules; refresh invalidated baselines without diff_since.
+Observe when the next decision depends on new state or an action outcome is uncertain; a full snapshot is not required after every action. Queries, interactive views and diffs reduce returned content, not full AX collection cost. latest can return a full reset; explicit snapshot IDs remain strict. Finish unread pages before the next input. Use the connected tool descriptions for ref lifetime, diff application and pagination rules.
 
 ## Locate and act
 

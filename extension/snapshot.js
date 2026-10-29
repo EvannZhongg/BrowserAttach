@@ -249,7 +249,8 @@ export function snapshotPage(state, { max_nodes = 600, max_chars = 24000, cursor
   state.nextCursor = truncated ? `${state.id}@${index}` : null;
   if (!truncated) state.delivered = true;
   const { viewport, ...metadata } = state.metadata;
-  return { ...metadata, ...state.options, snapshot_id: state.id, ...(verbose ? { viewport } : {}),
+  return { ...metadata, ...state.options, snapshot_id: state.id, mode: state.deltaEntries ? 'diff' : 'full',
+    ...(state.resetReason ? { reset_reason: state.resetReason } : {}), ...(verbose ? { viewport } : {}),
     ...(state.deltaEntries ? { base_snapshot_id: state.baseId, changes, line_count: state.entries.length } : structured ? { fields } : { snapshot: lines.join('\n') }), node_count: count,
     total_node_count: state.totalNodes, truncated, truncation_reason: reason, next_cursor: state.nextCursor };
 }

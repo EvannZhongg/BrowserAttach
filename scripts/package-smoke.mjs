@@ -46,6 +46,8 @@ try {
   const tools = (await client.listTools()).tools;
   assert.equal(tools.length, 24);
   assert.ok(tools.some(tool => tool.name === 'browser_read_control'));
+  assert.match(tools.find(tool => tool.name === 'browser_snapshot').inputSchema.properties.diff_since.description, /latest/);
+  assert.ok(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.observe.anyOf.some(schema => schema.properties?.diff_since));
   assert.ok(tools.some(tool => tool.name === 'browser_logs'));
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const result = await client.callTool({ name: 'browser_discover', arguments: { kind: 'browsers' } });

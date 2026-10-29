@@ -1,8 +1,15 @@
 # 验证报告
 
-当前版本 **0.29.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.30.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
-## 0.29（当前）
+## 0.30（当前）
+
+- 能力：snapshot(diff_since="latest") 在扩展的标签队列内复用当前基线，无需调用方保存 ID；结果始终明确 mode=diff/full。无基线、fields 视图、视图改变或基线失效时返回 full/reset_reason，不跨文档作差分。显式 ID 保持严格，未读页附 snapshot_id/next_cursor，失效游标不作为可用续读位置返回。
+- 动作组合：单个动作及整批末尾支持 observe={diff_since:"latest"或显式ID,max_nodes?,max_chars?,verbose?,timeout_ms?}；动作前绑定基线/视图并预检，动作后在剩余总预算内采集，默认观察上限 5 秒。观察失败独立保留原动作结果，已派发未知结果可以附观察证据而不重放；步骤 observe 保持控件 selector 形式，不自动每步读取整页 AX。仍不减少 getFullAXTree 成本，不提供页面稳定或业务成功保证。
+- 验证：并发 4 的全套单测 385 项通过，新增 19 项覆盖 latest 建立/继承/重置、严格 ID、未读/失效分页、claim/frame/document 边界、失败不推进基线、一次动作后观察、预算与迟到结果、未知派发序列化及整批末尾观察；stdio 检查新增联合 schema 的传递和非法混合参数预检。Chrome 156 / Edge 156 隔离 snapshots 组通过，新增 fill/click/batch 一次调用增量、稳定 ref、换视图和动作导航后的显式全量重置；既有 Shadow DOM、iframe/OOPIF 与差分重建用例继续通过。
+- 打包与部署：包外安装、71 文件、24 工具及新 observe schema 检查通过。Hub 与 Chrome/Edge 扩展为 0.30.0 / ready；稳定副本 47 个非生成资源哈希一致，manifest 版本与身份核对通过。实际配对链路的后台本地 fixture 验证 latest 首读 no_baseline、fill/click/batch 一次调用附带增量与稳定 ref、换视图 view_changed 后旧 ref 以 snapshot_replaced 失效、未读分页在派发前被拒（input_dispatched=false 且点击未发生）及不抢焦点。已有 MCP 会话需重新连接以加载新 schema。记录：unit-0300.log、latest-hub-final.log、snapshot-diffs-0300-{chromium,edge}.log、snapshot-diffs-{chromium,edge}.json、package-0300.log、runtime-0300.log、runtime-mcp-0.30.0.json、deployment-0.30.0.json。
+
+## 0.29
 
 - 能力：snapshot(diff_since=snapshot_id) 在全量 AX 采集后返回 full/interactive 语义变化，以基线行范围表示插入、删除、重排及属性变化；保留身份未变的 ref。snapshot_id 始终返回，verbose 仅额外返回 viewport。fields 暂不支持增量；普通新 snapshot 仍废弃旧 ref。
 - 边界：只接受最新且完整读完、frame 覆盖完整的基线；视图参数继承并绑定。增量分页可重建视图，分页期间 frame 失效明确失败；文档/frame/session/claim 变化不得跨基线发布，覆盖缺失不当成删除，预算或采集失败不推进仍有效的基线。定向观察追加的 ref 在查询结果外也会重新核验。README、共享 instructions 和 skill 改为在下一步依赖新状态或结果不确定时观察。

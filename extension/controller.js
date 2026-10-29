@@ -26,7 +26,8 @@ import { errorData } from './errors.js';
 import { pageUrl, httpUrl } from './page-url.js';
 import { createScreenshots } from './screenshot.js';
 import { createUploads } from './upload.js';
-import { createControlReader, controlOptions } from './control.js';
+import { createControlReader } from './control.js';
+import { actionObservationOptions } from './observation-options.js';
 
 export function createController(api, notify = () => {}) {
   const claims = new Map();
@@ -324,7 +325,11 @@ export function createController(api, notify = () => {}) {
   }
 
   async function perform(tabId, command, args) {
-    if (args.observe != null) controlOptions(args.observe);
+    let observationKind, snapshotPlan;
+    try {
+      if (args.observe != null) observationKind = actionObservationOptions(args.observe);
+      if (observationKind === 'snapshot') snapshotPlan = observations.prepareSnapshot(tabId, args.observe);
+    } catch (error) { error.input_dispatched = false; throw error; }
     if (!args.budget && (['batch', 'drag', 'click', 'fill', 'type', 'press_key', 'hover', 'scroll', 'select_option', 'upload_file'].includes(command) || command === 'evaluate' && args.cursor == null)) {
       args = { ...args, budget: deadline(args.timeout_ms ?? (command === 'batch' ? 15000 : command === 'evaluate' ? 10000 : 5000), command === 'evaluate' ? 'evaluation' : 'input') };
     }
@@ -333,11 +338,13 @@ export function createController(api, notify = () => {}) {
       try {
         if (claims.get(tabId) !== claim || !claim) throw new Error('Tab control ended before action observation');
         if (dialogs.has(tabId)) throw new Error('A JavaScript dialog blocks action observation');
-        const budget = args.budget ? args.budget.child(args.observe.timeout_ms ?? 1000, 'snapshot') : deadline(args.observe.timeout_ms ?? 1000, 'snapshot');
-        await budget.run(async () => controlCurrentUrl((await api.tabs.get(tabId)).url, 'read_control'));
+        const timeout = args.observe.timeout_ms ?? (observationKind === 'snapshot' ? 5000 : 1000);
+        const budget = args.budget ? args.budget.child(timeout, 'snapshot') : deadline(timeout, 'snapshot');
+        await budget.run(async () => controlCurrentUrl((await api.tabs.get(tabId)).url, observationKind === 'snapshot' ? 'snapshot' : 'read_control'));
         if (claims.get(tabId) !== claim) throw new Error('Tab control ended before action observation');
+        if (observationKind === 'snapshot') return { available: true, kind: 'snapshot', ...await observations.snapshot(tabId, args.observe, budget, snapshotPlan) };
         return { available: true, ...await readControl(tabId, args.observe, budget) };
-      } catch (error) { return { available: false, ...errorData(error) }; }
+      } catch (error) { return { available: false, ...(observationKind === 'snapshot' ? { kind: 'snapshot' } : {}), ...errorData(error) }; }
     }
     const state = dialogs.enter(tabId, args.dialog_policy);
     let outcome;

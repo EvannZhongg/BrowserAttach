@@ -83,7 +83,7 @@ npm 包附带可选的 [browser-attach skill](skills/browser-attach/SKILL.md)，
 1. `browser_discover(kind="browsers")` → `browser_discover(kind="tabs")`，确认浏览器、标签页标题和 URL。
 2. `browser_claim_tab`，用 `discover(kind="tabs")` 的 `tab_id` 接管（可选 `expected_url` / `expected_title` 精确校验），取得本连接的 `tab_handle`。
 3. `browser_snapshot` 取得元素 `ref`，再执行点击、填写或其他动作。
-4. 下一步依赖新状态时重新观察，结束时调用 `browser_tab_control(action="release")`。已完整读取的 full/interactive 视图可用 `snapshot(diff_since=<snapshot_id>)` 获取变化，无需每步刷新整页。
+4. 下一步依赖新状态时重新观察，结束时调用 `browser_tab_control(action="release")`。用 `snapshot(diff_since="latest")` 或动作的 `observe:{diff_since:"latest"}` 获取页面变化，检查 `mode/reset_reason` 并完成分页，无需每步刷新整页。
 
 标题易变时省略 `expected_title`，改为核对 claim 返回的当前身份。元素可用 `ref` 或每次重新解析的 `selector` 定位；设计取舍见 [架构说明](docs/ARCHITECTURE.md#设计取舍)。
 

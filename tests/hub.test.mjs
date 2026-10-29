@@ -376,6 +376,8 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.equal(viewRequest.arguments.query, 'Save'); assert.equal(viewRequest.arguments.verbose, true);
   await call('snapshot', { tab_handle: handle, diff_since: 'baseline' });
   assert.equal(f.requests.at(-1).arguments.diff_since, 'baseline');
+  await call('snapshot', { tab_handle: handle, diff_since: 'latest' });
+  assert.equal(f.requests.at(-1).arguments.diff_since, 'latest');
   await call('snapshot', { tab_handle: handle, profile: 'fields', include_hidden: true, query: 'TEXTS28' });
   const fieldRequest = f.requests.findLast(item => item.command === 'snapshot');
   assert.equal(fieldRequest.arguments.profile, 'fields'); assert.equal(fieldRequest.arguments.include_hidden, true);
@@ -385,10 +387,21 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   await call('press_key', { tab_handle: handle, selector: '#education', key: 'Enter', observe: { selector: '#education' } });
   assert.equal(f.requests.at(-1).arguments.observe.selector, '#education');
   const beforeObservation = f.requests.length;
-  for (const observe of [{}, { selector: '#education', max_options: 0 }, { selector: '#education', timeout_ms: 5001 }]) {
+  for (const observe of [{}, { selector: '#education', max_options: 0 }, { selector: '#education', timeout_ms: 5001 },
+    'auto', { diff_since: '' }, { diff_since: ' ' }, { diff_since: 'latest', selector: '#mixed' },
+    { diff_since: 'latest', profile: 'fields' }, { diff_since: 'latest', cursor: 'x' }, { diff_since: 'latest', max_nodes: 0 }]) {
     assert.equal((await call('click', { tab_handle: handle, selector: '#button', observe })).isError, true);
   }
   assert.equal(f.requests.length, beforeObservation);
+  await call('click', { tab_handle: handle, selector: '#button', mode: 'dom', observe: { diff_since: 'latest', max_nodes: 100, max_chars: 8000 } });
+  assert.equal(f.requests.at(-1).command, 'click');
+  assert.equal(f.requests.at(-1).arguments.observe.diff_since, 'latest');
+  assert.equal(f.requests.at(-1).arguments.observe.timeout_ms, 5000);
+  await call('batch', { tab_handle: handle, steps: [{ action: 'click', selector: '#button' }], observe: { diff_since: 'baseline' } });
+  assert.equal(f.requests.at(-1).arguments.observe.diff_since, 'baseline');
+  const beforeStepDiff = f.requests.length;
+  assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'click', selector: '#button', observe: { diff_since: 'latest' } }] })).isError, true);
+  assert.equal(f.requests.length, beforeStepDiff);
   const beforeControl = f.requests.length;
   for (const args of [{ tab_handle: handle }, { action: 'all', tab_handle: handle }, { action: 'release' },
     { action: 'release', tab_handle: handle, focus_window: false }, { action: 'close', tab_handle: handle, focus_window: true },

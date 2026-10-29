@@ -3,12 +3,12 @@ import { snapshotDiff } from './snapshot-diff.js';
 import { createFieldReader } from './fields.js';
 import { deadline } from './actionability.js';
 
-export async function retryObservation(read, budget) {
+export async function retryObservation(read, budget, recover = () => false) {
   for (let attempt = 0; attempt < 2; attempt++) {
     try { return await read(); }
     catch (error) {
       const transient = error.diagnostics?.reason === 'document_changed' || /context.*(destroyed|not found)|cannot find (?:default execution )?context|document (changed|updated)|inspected target navigated|no frame with given id/i.test(error.message);
-      if (attempt || error.deadline_exceeded || budget.remaining() <= 100 || !transient) throw error;
+      if (attempt || error.deadline_exceeded || budget.remaining() <= 100 || !(recover(error) || transient)) throw error;
       await budget.run(() => new Promise(resolve => setTimeout(resolve, 50)));
     }
   }
@@ -141,36 +141,69 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     if (state) state.nextCursor = null;
   }
 
-  async function snapshot(tabId, args = {}, budget = deadline(30000, 'snapshot')) {
+  function prepareSnapshot(tabId, args = {}) {
+    validateSnapshotRequest(args);
+    const state = snapshots.get(tabId), latest = args.diff_since === 'latest';
+    let previous = args.diff_since != null ? state : null, resetReason;
+    if (latest) {
+      if (state?.options && !state.delivered) unreadBaseline(state);
+      if (!state?.options) resetReason = 'no_baseline';
+      else if (state.options.profile === 'fields') resetReason = 'unsupported_view';
+      else if (state.invalidFrames.size || state.metadata.omitted_frames.length) resetReason = 'incomplete_frame_coverage';
+      if (resetReason) previous = null;
+    } else if (args.diff_since != null) assertDiffBaseline(tabId, previous, args.diff_since);
+    const inherited = state?.options && state.options.profile !== 'fields' && args.diff_since != null ? state.options : {};
+    const options = snapshotOptions({ ...inherited, ...args });
+    if (previous && Object.keys(options).some(key => options[key] !== previous.options[key])) {
+      if (!latest) throw new Error('diff_since uses the original profile/text/text_limit/query; take a new snapshot to change the view.');
+      previous = null; resetReason = 'view_changed';
+    }
+    return { previous, options, latest, resetReason, claim: currentClaim(tabId), documentVersion: documents.get(tabId) };
+  }
+
+  async function snapshot(tabId, args = {}, budget = deadline(30000, 'snapshot'), prepared) {
     validateSnapshotRequest(args);
     if (args.cursor != null) {
       const state = snapshots.get(tabId);
       if (!state) throw new Error('Snapshot cursor is stale or unknown. Take a new browser_snapshot.');
       return snapshotPage(state, args);
     }
-    const previous = args.diff_since != null ? snapshots.get(tabId) : null;
-    if (args.diff_since != null) assertDiffBaseline(tabId, previous, args.diff_since);
-    const options = snapshotOptions(previous ? { ...previous.options, ...args } : args);
-    if (previous && Object.keys(options).some(key => options[key] !== previous.options[key])) {
-      throw new Error('diff_since uses the original profile/text/text_limit/query; take a new snapshot to change the view.');
-    }
-    const claim = currentClaim(tabId);
-    if (!previous) invalidateSnapshot(tabId, 'snapshot_replaced');
+    const plan = prepared || prepareSnapshot(tabId, args);
+    let { previous, resetReason } = plan;
+    if (!previous && !plan.latest) invalidateSnapshot(tabId, 'snapshot_replaced');
     return await retryObservation(() => {
-      if (previous) assertDiffBaseline(tabId, previous, args.diff_since);
-      return captureSnapshot(tabId, args, options, budget, claim, previous);
-    }, budget);
+      if (plan.latest) {
+        if (plan.documentVersion !== documents.get(tabId)) { previous = null; resetReason = 'document_changed'; }
+        else if (previous && (snapshots.get(tabId) !== previous || previous.invalidFrames.size || previous.metadata.omitted_frames.length)) {
+          previous = null; resetReason = 'baseline_invalidated';
+        }
+      }
+      if (previous) assertDiffBaseline(tabId, previous, previous.id);
+      return captureSnapshot(tabId, args, plan.options, budget, plan.claim, previous, resetReason);
+    }, budget, error => {
+      if (!plan.latest || !['diff_baseline_invalid', 'diff_incomplete'].includes(error.diagnostics?.reason)) return false;
+      previous = null;
+      resetReason = error.diagnostics.reason === 'diff_incomplete' ? 'incomplete_frame_coverage' : 'baseline_invalidated';
+      return true;
+    });
+  }
+
+  function unreadBaseline(state) {
+    throw Object.assign(new Error('Snapshot diff baseline has unread pages; finish its cursor or take a new browser_snapshot without diff_since.'), {
+      diagnostics: { reason: 'diff_baseline_invalid', cause: 'unread_pages', snapshot_id: state.id,
+        next_cursor: state.deltaEntries && state.invalidFrames.size ? null : state.nextCursor ?? null },
+    });
   }
 
   function assertDiffBaseline(tabId, state, id) {
     const fail = message => { throw Object.assign(new Error(`${message}. Take a new browser_snapshot without diff_since.`), { diagnostics: { reason: 'diff_baseline_invalid' } }); };
     if (!state || snapshots.get(tabId) !== state || state.id !== id || !state.options) fail('Snapshot diff baseline is stale or unknown');
     if (state.options.profile === 'fields') fail('diff_since supports full/interactive only');
-    if (!state.delivered) fail('Snapshot diff baseline has unread pages; finish its cursor before taking a diff');
+    if (!state.delivered) unreadBaseline(state);
     if (state.invalidFrames.size || state.metadata.omitted_frames.length) fail('Snapshot diff baseline has incomplete or invalidated frame coverage');
   }
 
-  async function captureSnapshot(tabId, args, options, budget, claim, previous) {
+  async function captureSnapshot(tabId, args, options, budget, claim, previous, resetReason) {
     const assertClaim = () => {
       if (!claim || currentClaim(tabId) !== claim) throw Object.assign(new Error('Tab control ended while reading the snapshot; no refs were published.'), { diagnostics: { reason: 'control_changed' } });
     };
@@ -248,7 +281,7 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     const metadata = value(await send(tabId, 'Runtime.evaluate', {
       expression: '({title: document.title, url: location.href})', returnByValue: true,
     }));
-    const state = { id: token, options, refs, entries, invalidFrames: new Set(), totalNodes: entries.filter(entry => entry.node).length,
+    const state = { id: token, options, refs, entries, resetReason, invalidFrames: new Set(), totalNodes: entries.filter(entry => entry.node).length,
       extraRefs: [...refs.keys()].filter(ref => ref.includes(':element:')).length,
       frameScopes: new Map([...captured].map(([id, frame]) => [id, { sessionId: frame.sessionId }])),
       metadata: { title: metadata.title, url: metadata.url, viewport: await budget.run(() => viewport(tabId)), omitted_frames: omittedFrames,
@@ -260,7 +293,7 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
       omitFrame(tabId, state, frame.id, 'Frame changed while reading the snapshot; take a new snapshot to observe it');
     }
     if (previous) {
-      assertDiffBaseline(tabId, previous, args.diff_since);
+      assertDiffBaseline(tabId, previous, previous.id);
       if (state.invalidFrames.size || omittedFrames.length) throw Object.assign(new Error('Snapshot diff capture has incomplete frame coverage; baseline was not advanced. Take a new browser_snapshot without diff_since.'), { diagnostics: { reason: 'diff_incomplete' } });
       state.baseId = previous.id;
       state.deltaEntries = snapshotDiff(previous.entries, entries);
@@ -270,7 +303,8 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     // new baseline or retired identities can become visible.
     return await budget.run(() => {
       assertClaim();
-      if (previous) assertDiffBaseline(tabId, previous, args.diff_since);
+      if (previous) assertDiffBaseline(tabId, previous, previous.id);
+      else invalidateSnapshot(tabId, 'snapshot_replaced');
       for (const [ref, node] of previous?.refs || []) if (!refs.has(ref)) {
         const frame = captured.get(node.frameId);
         retireRef(tabId, ref, !frame || frame.sessionId !== node.sessionId ? 'frame_changed' :
@@ -325,7 +359,7 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     for (const key of pageContexts.keys()) if (JSON.parse(key)[0] === tabId) pageContexts.delete(key);
     frameStates.delete(tabId);
   }
-  return { snapshot, resolve: getObject, rememberElement, rememberAXNodes, invalidate: invalidateSnapshot, expireCursor,
+  return { snapshot, prepareSnapshot, resolve: getObject, rememberElement, rememberAXNodes, invalidate: invalidateSnapshot, expireCursor,
     initialize, invalidateFrame, documentChanged, event, contextEvent, forget,
     version: tabId => documents.get(tabId),
     mainFrame: tabId => frameStates.get(tabId)?.mainId,
