@@ -43,8 +43,26 @@ function harness(query, options = {}) {
   const network = { networkStatus: () => ({ inflight: 0, idle_ms: 1000, tracking_overflow: false, ...options.network }) };
   const pointer = { prepare: async () => {} };
   return { calls, get polls() { return polls; }, run: (checks, timeout_ms = 150, context = {}) =>
-    waitFor(cdp, result => result.result.value, sessions, network, pointer, 1, { checks, timeout_ms }, context) };
+    waitFor(cdp, result => result.result.value, sessions, network, pointer, 1, { checks, timeout_ms }, context),
+    single: (check, timeout_ms = 150) => waitFor(cdp, result => result.result.value, sessions, network, pointer, 1, { ...check, timeout_ms }) };
 }
+
+test('top-level checks and checks arrays share pass/fail/unavailable reports and safe retry semantics', async () => {
+  const h = harness(() => [field({ value: 'private-content', innerText: 'Ready' })]);
+  for (const [check, status] of [
+    [{ selector: '#field', condition: 'attached' }, 'pass'],
+    [{ selector: '#field', condition: 'count', expected: 2 }, 'fail'],
+    [{ selector: '#field', condition: 'expanded', expected: false, not: true }, 'unavailable'],
+    [{ selector: '#field', condition: 'value', expected: 'private-content' }, 'pass'],
+    [{ selector: '#field', condition: 'value_present', expected: true }, 'pass'],
+    [{ selector: '#field', condition: 'text', expected: 'Error', not: true }, 'pass'],
+  ]) {
+    const single = await h.single(check, 120), array = await h.run([check], 120);
+    assert.equal(single.status, status); assert.deepEqual(single, array);
+    assert.equal(single.retry_safe, true); assert.equal(single.current, undefined); assert.equal(single.satisfied, undefined);
+    assert.ok(!JSON.stringify(single).includes('private-content'));
+  }
+});
 
 test('verification prevalidates every check and effective batch dialog policy', () => {
   const valid = { selector: '#rows', condition: 'count', expected: 0 };
@@ -226,5 +244,7 @@ test('verification leaves an existing dialog untouched and returns unavailable t
   f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.javascriptDialogOpening', { type: 'confirm', message: 'Leave untouched' });
   const result = await f.exec('wait', { checks: [{ condition: 'url', expected: 'localhost' }], timeout_ms: 100 });
   assert.equal(result.status, 'unavailable'); assert.equal(result.results[0].actual.reason, 'dialog_open');
+  const single = await f.exec('wait', { condition: 'url', expected: 'localhost', timeout_ms: 100 });
+  assert.deepEqual(single, result);
   assert.equal(result.retry_safe, true); assert.ok(!f.calls.some(call => call.method === 'Page.handleJavaScriptDialog'));
 });

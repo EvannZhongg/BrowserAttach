@@ -51,7 +51,7 @@ async function fixture(t, options) {
       if (data.command === 'release_owner') released.add(data.owner);
       if (data.command === 'snapshot') result = { snapshot: '[s1:1] button "Test"' };
       if (data.command === 'batch') result = { completed: false, results: [{ value_verified: true }], failed_step: 1, error: 'Outcome is unknown' };
-      if (data.command === 'wait' && data.arguments.checks) result = { status: 'fail', timed_out: true, retry_safe: true, failed: [0], unavailable: [], results: [{ index: 0, status: 'fail', expected: 1, actual: { count: 0 } }] };
+      if (data.command === 'wait') result = { status: 'fail', timed_out: true, retry_safe: true, failed: [0], unavailable: [], results: [{ index: 0, status: 'fail', expected: 1, actual: { count: 0 } }] };
       if (data.command === 'screenshot') result = { data: PNG, capture: { css_width: 1, css_height: 1,
         image_origin_css: { x: 0, y: 0 }, viewport: { scroll_x: 0, scroll_y: 0 } } };
       ws.send(JSON.stringify({ id: data.id, result }));
@@ -294,7 +294,9 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   const batchSchema = tools.find(tool => tool.name === 'browser_batch').inputSchema.properties;
   assert.equal(batchSchema.steps.maxItems, 30); assert.equal(batchSchema.start_at.maximum, 29);
   const waitSchema = tools.find(tool => tool.name === 'browser_wait').inputSchema;
-  assert.ok(!waitSchema.required.includes('condition'));
+  assert.ok(!waitSchema.required.includes('checks'));
+  assert.ok(waitSchema.properties.condition); assert.ok(waitSchema.properties.selector);
+  assert.equal(waitSchema.properties.dialog_policy.const, 'ask');
   assert.equal(waitSchema.properties.checks.maxItems, 30);
   assert.ok(waitSchema.properties.checks.items.properties.condition.enum.includes('count'));
   assert.ok(waitSchema.properties.checks.items.properties.condition.enum.includes('value_present'));
@@ -363,13 +365,16 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   for (const args of [{}, { checks: [] }, { checks, selector: '.row' }, { checks, condition: 'attached' },
     { checks, dialog_policy: 'dismiss' }, { checks: [{ ...checks[0], nth: 0 }] },
     { checks: [{ selector: '#field', condition: 'value_present', expected: 'true' }] }]) {
-    assert.equal((await call('wait', { tab_handle: handle, ...args })).isError, true);
+    assert.equal((await call('wait', { tab_handle: handle, ...args, checks: [{  }] })).isError, true);
   }
   assert.equal(f.requests.length, beforeWait);
   const verification = await call('wait', { tab_handle: handle, checks });
   assert.ok(!verification.isError); assert.equal(JSON.parse(verification.content[0].text).status, 'fail');
   assert.deepEqual(f.requests.at(-1).arguments.checks, checks);
   assert.equal(f.requests.at(-1).arguments.idle_ms, undefined);
+  const singleVerification = await call('wait', { tab_handle: handle, ...checks[0] });
+  assert.ok(!singleVerification.isError); assert.deepEqual(singleVerification, verification);
+  assert.equal(f.requests.at(-1).arguments.condition, 'count');
   assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'wait', checks }] })).isError, true);
   assert.deepEqual(f.requests.at(-1).arguments.steps[0].checks, checks);
   const beforeSemantic = f.requests.length;
@@ -470,11 +475,11 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.equal(f.requests.filter(item => item.command === 'evaluate').length, evaluationCount);
   assert.ok(!(await call('click', { tab_handle: handle, ref: 'current-ref', mode: 'dom' })).isError);
   assert.equal(f.requests.find(item => item.command === 'click').arguments.mode, 'dom');
-  for (const [name, input] of [['hover', {selector:'#menu'}], ['drag', {source:{selector:'#source'},destination:{x:10,y:10}}], ['wait', {condition:'visible',selector:'#late'}], ['select_option', {selector:'select',label:'Beta'}]]) {
+  for (const [name, input] of [['hover', {selector:'#menu'}], ['drag', {source:{selector:'#source'},destination:{x:10,y:10}}], ['wait', {checks:[{condition:'visible',selector:'#late'}]}], ['select_option', {selector:'select',label:'Beta'}]]) {
     assert.ok(!(await call(name, {tab_handle:handle,...input})).isError);
     assert.ok(f.requests.some(item => item.command === name));
   }
-  for (const [name, input] of [['hover', {}], ['drag', {source:{selector:'#source'},destination:{}}], ['wait', {condition:'text',selector:'#late'}], ['select_option', {selector:'select',label:'Beta',value:'b'}]]) {
+  for (const [name, input] of [['hover', {}], ['drag', {source:{selector:'#source'},destination:{}}], ['wait', {checks:[{condition:'text',selector:'#late'}]}], ['select_option', {selector:'select',label:'Beta',value:'b'}]]) {
     const before=f.requests.length;
     assert.equal((await call(name, {tab_handle:handle,...input})).isError,true);
     assert.equal(f.requests.length,before);
@@ -487,16 +492,16 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
     { selector: '#field', condition: 'expanded', expected: false },
     { selector: '#field', condition: 'absent' },
   ]) {
-    assert.ok(!(await call('wait', { tab_handle: handle, ...input })).isError);
-    assert.equal(f.requests.at(-1).arguments.expected, input.expected);
-    await call('batch', { tab_handle: handle, steps: [{ action: 'wait', ...input }] });
-    assert.equal(f.requests.at(-1).arguments.steps[0].condition, input.condition);
-    assert.equal(f.requests.at(-1).arguments.steps[0].expected, input.expected);
+    assert.ok(!(await call('wait', { tab_handle: handle, checks: [{ ...input }] })).isError);
+    assert.equal(f.requests.at(-1).arguments.checks[0].expected, input.expected);
+    await call('batch', { tab_handle: handle, steps: [{ action: 'wait', checks: [{ ...input }] }] });
+    assert.equal(f.requests.at(-1).arguments.steps[0].checks[0].condition, input.condition);
+    assert.equal(f.requests.at(-1).arguments.steps[0].checks[0].expected, input.expected);
   }
   for (const input of [{ condition: 'checked', expected: 'false' }, { condition: 'value', expected: false }, { condition: 'expanded', expected: 'mixed' }]) {
     const before = f.requests.length;
-    assert.equal((await call('wait', { tab_handle: handle, selector: '#field', ...input })).isError, true);
-    assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'wait', selector: '#field', ...input }] })).isError, true);
+    assert.equal((await call('wait', { tab_handle: handle, checks: [{ selector: '#field', ...input }] })).isError, true);
+    assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'wait', checks: [{ selector: '#field', ...input }] }] })).isError, true);
     assert.equal(f.requests.length, before);
   }
   for (const [name, input] of [['type',{selector:'#input',text:'typed',delay_ms:20}],['navigate',{direction:'back'}],['fill',{selector:'input',frame:{path:['iframe[title="Inner"]']},text:'scoped'}],['logs',{kind:'network',capture:{enabled:true,max_body_bytes:4096}}]]) {

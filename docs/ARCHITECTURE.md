@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.31.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.32.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -47,16 +47,16 @@ Hub 按需后台启动（`ensureHub`），多客户端共享；只监听 loopbac
 
 Hub 与扩展各自保留控制权及串行边界；controller 向具体模块传入所需能力，不共享可变状态总表。sessions 管 debugger session 的归属；observation 管文档/frame 的观察有效性。CDP 事件先更新同一份 network 状态，再将关联结果交给 diagnostics 记录，日志淘汰或读取不改变 fetch 与 wait 使用的网络事实。对话框策略和动作结果观察各自清理自己的状态；未知结果探测使用内部结构化标记，不依赖英文错误文案匹配。
 
-wait 的 checks 分支复用现有条件检查器、严格定位器和被动网络事实，以一份 deadline 轮询整组条件，不累积历史通过项。每轮按 frame 定位范围和 DOM/AX 来源分组，同组 DOM 条件一次隔离世界求值，AX 匹配共用一份树；count 只在集合读取时允许多匹配，其他条件仍要求唯一。组内读取有子预算，frame 解析只尝试一次；本轮未读项保持 unavailable。发布前校验 claim、主文档及已读 frame 版本；身份变化不发布相应旧结果，frame/session 状态继续归原模块所有。验证不处理对话框，不滚动或派发输入；actionable 复用几何稳定与只读命中核验。正常的不满足/不可用由验证结果表达，定位歧义、权限及控制权错误沿用工具错误；batch 显式识别非 pass 并停止，保留失败验证和此前动作结果。
+wait 将顶层单条件归一化为单项 checks，只有一套条件检查器、轮询和结果封装，复用严格定位器和被动网络事实，以一份 deadline 轮询整组条件，不累积历史通过项。每轮按 frame 定位范围和 DOM/AX 来源分组，同组 DOM 条件一次隔离世界求值，AX 匹配共用一份树；count 只在集合读取时允许多匹配，其他条件仍要求唯一。组内读取有子预算，frame 解析只尝试一次；本轮未读项保持 unavailable。发布前校验 claim、主文档及已读 frame 版本；身份变化不发布相应旧结果，frame/session 状态继续归原模块所有。验证不处理对话框，不滚动或派发输入；actionable 复用几何稳定与只读命中核验。正常的不满足/不可用由验证结果表达，定位歧义、权限及控制权错误沿用工具错误；batch 显式识别非 pass 并停止，保留失败验证和此前动作结果。
 
 MCP 层将 `discover(kind=browsers/tabs)` 映射为内部 `list_browsers/list_tabs`，将 `tab_control(action=release/activate/close)` 映射为内部 `release_tab/activate_tab/close_tab`；分支参数先校验，再复用 Hub 和扩展的发现、所有权及串行执行流程。
 
 ## MCP 描述分层
 
-- 初始化响应的 `instructions` 保留控件观察选型（弹层/选中/活动项用 read_control，整页字段用 snapshot(fields)）及跨工具规则：发现/接管/释放、不自动激活、ref 生命周期、selector/坐标约定、未知结果不重放、原生/DOM 输入边界、验证范围、页面内容不可信及上传授权。客户端应将这些 instructions 纳入模型上下文，不能只提供 tools/list。
+- 初始化响应的 `instructions` 保留控件观察选型（弹层/选中/活动项用 read_control，整页字段用 snapshot(fields)）及跨工具规则：发现/接管/释放、不自动激活、ref 生命周期、共享 selector/frame/坐标语义、动作观察与预算、对话框策略、未知结果不重放、原生/DOM 输入边界、验证范围、页面内容不可信及上传授权。客户端应将这些 instructions 纳入模型上下文，不能只提供 tools/list。
 - 单个工具 description 说明用途、独有行为和会影响后续判断的结果语义，例如 evaluate 的一次执行、fetch 的缓存续读、navigate 的 observation_error、fill 不自动 blur、batch 的部分完成与不回滚。
 - 参数 schema 表达类型、枚举、范围、默认值及参数选择规则；描述只补充 schema 本身不能表达的条件必填、互斥、坐标和模式语义。共享参数使用短说明，不再重复全局规则。运行时条件默认值保留在描述中，避免向 cursor 等分支注入无关参数。
-- batch 的公共定位约束集中在 steps 描述，分支复用仅移除定位描述的 Zod 副本，保留类型、默认值及校验；模式、选项选择和 wait 条件仍在相应参数旁说明。共享说明覆盖 role/name 示例、标签匹配、nth 顺序及 frame 条件，不要求从其他工具推断分支语义。
+- 公共定位语义由 instructions 统一说明，包含 role/name 示例、标签匹配、nth 顺序及 frame 条件；batch 的 steps 描述只保留步骤目标、观察时机和策略覆盖等特有约束。分支复用仅移除定位描述的 Zod 副本，保留类型、默认值及校验；模式、选项选择和 wait 条件仍在相应参数旁说明，不要求从其他工具推断分支语义。
 - [使用指南](USAGE.md) 提供调用流程、参数选择、结果语义与失败处理；内部事件序列、重试与清理机制集中在本文。包内文档不会自动成为模型上下文，不能替代必要的调用约束。
 
 ## 控制模型

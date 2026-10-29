@@ -1,8 +1,14 @@
 # 验证报告
 
-当前版本 **0.31.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.32.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
-## 0.31（当前）
+## 0.32（当前）
+
+- 能力：browser_wait 顶层单条件归一化为单项 checks，只剩一套条件检查器、轮询与结果封装；两种输入均返回 status/results/timed_out/retry_safe，不再返回旧 satisfied/current，条件不符或不可读不设置 isError（参数、定位歧义、权限及控制权错误仍走工具错误）。单项同样支持 count/value_present/not；wait 只接受 dialog_policy=ask，batch 对两种写法的非 pass 均停止。返回契约变更，调用方需改读 status 与 results[i].actual。
+- 精简：公共定位、动作观察预算和对话框策略集中到初始化 instructions，参数及 batch steps 保留短提示与特有约束。tools/list 从 91,189 降至 77,943 字符，含 instructions 的合计从 93,607 降至 81,375（−13.1%）；移除 description 后 24 个工具定义逐项一致，排除说明与注释后 MCP 执行代码一致。
+- 验证：并发 4 的全套单测 400 项通过，新增两种输入的通过/不符/不可用、否定、隐私和既有对话框等价断言；stdio 核验单项 fail 亦为正常报告，并检查互斥参数预检与整数传递。Chrome / Edge 隔离 verify 组通过（三态、完整失败/不可用索引、batch 停止、OOPIF、模态保持、不抢焦点），Chrome primitives 组通过；Edge primitives 的 wait 用例通过，其后既有 html5_offscreen 拖拽因测试页 inactive 返回 TAB_NOT_READY，未修改无关拖拽行为。短预算末轮读取不完整允许返回 unavailable，集成检查只按 retry_safe 对 observation_timeout/not_observed_in_round 有界重查，不重放 batch 或输入。记录：unit-0320.log、contract-0320-final.log、stdio-0320-final-2.log、verify-0320-{chromium,edge}-final.log、primitives-0320-{chromium,edge}.log。
+- 打包与部署：包外安装、71 文件、24 工具及扩展目录独立检查通过。Hub 与 Chrome/Edge 扩展均为 0.32.0 / ready，稳定副本 47 个非生成资源核验一致（manifest 按配对配置生成，内容一致）。实际配对链路核验顶层单条件与单项数组返回完全相同、不含 satisfied/current、精确值不回显、单项 fail/unavailable 不设置 isError、batch 非 pass 停止且本地写入只发生一次、原活动标签保持；测试页已关闭。记录：package-0320.log、runtime-0320.log、deployment-0.32.0.json。既有 MCP 会话需重新连接以加载新 schema 与 instructions。
+## 0.31
 
 - 能力：browser_wait 新增互斥的 checks[]（1–30 项），同一预算内整轮验证，返回 pass/fail/unavailable、期望/实际、零基 failed/unavailable 索引及仅作用于本次只读检查的 retry_safe。新增精确 count、非空 value_present 和简单 not；不可读、缺失标量目标、无效 ARIA 及网络跟踪溢出不因取反通过。保留单条件接口及超时报错方式，字段值及精确值期望不回显。
 - 边界：复用严格定位、DOM/AX 检查器与网络事实；同组 DOM 条件合并读取，AX 按浏览器节点身份去重计数。frame 单次解析与分组子预算避免缺失 frame 独占等待，当前轮未读项不继承旧成功；claim/document/frame 变化阻止旧证据通过，后读 AX 组不能覆盖先读 DOM 组的 frame 版本。checks 仅允许 ask，不处理对话框、不滚动或派发输入；batch 在非 pass 时停止并保留 verification，含继承策略的参数预检先于首次输入。

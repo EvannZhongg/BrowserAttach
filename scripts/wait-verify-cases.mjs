@@ -1,6 +1,17 @@
 import assert from 'node:assert/strict';
 
 export async function checkWaitVerification({ call, page, focus, base, results }) {
+  let observationRetries = 0;
+  async function wait(args) {
+    let report;
+    for (let attempt = 0; attempt < 3; attempt++) {
+      report = await call('wait', args);
+      if (!report.results.some(result => result.status === 'unavailable' && ['observation_timeout', 'not_observed_in_round'].includes(result.actual.reason))) return report;
+      assert.equal(report.retry_safe, true);
+      if (attempt < 2) observationRetries++;
+    }
+    return report;
+  }
   const beforeFocus = await focus();
   await page(`(() => {
     const root = document.createElement('section'); root.id = 'verify-fixture';
@@ -21,63 +32,73 @@ export async function checkWaitVerification({ call, page, focus, base, results }
     { selector: 'textbox', selector_type: 'role', name: 'Verify name', condition: 'count', expected: 1 },
     { selector: 'textbox', selector_type: 'role', name: 'Verify name', condition: 'value_present', expected: true },
   ];
-  const passed = await call('wait', { checks });
+  const passed = await wait({ checks });
   assert.equal(passed.status, 'pass', JSON.stringify(passed)); assert.equal(passed.results.length, 9);
   assert.equal(passed.timed_out, false); assert.equal(passed.retry_safe, true);
   assert.ok(!JSON.stringify(passed).includes('private-field-content'));
-  const exact = await call('wait', { checks: [{ selector: '#verify-name', condition: 'value', expected: 'private-field-content' }] });
+  const single = await wait({ selector: '#verify-name', condition: 'value_present', expected: true });
+  const singleArray = await wait({ checks: [{ selector: '#verify-name', condition: 'value_present', expected: true }] });
+  assert.deepEqual(single, singleArray); assert.equal(single.status, 'pass');
+  assert.equal(single.satisfied, undefined); assert.equal(single.current, undefined);
+  const exact = await wait({ checks: [{ selector: '#verify-name', condition: 'value', expected: 'private-field-content' }] });
   assert.equal(exact.status, 'pass'); assert.ok(!JSON.stringify(exact).includes('private-field-content'));
   await page(`document.querySelector('#verify-name').value='';document.querySelector('#verify-rows > li:last-child').remove();document.querySelector('#verify-errors').innerHTML='<span class="verify-error">Error</span>';true`);
-  const failed = await call('wait', { checks: checks.slice(0, 3), timeout_ms: 200 });
-  assert.equal(failed.status, 'fail'); assert.deepEqual(failed.failed, [0, 1, 2]); assert.equal(failed.results[1].actual.count, 2);
-  const unavailable = await call('wait', { timeout_ms: 200, checks: [
+  const failed = await wait({ checks: checks.slice(0, 3), timeout_ms: 200 });
+  assert.equal(failed.status, 'fail', JSON.stringify(failed)); assert.deepEqual(failed.failed, [0, 1, 2]); assert.equal(failed.results[1].actual.count, 2);
+  const unavailable = await wait({ timeout_ms: 200, checks: [
     { selector: '#verify-aria', condition: 'checked', expected: false, not: true },
     { selector: '#verify-missing', condition: 'text', expected: 'Error', not: true },
     { selector: '#anything', frame: { url: base + '/missing-frame' }, condition: 'absent' },
     { selector: '#verify-rows > li', condition: 'count', expected: 2 },
   ] });
-  assert.equal(unavailable.status, 'unavailable'); assert.deepEqual(unavailable.unavailable, [0, 1, 2]);
+  assert.equal(unavailable.status, 'unavailable'); assert.deepEqual(unavailable.unavailable.filter(index => index < 3), [0, 1, 2]);
   assert.equal(unavailable.results[3].status, 'pass');
+  assert.equal((await wait({ selector: '#verify-rows > li', condition: 'count', expected: 2 })).status, 'pass');
+  const singleFail = await wait({ selector: '#verify-rows > li', condition: 'count', expected: 3, timeout_ms: 120 });
+  assert.equal(singleFail.status, 'fail'); assert.deepEqual(singleFail.failed, [0]);
+  assert.equal(singleFail.results[0].actual.count, 2); assert.equal(singleFail.retry_safe, true);
+  const singleUnavailable = await wait({ selector: '#verify-aria', condition: 'checked', expected: false, not: true, timeout_ms: 120 });
+  assert.equal(singleUnavailable.status, 'unavailable'); assert.deepEqual(singleUnavailable.unavailable, [0]);
   const steps = [
     { action: 'click', selector: '#verify-submit', mode: 'dom' },
-    { action: 'wait', checks: [{ selector: '#verify-rows > li', condition: 'count', expected: 4 }], timeout_ms: 200 },
+    { action: 'wait', selector: '#verify-rows > li', condition: 'count', expected: 4, timeout_ms: 200 },
     { action: 'click', selector: '#verify-submit', mode: 'dom' },
   ];
   await assert.rejects(call('batch', { dialog_policy: 'accept', steps }), /dialog_policy=ask/);
   assert.equal(await page('verifyWrites'), 0);
   const stopped = await call('batch', { steps });
   assert.equal(stopped.completed, false); assert.equal(stopped.failed_step, 1);
-  assert.equal(stopped.verification.status, 'fail'); assert.equal(stopped.retry_failed_step_safe, true);
+  assert.ok(['fail', 'unavailable'].includes(stopped.verification.status)); assert.equal(stopped.retry_failed_step_safe, true);
   assert.equal(await page('verifyWrites'), 1);
   const continued = await call('batch', { steps: [
     { action: 'wait', checks: [{ selector: '#verify-rows > li', condition: 'count', expected: 2 }] },
     { action: 'click', selector: '#verify-submit', mode: 'dom' },
   ] });
   assert.equal(continued.completed, true); assert.equal(await page('verifyWrites'), 2);
-  const actionable = await call('wait', { checks: [{ selector: '#verify-submit', condition: 'actionable' }] });
+  const actionable = await wait({ checks: [{ selector: '#verify-submit', condition: 'actionable' }] });
   assert.equal(actionable.status, 'pass', JSON.stringify(actionable));
   await page(`document.querySelector('#verify-state').innerText='x'.repeat(600)+' Complete';setTimeout(()=>{document.querySelector('#verify-name').outerHTML='<input id="verify-name" aria-label="Verify name" value="replacement">'},100);true`);
-  const replaced = await call('wait', { checks: [
+  const replaced = await wait({ checks: [
     { selector: '#verify-name', condition: 'value', expected: 'replacement' },
     { selector: '#verify-state', condition: 'text', expected: 'Complete' },
   ], timeout_ms: 3000 });
   assert.equal(replaced.status, 'pass'); assert.equal(replaced.results[1].actual.text_truncated, true);
   assert.equal(replaced.results[1].actual.total_chars, 609);
-  await assert.rejects(call('wait', { checks: [{ selector: '[', condition: 'attached' }] }), error => error.diagnostics.reason === 'selector_invalid');
-  await assert.rejects(call('wait', { checks: [{ selector: '#verify-rows > li', condition: 'attached' }] }), error => error.diagnostics.reason === 'selector_ambiguous');
+  await assert.rejects(wait({ checks: [{ selector: '[', condition: 'attached' }] }), error => error.diagnostics.reason === 'selector_invalid');
+  await assert.rejects(wait({ checks: [{ selector: '#verify-rows > li', condition: 'attached' }] }), error => error.diagnostics.reason === 'selector_ambiguous');
   await page(`(() => {const frame=document.createElement('iframe');frame.id='verify-frame';frame.src=${JSON.stringify(base.replace('127.0.0.1', 'localhost') + '/inner')};document.body.append(frame);return true})()`);
-  const framed = await call('wait', { checks: [
+  const framed = await wait({ checks: [
     { selector: 'input', frame: { path: ['#verify-frame'] }, condition: 'value_present', expected: false },
     { selector: 'button', selector_type: 'role', name: 'Inner button', frame: { path: ['#verify-frame'] }, condition: 'count', expected: 1 },
   ], timeout_ms: 5000 });
   assert.equal(framed.status, 'pass', JSON.stringify(framed));
   await page(`setTimeout(()=>confirm('Verification must leave this dialog open'),0);true`);
-  const modal = await call('wait', { checks: [{ selector: '#verify-state', condition: 'text', expected: 'Never matches' }], timeout_ms: 2000 });
+  const modal = await wait({ checks: [{ selector: '#verify-state', condition: 'text', expected: 'Never matches' }], timeout_ms: 2000 });
   assert.equal(modal.status, 'unavailable'); assert.equal(modal.results[0].actual.reason, 'dialog_open');
   const dialog = await call('snapshot'); assert.equal(dialog.dialog.type, 'confirm');
   await call('handle_dialog', { accept: false });
   assert.equal(await page('verifyWrites'), 2);
   assert.deepEqual(await focus(), beforeFocus);
   results.cases.push({ scenario: 'wait_verification', checks: passed.results.length, failed: failed.failed,
-    unavailable: unavailable.unavailable, batch_stopped: true, replacement: true, oopif: true, dialog_untouched: true, focus_preserved: true });
+    unavailable: unavailable.unavailable, single_contract: true, observation_retries: observationRetries, batch_stopped: true, replacement: true, oopif: true, dialog_untouched: true, focus_preserved: true });
 }

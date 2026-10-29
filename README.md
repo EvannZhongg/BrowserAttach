@@ -99,7 +99,7 @@ Claiming and ordinary input never activate a tab or window; call `browser_tab_co
 | `browser_fetch` | Read one HTTP(S) URL in a temporary background tab using the profile's sign-in; `text`/`html`/`json`, optional HTTP status and cursor continuation |
 | `browser_snapshot` / `browser_read_text` | AX snapshot, literal name/value query with actionable refs, and page text |
 | `browser_read_control` | Control state, related popups and active/selected options; preserves existing refs |
-| `browser_wait` | Wait for one condition, or verify `checks[]` with expected/actual, pass/fail/unavailable, count/nonempty predicates and safe read retry |
+| `browser_wait` | Read-only checks with uniform expected/actual, pass/fail/unavailable and safe read retry; one top-level condition or `checks[]` |
 | `browser_click` / `browser_hover` / `browser_drag` / `browser_select_option` / `browser_type` / `browser_fill` / `browser_press_key` / `browser_scroll` | Native/DOM input, pointer hover and drag, option selection, character typing and scrolling |
 | `browser_batch` | Run 1–30 click/fill/type/press_key/hover/scroll/select_option/wait steps in one queue; stops on the first failure and returns partial results |
 | `browser_navigate` | HTTP(S)/file navigation, back/forward and load waiting; local destinations require file access |

@@ -276,10 +276,11 @@ try {
 
   await page(`(() => {const state=document.createElement('div');state.id='prep-long-status';state.textContent='x'.repeat(1200)+'Completed';document.body.append(state)})()`);
   const longWait=await call('wait',{selector:'#prep-long-status',condition:'text',expected:'Completed'});
-  assert.equal(longWait.current.total_chars,1209);assert.equal(longWait.current.text_truncated,true);assert.equal(longWait.current.text.length,500);
+  assert.equal(longWait.results[0].actual.total_chars,1209);assert.equal(longWait.results[0].actual.text_truncated,true);assert.equal(longWait.results[0].actual.text.length,500);
   const prior=(await call('read_text',{selector:'#prep-long-status'})).text;
-  await assert.rejects(call('wait',{selector:'#prep-long-status',condition:'text',previous:prior,timeout_ms:150}),error=>error.diagnostics.current.total_chars===1209&&error.diagnostics.current.text_truncated);
-  results.cases.push({scenario:'full_text_wait_comparison_beyond_truncated_diagnostics',current:longWait.current});
+  const unchanged=await call('wait',{selector:'#prep-long-status',condition:'text',previous:prior,timeout_ms:150});
+  assert.equal(unchanged.status,'fail');assert.equal(unchanged.results[0].actual.total_chars,1209);assert.equal(unchanged.results[0].actual.text_truncated,true);
+  results.cases.push({scenario:'full_text_wait_comparison_beyond_truncated_diagnostics',current:longWait.results[0].actual});
   await page(`document.querySelector('#prep-long-status').remove()`);
 
   await page(`(() => {
@@ -548,12 +549,12 @@ try {
   await page('setTimeout(()=>{document.querySelector("#late").textContent="Ready";history.pushState({},"","/probe#done")},100);true');
   await call('wait',{selector:'#late',condition:'text',expected:'Ready'});await call('wait',{condition:'url',expected:'#done'});
   await page('setTimeout(()=>document.querySelector("#late").textContent="Completed",100);true');
-  assert.equal((await call('wait',{selector:'#late',condition:'text',previous:'Ready'})).current.text,'Completed');
+  assert.equal((await call('wait',{selector:'#late',condition:'text',previous:'Ready'})).results[0].actual.text,'Completed');
   await call('wait',{selector:'#child',condition:'actionable'});
   await page('fetch("/slow.js?wait");true');await call('wait',{condition:'network_idle',idle_ms:200,timeout_ms:4000});
   for(const [selector,condition] of [['#absent','attached'],['#hidden','visible'],['#disabled','actionable']]) {
-   let error;try{await call('wait',{selector,condition,timeout_ms:150})}catch(e){error=e.message}
-   assert.match(error,/Wait for .*current=/);results.cases.push({scenario:'wait_failure',selector,error});
+   const result=await call('wait',{selector,condition,timeout_ms:150});
+   assert.equal(result.status,'fail',JSON.stringify(result));assert.equal(result.timed_out,true);results.cases.push({scenario:'wait_failure',selector,result});
   }
   await page(`(() => {
     const section=document.createElement('section');section.id='wait-probe';
@@ -583,11 +584,11 @@ try {
     {action:'wait',selector:'#wait-gone',condition:'absent'},
     {action:'wait',selector:'button',selector_type:'role',name:'Gone state probe',condition:'absent'},
   ]});
-  assert.equal(stateWaits.completed,true);assert.ok(stateWaits.results.slice(1).every(r=>r.satisfied));
+  assert.equal(stateWaits.completed,true);assert.ok(stateWaits.results.slice(1).every(r=>r.status==='pass'));
   for (const [selector,condition,expected] of [['#wait-hidden','absent',undefined],['#wait-unknown','expanded',false]]) {
-    await assert.rejects(call('wait',{selector,condition,expected,timeout_ms:150}), error=>{
-      assert.equal(error.input_dispatched,false);assert.equal(error.diagnostics.current.state,condition==='absent'?'attached':'unavailable');return true;
-    });
+    const result=await call('wait',{selector,condition,expected,timeout_ms:150});
+    assert.equal(result.status,condition==='absent'?'fail':'unavailable');assert.equal(result.retry_safe,true);
+    assert.equal(result.results[0].actual.state,condition==='absent'?'attached':'unavailable');
   }
   assert.equal(await page('window.waitWrites'),1);
   await call('wait',{selector:'#wait-check',condition:'checked',expected:true});

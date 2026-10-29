@@ -515,7 +515,7 @@ test('native select hits fail before dispatch and lost receipts free a long-budg
 test('batch uses a child timeout for wait and resumes explicitly without replaying completed steps', async () => {
   const f=fixture();await f.claim();const send=f.api.debugger.sendCommand;
   f.api.debugger.sendCommand=async(target,method,args)=> method==='Runtime.evaluate'&&args.expression.includes('function inspectWait')
-    ? {result:{value:{satisfied:false,state:'absent'}}} : send(target,method,args);
+    ? {result:{value:[{satisfied:false,state:'absent'}]}} : send(target,method,args);
   const steps=[{action:'click',selector:'#first'},{action:'wait',selector:'#later',condition:'visible',timeout_ms:100},{action:'click',selector:'#last'}];
   const failed=await f.exec('batch',{steps,timeout_ms:5000});
   assert.equal(failed.failed_step,1);assert.equal(failed.retry_failed_step_safe,true);

@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.31.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.32.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -53,7 +53,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 | `browser_type` | 在当前选区逐字符输入 |
 | `browser_press_key` | 向当前焦点发送单键或组合键 |
 | `browser_select_option` | 设置一个 HTML select 选项 |
-| `browser_wait` | 单条件等待，或 checks[] 多条件只读验证并返回期望/实际与三态结果 |
+| `browser_wait` | 单项或多项只读检查，统一返回期望/实际与三态结果 |
 | `browser_scroll` | 滚动容器或有界查找虚拟列表项 |
 | `browser_batch` | 在同一标签队列中执行有限步骤 |
 | `browser_navigate` | URL 导航、后退或前进 |
@@ -408,9 +408,9 @@ pointer 用于鼠标驱动控件，核验 pointerdown/move/up；html5 用真实�
 | `url` | 主 frame URL 含 expected |
 | `network_idle` | 已观察的请求 inflight=0，且连续 idle_ms 无活动 |
 
-元素条件必须提供严格 selector，可带 frame/nth；文本优先限定结果或状态容器，全页渲染文字可用 `selector:"body"`。url/network_idle 不使用元素目标。工具只读等待，超时附带条件及最后状态。
+元素条件必须提供严格 selector，可带 frame/nth；文本优先限定结果或状态容器，全页渲染文字可用 `selector:"body"`。url/network_idle 不使用元素目标。顶层条件是单项检查的简写，与 checks 使用同一执行路径和返回结构；超时返回三态报告。
 
-text 比较始终使用完整 innerText。current.text 只预览前 500 字符，total_chars 与 text_truncated 说明长度和预览截断；超出时附缩小容器和回读提示。不要将预览截断误解为匹配范围受限，也不要用预览作为 previous。
+text 比较始终使用完整 innerText。results[i].actual.text 只预览前 500 字符，total_chars 与 text_truncated 说明长度和预览截断；超出时附缩小容器和回读提示。不要将预览截断误解为匹配范围受限，也不要用预览作为 previous。
 
 不知道下一条文案时，先用 read_text 读取该容器，确认 offset=0、truncated=false，并将完整旧文本传给 previous。容器文字变化只证明观察到了不同文本，不证明新一轮业务已完成；旧结果和新结果相同、或中间变化短于轮询间隔时可能无法区分。应结合站点实际提供的运行状态、请求或结果标识核验，不用工具调用时间戳推断业务新鲜度。
 
@@ -429,7 +429,7 @@ text 比较始终使用完整 innerText。current.text 只预览前 500 字符�
 
 network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后观察到的页面/iframe 请求，不包含独立 worker 或 WebSocket 消息；长轮询会阻止满足。请求跟踪溢出时 tracking_overflow=true，不能报告已确认空闲。业务就绪优先等待具体元素或标志。
 
-也可提供 `checks`（1–30 项）进行多条件验证，与顶层 condition、expected、previous、idle_ms 和定位字段互斥。每项沿用上述条件和定位参数，另外支持：
+也可提供 `checks`（1–30 项）进行多条件验证，与顶层 condition、expected、previous、idle_ms 和定位字段互斥。顶层单项简写和数组中的每一项均支持上述条件和以下参数：
 
 | 参数/条件 | 语义 |
 |---|---|
@@ -452,9 +452,9 @@ network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后
 
 `pass` 表示本轮全部符合期望；预算结束时，只要存在确定不符项整体为 `fail`，否则有不可读项为 `unavailable`。未完成本轮读取的项标为不可用，不沿用之前的通过状态。fail 只表示截止时未满足，不能据此断言提交失败或稍后不会成功；缺失/无效 ARIA、frame 不可读、网络跟踪溢出等不当成 false。未通过的检查属于正常结果，不设置 MCP isError；非法参数、定位歧义、权限或控制权错误仍为工具错误。
 
-checks 仅接受 `dialog_policy:"ask"`，不自动接受或关闭对话框；被对话框阻塞时报告 unavailable。`retry_safe` 仅指重复本次只读检查不会再次提交，不保证连接仍有效，也不允许重放前序动作。原单条件接口及其超时报错方式保留。
+browser_wait 仅接受 `dialog_policy:"ask"`，不自动接受或关闭对话框；被对话框阻塞时报告 unavailable。`retry_safe` 仅指重复本次只读检查不会再次提交，不保证连接仍有效，也不允许重放前序动作。顶层单条件字段保留为简写，统一返回 status/results，不再返回旧的 satisfied/current，也不因条件超时抛出旧的等待错误。调用方应读取 status 判断检查结论，从 results[i].actual 读取实际观测；两种输入形式的错误通道相同。
 
-batch 的 wait 步骤也支持 checks；未通过时停止后续步骤，在 `verification` 中保留完整结果，并返回 completed=false、failed_step、retry_failed_step_safe=true 和 MCP isError。若 batch 默认采用 accept/dismiss，此步骤须显式指定 dialog_policy=ask；所有步骤的有效策略在首次输入前预检。重查安全仅适用于失败的验证步骤，整批仍可能包含已完成的写入。
+batch 的 wait 步骤支持相同的两种输入形式；未通过时停止后续步骤，在 `verification` 中保留完整结果，并返回 completed=false、failed_step、retry_failed_step_safe=true 和 MCP isError。若 batch 默认采用 accept/dismiss，此步骤须显式指定 dialog_policy=ask；所有步骤的有效策略在首次输入前预检。重查安全仅适用于失败的验证步骤，整批仍可能包含已完成的写入。
 
 ### browser_fill
 

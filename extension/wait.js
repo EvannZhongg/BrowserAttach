@@ -3,112 +3,41 @@ import { queryElement, targetOptions, resolveSelector, resolveFrame, matchRole, 
 import { checkedValue } from './errors.js';
 import { boundedRead } from './outcomes.js';
 
-export const WAIT_CONDITIONS = ['attached', 'absent', 'visible', 'actionable', 'text', 'value', 'checked', 'selected', 'expanded', 'url', 'network_idle'];
-export const VERIFY_CONDITIONS = [...WAIT_CONDITIONS, 'count', 'value_present'];
+export const WAIT_CONDITIONS = ['attached', 'absent', 'visible', 'actionable', 'text', 'value', 'checked', 'selected', 'expanded', 'url', 'network_idle', 'count', 'value_present'];
 export const MAX_WAIT_CHECKS = 30;
 const locatorFields = ['selector', 'selector_type', 'name', 'frame_id', 'frame', 'nth'];
 const checkFields = [...locatorFields, 'condition', 'expected', 'previous', 'idle_ms', 'not'];
 
 export function waitOptions(args) {
-  if (args.checks != null) {
-    if (!Array.isArray(args.checks) || args.checks.length < 1 || args.checks.length > MAX_WAIT_CHECKS) throw new Error(`checks must contain 1..${MAX_WAIT_CHECKS} checks`);
-    if ([...checkFields, 'ref'].some(key => args[key] != null)) throw new Error('checks is exclusive with single-condition and locator fields');
-    if (args.dialog_policy != null && args.dialog_policy !== 'ask') throw new Error('Verification requires dialog_policy=ask; it never handles dialogs');
-    for (const check of args.checks) {
-      if (!check || typeof check !== 'object' || Array.isArray(check) || Object.keys(check).some(key => !checkFields.includes(key))) throw new Error('Invalid verification check fields');
-      if (!VERIFY_CONDITIONS.includes(check.condition)) throw new Error('Unknown verification condition');
-      if (check.not != null && typeof check.not !== 'boolean') throw new Error('not must be boolean');
-      if (['count', 'value_present'].includes(check.condition)) {
-        if (!check.selector) throw new Error(`${check.condition} requires a reusable selector`);
-        targetOptions(check);
-        if (check.previous != null || check.idle_ms != null) throw new Error('previous/idle_ms are not used by this condition');
-        if (check.condition === 'count' && (!Number.isSafeInteger(check.expected) || check.expected < 0 || check.nth != null)) throw new Error('count requires a nonnegative safe integer expected and forbids nth');
-        if (check.condition === 'value_present' && typeof check.expected !== 'boolean') throw new Error('value_present requires expected=true/false; whitespace is nonempty');
-      } else {
-        if (check.condition !== 'network_idle' && check.idle_ms != null) throw new Error('idle_ms is only valid for network_idle checks');
-        waitOptions(check);
-      }
-    }
-    return;
-  }
+  const supplied = args.checks !== undefined;
+  if (supplied && checkFields.some(key => args[key] !== undefined)) throw new Error('Provide checks or one top-level check, never both');
+  if (args.ref != null) throw new Error('Wait requires reusable selectors, not refs');
+  const checks = supplied ? args.checks : args.condition === undefined ? undefined
+    : [Object.fromEntries(checkFields.filter(key => args[key] !== undefined).map(key => [key, args[key]]))];
+  if (!Array.isArray(checks) || checks.length < 1 || checks.length > MAX_WAIT_CHECKS) throw new Error(`Provide one condition or checks containing 1..${MAX_WAIT_CHECKS} checks`);
+  if (args.dialog_policy != null && args.dialog_policy !== 'ask') throw new Error('Verification requires dialog_policy=ask; it never handles dialogs');
+  for (const check of checks) checkOptions(check);
+  return checks;
+}
+
+function checkOptions(args) {
+  if (!args || typeof args !== 'object' || Array.isArray(args) || Object.keys(args).some(key => !checkFields.includes(key))) throw new Error('Invalid wait check fields');
   if (!WAIT_CONDITIONS.includes(args.condition)) throw new Error('Unknown wait condition');
+  if (args.not != null && typeof args.not !== 'boolean') throw new Error('not must be boolean');
   const element = !['url', 'network_idle'].includes(args.condition);
   if (element) {
-    if (!args.selector || args.ref != null) throw new Error(`${args.condition} wait requires a reusable selector${args.condition === 'text' ? '; prefer the result/status container, or use selector="body" for whole-page rendered text' : ''}`);
+    if (!args.selector) throw new Error(`${args.condition} wait requires a reusable selector${args.condition === 'text' ? '; prefer the result/status container, or use selector="body" for whole-page rendered text' : ''}`);
     targetOptions(args);
-  } else if (args.selector != null || args.ref != null || args.frame_id != null || args.frame != null || args.nth != null || args.selector_type != null || args.name != null) throw new Error('This wait condition does not use an element target');
+  } else if (locatorFields.some(key => args[key] != null)) throw new Error('This wait condition does not use an element target');
   if (args.condition === 'text' && (Number(typeof args.expected === 'string') + Number(typeof args.previous === 'string') !== 1)) throw new Error('text wait requires exactly one of expected (substring) or previous (full prior text)');
   if (args.condition === 'url' && typeof args.expected !== 'string') throw new Error('url wait requires expected text (substring)');
   if (args.condition === 'value' && typeof args.expected !== 'string') throw new Error('value wait requires an exact expected string');
-  if (['checked', 'selected', 'expanded'].includes(args.condition) && typeof args.expected !== 'boolean' && !(args.condition === 'checked' && args.expected === 'mixed')) throw new Error(`${args.condition} wait requires expected=true/false${args.condition === 'checked' ? ' or "mixed"' : ''}`);
-  if (!['text', 'url', 'value', 'checked', 'selected', 'expanded'].includes(args.condition) && args.expected != null) throw new Error('expected is not used by this wait condition');
+  if (['checked', 'selected', 'expanded', 'value_present'].includes(args.condition) && typeof args.expected !== 'boolean' && !(args.condition === 'checked' && args.expected === 'mixed')) throw new Error(`${args.condition} wait requires expected=true/false${args.condition === 'checked' ? ' or "mixed"' : ''}`);
+  if (args.condition === 'count' && (!Number.isSafeInteger(args.expected) || args.expected < 0 || args.nth != null)) throw new Error('count requires a nonnegative safe integer expected and forbids nth');
+  if (!['text', 'url', 'value', 'checked', 'selected', 'expanded', 'count', 'value_present'].includes(args.condition) && args.expected != null) throw new Error('expected is not used by this wait condition');
   if (args.condition !== 'text' && args.previous != null) throw new Error('previous is only valid for text waits');
+  if (args.condition !== 'network_idle' && args.idle_ms != null) throw new Error('idle_ms is only valid for network_idle checks');
   if (args.condition === 'network_idle' && (!Number.isInteger(args.idle_ms ?? 500) || (args.idle_ms ?? 500) < 100 || (args.idle_ms ?? 500) > 10000)) throw new Error('idle_ms must be 100..10000');
-}
-
-export async function waitFor(cdp, value, sessions, network, pointer, tabId, args, context = {}) {
-  waitOptions(args);
-  if (args.checks) return await verifyChecks(cdp, value, sessions, network, pointer, tabId, args, context);
-  const budget = args.budget || deadline(args.timeout_ms ?? 5000, 'wait');
-  let current = 'not observed', previous;
-  const description = `${args.condition}${args.selector ? ` selector=${JSON.stringify(args.selector)}` : ''}${args.name != null ? ` name=${JSON.stringify(args.name)}` : ''}${args.expected != null && args.condition !== 'value' ? ` expected${['text', 'url'].includes(args.condition) ? ' substring' : ''}=${JSON.stringify(args.expected)}` : ''}${args.previous != null ? ` text different from=${JSON.stringify(args.previous).slice(0, 500)}` : ''}`;
-  try {
-    while (true) {
-      if (args.condition === 'network_idle') {
-        current = network.networkStatus(tabId);
-        if (!current.tracking_overflow && current.inflight === 0 && current.idle_ms >= (args.idle_ms ?? 500)) return { satisfied: true, condition: args.condition, current };
-      } else if (args.condition === 'url') {
-        current = value(await budget.run(() => cdp(tabId, 'Runtime.evaluate', { expression: 'location.href', returnByValue: true })));
-        if (current.includes(args.expected)) return { satisfied: true, condition: args.condition, current };
-      } else {
-        try {
-          const frameId = await resolveFrame(cdp, value, sessions, tabId, args, budget);
-          const target = sessions.target(tabId, frameId);
-          if (args.selector_type === 'role') {
-            const node = await resolveSelector(cdp, value, sessions, tabId, args, budget, { wait: false });
-            try {
-              current = node ? value(await budget.run(() => cdp(node.target, 'Runtime.callFunctionOn', { objectId: node.objectId, returnByValue: true,
-                functionDeclaration: `function(args) { return (${inspectWait.toString()})(() => this, (${inspectTarget.toString()}), args); }`, arguments: [{ value: { selector: args.selector, condition: args.condition, expected: args.expected, previous: args.previous } }] }))) : { satisfied: args.condition === 'absent', state: 'absent' };
-            } finally {
-              if (node) await budget.run(() => cdp(node.target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach' }));
-            }
-          } else {
-            const { executionContextId } = await budget.run(() => cdp(target, 'Page.createIsolatedWorld', { frameId, worldName: 'browser-attach-locator' }));
-            const send = (method, params) => budget.run(() => cdp(target, method, params));
-            current = await checkedValue(await send('Runtime.evaluate', { contextId: executionContextId, returnByValue: true,
-              expression: `(${inspectWait.toString()})((${queryElement.toString()}),(${inspectTarget.toString()}),${JSON.stringify(args)})` }), send, value);
-          }
-          const stable = current?.ready && previous?.ready && JSON.stringify(current) === JSON.stringify(previous);
-          if (current?.satisfied && (args.condition !== 'actionable' || stable)) {
-            if (args.condition === 'actionable') {
-              try {
-                const node = await resolveSelector(cdp, value, sessions, tabId, args, budget);
-                try {
-                  await pointer.prepare(tabId, node, { budget, scroll: false });
-                  current = { ...current, state: 'actionable' };
-                } finally {
-                  await budget.run(() => cdp(node.target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach' }));
-                }
-              } catch (error) {
-                if (!/covers|no visible click point|detached before resolution/i.test(error.message)) throw error;
-                current = { satisfied: false, reason: error.message, ...(error.diagnostics ? { diagnostics: error.diagnostics } : {}) };
-              }
-            }
-            if (current.satisfied) return { satisfied: true, condition: args.condition, current };
-          }
-          previous = current;
-        } catch (error) {
-          if (!/context.*(destroyed|not found)|cannot find context|no frame with given id|inspected target navigated|detached before resolution|no node|could not find node|node.*(detached|not found)/i.test(error.message)) throw error;
-          current = 'document/frame changing'; previous = null;
-        }
-      }
-      await budget.run(() => new Promise(resolve => setTimeout(resolve, 50)));
-    }
-  } catch (error) {
-    throw Object.assign(new Error(`Wait for ${description} failed: ${error.message}; current=${JSON.stringify(current)}`), {
-      input_dispatched: false, diagnostics: error.diagnostics ?? { reason: 'wait_unsatisfied', condition: args.condition, current },
-    });
-  }
 }
 
 export function inspectWait(query, inspect, args) {
@@ -184,8 +113,8 @@ function verificationResult(checks, observations, timedOut) {
     retry_safe: true, failed, unavailable: missing, results };
 }
 
-async function verifyChecks(cdp, value, sessions, network, pointer, tabId, args, context) {
-  const checks = args.checks, budget = args.budget || deadline(args.timeout_ms ?? 5000, 'wait');
+export async function waitFor(cdp, value, sessions, network, pointer, tabId, args, context = {}) {
+  const checks = waitOptions(args), budget = args.budget || deadline(args.timeout_ms ?? 5000, 'wait');
   const groups = new Map();
   checks.forEach((check, index) => {
     const key = ['url', 'network_idle'].includes(check.condition) ? `global-${check.condition}`

@@ -338,7 +338,7 @@ try {
       setTimeout(() => { probe.firstChild.textContent = 'RENDERED_READY'; window.waitProbeReady = true; }, 1000);
     })()`);
     const waited = await call('wait', { ...handle, selector: '#wait-probe', condition: 'text', ...comparison, timeout_ms: 3000 });
-    assert.equal(waited.current.text, 'RENDERED_READY');
+    assert.equal(waited.results[0].actual.text, 'RENDERED_READY');
     assert.equal((await evaluate('window.waitProbeReady')).value, true);
   }
   await evaluate(`document.querySelector('#wait-probe').remove()`);

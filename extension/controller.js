@@ -187,7 +187,7 @@ export function createController(api, notify = () => {}) {
     if (command === 'handle_dialog') return await dialogs.handle(tabId, args);
     if (dialogs.has(tabId)) {
       if (command === 'snapshot') return { dialog: dialogs.get(tabId), note: 'Use browser_handle_dialog to accept or dismiss this dialog.' };
-      if (command !== 'release_tab' && !(command === 'wait' && args.checks)) throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
+      if (command !== 'release_tab' && command !== 'wait') throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
     }
     if (command === 'snapshot') return await observations.snapshot(tabId, args);
     if (command === 'read_control') return await readControl(tabId, args);
@@ -204,7 +204,7 @@ export function createController(api, notify = () => {}) {
           const { action: command, ...inputArgs } = step;
           const stepBudget = budget.child(step.timeout_ms ?? 30000, command === 'wait' ? 'wait' : 'input');
           const result = await perform(tabId, command, { ...inputArgs, dialog_policy: step.dialog_policy ?? args.dialog_policy ?? 'ask', budget: stepBudget });
-          if (command === 'wait' && inputArgs.checks && result.status !== 'pass') {
+          if (command === 'wait' && result.status !== 'pass') {
             return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index,
               next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: true,
               error: 'Verification did not pass', input_dispatched: false, verification: result,
@@ -339,9 +339,9 @@ export function createController(api, notify = () => {}) {
   }
 
   async function perform(tabId, command, args) {
-    if (command === 'wait' && args.checks) waitOptions(args);
     let observationKind, snapshotPlan;
     try {
+      if (command === 'wait') waitOptions(args);
       if (args.observe != null) observationKind = actionObservationOptions(args.observe);
       if (observationKind === 'snapshot') snapshotPlan = observations.prepareSnapshot(tabId, args.observe);
     } catch (error) { error.input_dispatched = false; throw error; }
@@ -361,7 +361,7 @@ export function createController(api, notify = () => {}) {
         return { available: true, ...await readControl(tabId, args.observe, budget) };
       } catch (error) { return { available: false, ...(observationKind === 'snapshot' ? { kind: 'snapshot' } : {}), ...errorData(error) }; }
     }
-    const state = dialogs.enter(tabId, args.dialog_policy);
+    const state = dialogs.enter(tabId, command === 'wait' ? 'ask' : args.dialog_policy);
     let outcome;
     try {
       outcome = await outcomes.begin(tabId, command, args);

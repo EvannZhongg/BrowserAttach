@@ -47,21 +47,21 @@ test('select preparation changes nothing and inherited inert across a slot or sh
 });
 
 test('text wait without selector gives a condition-specific whole-page example', () => {
-  assert.throws(() => waitOptions({ condition: 'text', expected: 'Ready' }), /text wait requires a reusable selector.*body/);
-  waitOptions({ condition: 'text', selector: 'body', expected: 'Ready' });
+  assert.throws(() => waitOptions({ checks: [{ condition: 'text', expected: 'Ready' }] }), /text wait requires a reusable selector.*body/);
+  waitOptions({ checks: [{ condition: 'text', selector: 'body', expected: 'Ready' }] });
 });
 
-test('wait failures include the requested condition and the last absent/hidden/disabled state', async () => {
+test('unmet wait checks return the requested condition and actual absent/hidden/disabled state', async () => {
   const sessions = { frames: async () => [{ id: 'main' }], target: () => ({ tabId: 1 }) };
   for (const [condition, state] of [['attached', 'absent'], ['visible', 'hidden'], ['actionable', 'disabled']]) {
     const calls = [];
-    const cdp = async (target, method) => { calls.push(method); return method === 'Page.createIsolatedWorld' ? { executionContextId: 2 } : { result: { value: { satisfied: false, state } } }; };
-    await assert.rejects(waitFor(cdp, r => r.result.value, sessions, null, null, 1, { selector: '#target', condition, timeout_ms: 100 }), error => {
-      assert.match(error.message, new RegExp(`Wait for ${condition}.*#target.*current=.*${state}`)); return true;
-    });
+    const cdp = async (target, method) => { calls.push(method); return method === 'Page.createIsolatedWorld' ? { executionContextId: 2 } : { result: { value: [{ satisfied: false, state }] } }; };
+    const result = await waitFor(cdp, r => r.result.value, sessions, null, null, 1, { checks: [{ selector: '#target', condition }], timeout_ms: 100 });
+    assert.equal(result.status, 'fail'); assert.equal(result.timed_out, true);
+    assert.equal(result.results[0].condition, condition); assert.equal(result.results[0].actual.state, state);
     assert.ok(!calls.some(m => m.startsWith('Input.') || m.startsWith('DOM.')));
   }
-  for (const args of [{ condition: 'url' }, { condition: 'attached', ref: 'old' }, { condition: 'network_idle', selector: 'button' }]) assert.throws(() => waitOptions(args));
+  for (const args of [{ condition: 'url' }, { condition: 'attached', ref: 'old' }, { condition: 'network_idle', selector: 'button' }]) assert.throws(() => waitOptions({ checks: [args] }));
 });
 
 test('visible waits accept disabled elements while actionable waits report the disabled reason', () => {
@@ -74,10 +74,10 @@ test('visible waits accept disabled elements while actionable waits report the d
 test('network idle uses passive request tracking and does not claim quiet while a request is inflight', async () => {
   const network = createNetworkTracker();network.start(1);
   network.event({ tabId: 1 }, 'Network.requestWillBeSent', { requestId: 'a', request: { url: 'https://test/', method: 'GET' } });
-  const run = () => waitFor(null, null, null, network, null, 1, { condition: 'network_idle', idle_ms: 100, timeout_ms: 150 });
-  await assert.rejects(run(), /inflight.*1/);
+  const run = () => waitFor(null, null, null, network, null, 1, { checks: [{ condition: 'network_idle', idle_ms: 100 }], timeout_ms: 150 });
+  const busy = await run(); assert.equal(busy.status, 'fail'); assert.equal(busy.results[0].actual.inflight, 1);
   network.event({ tabId: 1 }, 'Network.loadingFinished', { requestId: 'a' });
-  assert.equal((await run()).satisfied, true);
+  assert.equal((await run()).status, 'pass');
 });
 
 
@@ -86,8 +86,8 @@ test('text waits can observe any change from full previous text without knowing 
   assert.equal(inspectWait(query,null,{condition:'text',previous:'Before'}).satisfied,false);
   field.innerText='After';
   assert.equal(inspectWait(query,null,{condition:'text',previous:'Before'}).satisfied,true);
-  waitOptions({condition:'text',selector:'#state',previous:''});
-  assert.throws(()=>waitOptions({condition:'text',selector:'#state',previous:'old',expected:'new'}),/exactly one/);
+  waitOptions({checks:[{condition:'text',selector:'#state',previous:''}]});
+  assert.throws(()=>waitOptions({checks:[{condition:'text',selector:'#state',previous:'old',expected:'new'}]}),/exactly one/);
 });
 
 test('text waits use rendered text for both substring and full previous-value comparisons', () => {
@@ -146,12 +146,12 @@ test('new wait arguments validate before batch input, including false and mixed 
     { condition: 'value', expected: '' }, { condition: 'checked', expected: false },
     { condition: 'checked', expected: 'mixed' }, { condition: 'selected', expected: true },
     { condition: 'expanded', expected: false }, { condition: 'absent' },
-  ]) waitOptions({ selector: '#field', ...args });
+  ]) waitOptions({ checks: [{ selector: '#field', ...args }] });
   for (const args of [
     { condition: 'value', expected: true }, { condition: 'checked', expected: 'false' },
     { condition: 'selected', expected: 'mixed' }, { condition: 'expanded' },
     { condition: 'absent', expected: false }, { condition: 'value', expected: 'x', previous: '' },
-  ]) assert.throws(() => waitOptions({ selector: '#field', ...args }));
+  ]) assert.throws(() => waitOptions({ checks: [{ selector: '#field', ...args }] }));
 });
 
 test('value and absence waits re-resolve replacement nodes and preserve ambiguity without issuing input', async () => {
@@ -168,11 +168,11 @@ test('value and absence waits re-resolve replacement nodes and preserve ambiguit
       return { result: { value: result } };
     }
   };
-  const run = args => waitFor(cdp, r => r.result.value, sessions, null, null, 1, { selector: '#field', timeout_ms: 300, ...args });
-  assert.equal((await run({ condition: 'value', expected: 'after' })).satisfied, true);
+  const run = args => waitFor(cdp, r => r.result.value, sessions, null, null, 1, { checks: [{ selector: '#field', ...args }], timeout_ms: 300 });
+  assert.equal((await run({ condition: 'value', expected: 'after' })).status, 'pass');
   assert.equal(polls, 2);
   fields = [];
-  assert.equal((await run({ condition: 'absent' })).satisfied, true);
+  assert.equal((await run({ condition: 'absent' })).status, 'pass');
   fields = [1, 2].map(() => ({ nodeType: 1, textContent: '', tagName: 'INPUT',
     getBoundingClientRect: () => ({ width: 10, height: 10 }), matches: () => false, closest: () => null,
     ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: 'visible' }) } } }));
@@ -189,15 +189,14 @@ test('role absence and state waits use live AX targets, including missing-state 
     if (method === 'Runtime.callFunctionOn') return { result: { value: { satisfied: false, state: 'unavailable' } } };
     return {};
   };
-  const run = args => waitFor(cdp, r => r.result.value, sessions, null, null, 1, { selector: 'checkbox', selector_type: 'role', timeout_ms: 100, ...args });
-  assert.equal((await run({ condition: 'absent' })).satisfied, true);
+  const run = args => waitFor(cdp, r => r.result.value, sessions, null, null, 1, { checks: [{ selector: 'checkbox', selector_type: 'role', ...args }], timeout_ms: 100 });
+  assert.equal((await run({ condition: 'absent' })).status, 'pass');
   present = true;
-  await assert.rejects(run({ condition: 'checked', expected: false }), error => {
-    assert.equal(error.input_dispatched, false); assert.equal(error.diagnostics.current.state, 'unavailable'); return true;
-  });
-  await assert.rejects(run({ condition: 'value', expected: 'secret-password' }), error => {
-    assert.ok(!error.message.includes('secret-password')); return true;
-  });
+  const missing = await run({ condition: 'checked', expected: false });
+  assert.equal(missing.status, 'unavailable'); assert.equal(missing.results[0].actual.state, 'unavailable');
+  const privateValue = await run({ condition: 'value', expected: 'secret-password' });
+  assert.equal(privateValue.status, 'unavailable'); assert.ok(!JSON.stringify(privateValue).includes('secret-password'));
+
 });
 
 test('read-only role waits retry replaced nodes and do not accept state from a disconnected wrapper', async () => {
@@ -218,6 +217,6 @@ test('read-only role waits retry replaced nodes and do not accept state from a d
     assert.equal(method, 'Runtime.releaseObjectGroup'); return {};
   };
   const result = await waitFor(cdp, r => r.result.value, sessions, null, null, 1,
-    { selector: 'checkbox', selector_type: 'role', condition: 'checked', expected: true, timeout_ms: 500 });
-  assert.equal(result.satisfied, true); assert.equal(observations, 3);
+    { checks: [{ selector: 'checkbox', selector_type: 'role', condition: 'checked', expected: true }], timeout_ms: 500 });
+  assert.equal(result.status, 'pass'); assert.equal(observations, 3);
 });

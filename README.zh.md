@@ -99,7 +99,7 @@ npm 包附带可选的 [browser-attach skill](skills/browser-attach/SKILL.md)，
 | `browser_fetch` | 在临时后台标签中复用登录态读取一个 HTTP(S) URL；支持 `text`/`html`/`json`、可选 HTTP 状态和游标续读 |
 | `browser_snapshot` / `browser_read_text` | AX 快照、按字面名称/value 查询及可操作引用、正文 |
 | `browser_read_control` | 定向读取控件、关联弹层及活动/选中选项，保留已有 refs |
-| `browser_wait` | 单条件等待，或 checks[] 多条件只读验证，返回期望/实际、三态结果与安全重查信号 |
+| `browser_wait` | 单项或 checks[] 多项只读检查，统一返回期望/实际、三态结果与安全重查信号 |
 | `browser_click` / `browser_hover` / `browser_drag` / `browser_select_option` / `browser_type` / `browser_fill` / `browser_press_key` / `browser_scroll` | 原生/DOM 输入、指针悬停与拖拽、下拉选择、逐字输入与滚动 |
 | `browser_batch` | 单队列顺序执行 1–30 步 click/fill/type/press_key/hover/scroll/select_option/wait，失败即停并返回部分结果 |
 | `browser_navigate` | HTTP(S)/file 导航、后退前进与加载等待 |
