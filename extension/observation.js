@@ -1,4 +1,5 @@
-import { renderAX, snapshotOptions, snapshotPage } from './snapshot.js';
+import { axRefKey, indexAXRefs, renderAX, snapshotOptions, snapshotPage, validateSnapshotRequest } from './snapshot.js';
+import { snapshotDiff } from './snapshot-diff.js';
 import { createFieldReader } from './fields.js';
 import { deadline } from './actionability.js';
 
@@ -89,13 +90,12 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     if (!state) {
       state = { id: crypto.randomUUID().slice(0, 8), refs: new Map(), entries: [], invalidFrames: new Set(), totalNodes: 0, nextCursor: null, metadata: { omitted_frames: [] } };
     }
-    const refs = new Map(), additions = [];
+    const refs = new Map(), additions = [], existingRefs = indexAXRefs(state.refs);
     for (const ax of nodes) {
       if (!ax.backendDOMNodeId || refs.has(ax.backendDOMNodeId)) continue;
       const identity = { backendNodeId: ax.backendDOMNodeId, frameId, sessionId: target.sessionId,
         role: ax.role?.value, name: String(ax.name?.value || ''), ignored: !!ax.ignored };
-      const existing = [...state.refs].find(([, entry]) => entry.backendNodeId === identity.backendNodeId &&
-        entry.frameId === frameId && entry.sessionId === target.sessionId && entry.role === identity.role && entry.name === identity.name && !!entry.ignored === identity.ignored);
+      const existing = existingRefs.get(axRefKey(identity));
       const ref = existing?.[0] || `${state.id}:element:${(state.extraRefs || 0) + additions.length + 1}`;
       refs.set(identity.backendNodeId, ref);
       if (!existing) additions.push([ref, identity]);
@@ -142,18 +142,35 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
   }
 
   async function snapshot(tabId, args = {}, budget = deadline(30000, 'snapshot')) {
+    validateSnapshotRequest(args);
     if (args.cursor != null) {
       const state = snapshots.get(tabId);
       if (!state) throw new Error('Snapshot cursor is stale or unknown. Take a new browser_snapshot.');
       return snapshotPage(state, args);
     }
-    const options = snapshotOptions(args);
+    const previous = args.diff_since != null ? snapshots.get(tabId) : null;
+    if (args.diff_since != null) assertDiffBaseline(tabId, previous, args.diff_since);
+    const options = snapshotOptions(previous ? { ...previous.options, ...args } : args);
+    if (previous && Object.keys(options).some(key => options[key] !== previous.options[key])) {
+      throw new Error('diff_since uses the original profile/text/text_limit/query; take a new snapshot to change the view.');
+    }
     const claim = currentClaim(tabId);
-    invalidateSnapshot(tabId, 'snapshot_replaced');
-    return await retryObservation(() => captureSnapshot(tabId, args, options, budget, claim), budget);
+    if (!previous) invalidateSnapshot(tabId, 'snapshot_replaced');
+    return await retryObservation(() => {
+      if (previous) assertDiffBaseline(tabId, previous, args.diff_since);
+      return captureSnapshot(tabId, args, options, budget, claim, previous);
+    }, budget);
   }
 
-  async function captureSnapshot(tabId, args, options, budget, claim) {
+  function assertDiffBaseline(tabId, state, id) {
+    const fail = message => { throw Object.assign(new Error(`${message}. Take a new browser_snapshot without diff_since.`), { diagnostics: { reason: 'diff_baseline_invalid' } }); };
+    if (!state || snapshots.get(tabId) !== state || state.id !== id || !state.options) fail('Snapshot diff baseline is stale or unknown');
+    if (state.options.profile === 'fields') fail('diff_since supports full/interactive only');
+    if (!state.delivered) fail('Snapshot diff baseline has unread pages; finish its cursor before taking a diff');
+    if (state.invalidFrames.size || state.metadata.omitted_frames.length) fail('Snapshot diff baseline has incomplete or invalidated frame coverage');
+  }
+
+  async function captureSnapshot(tabId, args, options, budget, claim, previous) {
     const assertClaim = () => {
       if (!claim || currentClaim(tabId) !== claim) throw Object.assign(new Error('Tab control ended while reading the snapshot; no refs were published.'), { diagnostics: { reason: 'control_changed' } });
     };
@@ -169,6 +186,12 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
     const knownFrames = new Set(frames.map(frame => frame.id));
     const token = crypto.randomUUID().slice(0, 8);
     const refs = new Map(), entries = [], omittedFrames = [];
+    const previousRefs = previous && indexAXRefs(previous.refs), previousByFrame = new Map(), captured = new Map();
+    for (const entry of previous?.refs || []) {
+      const frameId = entry[1].frameId;
+      if (!previousByFrame.has(frameId)) previousByFrame.set(frameId, []);
+      previousByFrame.get(frameId).push(entry);
+    }
     const readFields = options.profile === 'fields' ? createFieldReader(send, value) : null;
     for (const frame of frames) {
       let nodes;
@@ -182,6 +205,17 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
         if (frame.id === mainId) throw error;
         omittedFrames.push({ frame_id: frame.id, url: frame.url, reason: error.message });
         continue;
+      }
+      if (previous?.frameScopes.has(frame.id) && previous.frameScopes.get(frame.id).sessionId !== target.sessionId) {
+        throw Object.assign(new Error('Snapshot diff frame session changed; take a new browser_snapshot without diff_since.'), { diagnostics: { reason: 'diff_baseline_invalid' } });
+      }
+      const byBackend = previous ? new Map() : null;
+      if (byBackend) for (const node of nodes) if (node.backendDOMNodeId && (!node.ignored || !byBackend.has(node.backendDOMNodeId))) byBackend.set(node.backendDOMNodeId, node);
+      captured.set(frame.id, { sessionId: target.sessionId, byBackend });
+      for (const [ref, identity] of previousByFrame.get(frame.id) || []) {
+        const node = byBackend.get(identity.backendNodeId);
+        if (node && identity.sessionId === target.sessionId && !!node.ignored === !!identity.ignored &&
+            node.role?.value === identity.role && String(node.name?.value || '') === identity.name) refs.set(ref, identity);
       }
       // Report cross-process frames that are missing from Page.getFrameTree.
       for (const node of nodes) {
@@ -206,8 +240,8 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
           continue;
         }
       } else {
-        rendered = renderAX(nodes, token, refs, frame.id, target.sessionId, options);
-        if (rendered.length || options.query == null) entries.push({ node: false, frameId: frame.id, line: `Frame ${frame.id} ${frame.url}` });
+        rendered = renderAX(nodes, token, refs, frame.id, target.sessionId, options, previousRefs);
+        if (rendered.length || options.query == null) entries.push({ node: false, frameId: frame.id, key: JSON.stringify(['frame', frame.id, target.sessionId]), line: `Frame ${frame.id} ${frame.url}` });
       }
       for (const entry of rendered) entries.push(entry);
     }
@@ -215,16 +249,33 @@ export function createObservations(cdp, value, sessions, viewport, currentClaim,
       expression: '({title: document.title, url: location.href})', returnByValue: true,
     }));
     const state = { id: token, options, refs, entries, invalidFrames: new Set(), totalNodes: entries.filter(entry => entry.node).length,
+      extraRefs: [...refs.keys()].filter(ref => ref.includes(':element:')).length,
+      frameScopes: new Map([...captured].map(([id, frame]) => [id, { sessionId: frame.sessionId }])),
       metadata: { title: metadata.title, url: metadata.url, viewport: await budget.run(() => viewport(tabId)), omitted_frames: omittedFrames,
         ...(readFields ? { frames: frames.map(frame => ({ frame_id: frame.id, url: frame.url })) } : {}) } };
     assertClaim();
     if (documentVersion !== documents.get(tabId)) throw Object.assign(new Error('Document changed while reading the snapshot. Take a new browser_snapshot.'), { diagnostics: { reason: 'document_changed' } });
-    for (const frame of frames) if (versions.get(frame.id) !== frameStates.get(tabId)?.versions.get(frame.id)) {
+    for (const frame of frames) if (versions.get(frame.id) !== frameStates.get(tabId)?.versions.get(frame.id) ||
+        captured.has(frame.id) && captured.get(frame.id).sessionId !== sessions.target(tabId, frame.id).sessionId) {
       omitFrame(tabId, state, frame.id, 'Frame changed while reading the snapshot; take a new snapshot to observe it');
     }
+    if (previous) {
+      assertDiffBaseline(tabId, previous, args.diff_since);
+      if (state.invalidFrames.size || omittedFrames.length) throw Object.assign(new Error('Snapshot diff capture has incomplete frame coverage; baseline was not advanced. Take a new browser_snapshot without diff_since.'), { diagnostics: { reason: 'diff_incomplete' } });
+      state.baseId = previous.id;
+      state.deltaEntries = snapshotDiff(previous.entries, entries);
+    }
+    const page = snapshotPage(state, args);
+    // Recheck the deadline after synchronous diffing/serialization, before any
+    // new baseline or retired identities can become visible.
     return await budget.run(() => {
       assertClaim();
-      const page = snapshotPage(state, args);
+      if (previous) assertDiffBaseline(tabId, previous, args.diff_since);
+      for (const [ref, node] of previous?.refs || []) if (!refs.has(ref)) {
+        const frame = captured.get(node.frameId);
+        retireRef(tabId, ref, !frame || frame.sessionId !== node.sessionId ? 'frame_changed' :
+          frame.byBackend.has(node.backendNodeId) ? 'identity_changed' : 'element_detached', node.frameId);
+      }
       snapshots.set(tabId, state);
       return page;
     });

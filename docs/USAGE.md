@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.28.2**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.29.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -94,6 +94,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 | `editor_model_unavailable` / `editor_model_ambiguous` | editor 模式无法读取暴露的完整模型，或所选容器包含多个 Monaco 实例；不退回 DOM 拼接 |
 | `delivery_unverified` | 可信输入事件回执未在回执预算内完成 |
 | `document_changed` / `snapshot_timeout` | snapshot 两次采集仍遇文档变化 / 观察总预算耗尽，不能使用失败采集的 refs |
+| `diff_baseline_invalid` / `diff_incomplete` | 增量基线失效、不完整或本次 frame 覆盖不完整；明确报错，不把未知内容作为删除 |
 | `target_changed` | click/hover 派发期间的目标核验被拒绝，可能已有前序输入送达 |
 | `preparation_timeout` / `input_timeout` | 无更具体准备原因的超时 / 已进入派发阶段后操作超时 |
 | `scroll_search_stopped` | 滚动查找停止，stop_reason 和进度证据见 browser_scroll |
@@ -151,7 +152,7 @@ text 是渲染后的 innerText，html 是当前 DOM（`dom:"rendered"`），均�
 
 ## 观察：快照与引用
 
-snapshot 返回 AX 语义树，每行 `[token:n] role "name" 状态`；`[token:n]` 是可操作 ref。结果包含 title/url、node_count/total_node_count、truncated/truncation_reason、next_cursor 和 omitted_frames。状态和值来自浏览器，不代表业务已完成。
+snapshot 返回 AX 语义树，每行 `[token:n] role "name" 状态`；`[token:n]` 是可操作 ref。结果包含 snapshot_id、title/url、node_count/total_node_count、truncated/truncation_reason、next_cursor 和 omitted_frames。状态和值来自浏览器，不代表业务已完成。下一步依赖新状态或动作结果不确定时按需观察，可选择定向控件、文本、日志或增量快照，无需每次输入后刷新整页。
 
 浏览器提供时保留 hasPopup（弹层类型）、expanded，以及 controls/owns 数组；fields 视图在 ax 中提供相同信息。controls/owns 是浏览器已解析关联的 DOM ID 字符串，不是 ref、AX ID 或后代作用域；可用于明确定位 document 根部的 portal 弹层。没有关联时省略，不根据位置、外观或打开顺序猜测归属；这些事实不代表节点是最终可选叶子或选项已提交。
 
@@ -163,7 +164,8 @@ snapshot 返回 AX 语义树，每行 `[token:n] role "name" 状态`；`[token:n
 | `text_limit` | 正文名称预览上限 0–10000；interactive 默认 80，full 默认不截断；控件名称和值保留完整 |
 | `query` | 1–2000 字符的名称/value/context 字面子串，不区分大小写；零命中正常返回 |
 | `max_nodes` / `max_chars` | 600 / 24000；范围分别为 1–3000 / 1–2000000，两个预算独立 |
-| `verbose` | false；true 额外返回 viewport 和 snapshot_id |
+| `diff_since` | 最新且完整读完的 full/interactive snapshot_id；继承原视图，返回变化片段；与 cursor 互斥，不支持 fields |
+| `verbose` | false；true 额外返回 viewport；snapshot_id 始终返回 |
 
 full/interactive 查询在当前视图中匹配完整名称/value/context，再截取正文预览；不搜索 role、ref 或未暴露给 AX 的属性。阅读查询保留 full，interactive 会先筛掉正文。视图和查询减少返回量，不减少完整 AX 树采集。
 
@@ -175,11 +177,24 @@ full/interactive 查询在当前视图中匹配完整名称/value/context，再�
 
 新建 snapshot 的采集总预算为 30 秒；遇文档变化或导航造成的上下文失效时，最多间隔 50 ms 完整重读一次，两次共享预算。失败采集的 refs 不会发布；控制权结束、非导航错误及预算耗尽不重试。cursor 续读始终读取原观察，失效时明确报错，不自动切换成新快照。navigate 附带的 snapshot 沿用导航观察的独立预算。
 
+`diff_since` 仍重新采集完整 AX，再按同一 frame/session 内的 AX 节点身份比较渲染后的语义视图。返回 `base_snapshot_id`、新的 `snapshot_id`、`changes` 和重建后视图的 `line_count`，用 changes 数组替代 snapshot 文本。属性或值变化只返回对应行，新增/删除分支及移动、重排返回对应的替换片段，不因某个后代变化而重发整个祖先树。每标签只保留最新观察；旧 ID 不可跨连接、重新接管或导航复用。
+
+```json
+{"tab_handle":"...","diff_since":"a12bc345"}
+```
+
+每个变化项形如 `{"start_line":8,"delete_count":1,"line_offset":0,"snapshot":"  [a12bc345:3] textbox \"Name\" value=\"Updated\"","complete":true}`。`start_line` 是基线整份文本中的零基行号，包含 Frame 标题；从该处删除 delete_count 行，再插入 snapshot 中的行。空 snapshot 表示不插入内容。各项坐标始终相对基线，不随先前变化偏移；客户端收齐分页后按 start_line 从大到小应用即可重建当前视图。
+
+变化项可以跨页：按相同 start_line 及 line_offset 顺序拼接插入文本，用换行连接非空片段；line_offset 是该项插入文本内的零基行偏移，complete=true 表示该项结束。delete_count 只应用一次。max_nodes 计本页新增/替换的语义节点，删除项不计；max_chars 同时计片段元数据和文本；total_node_count 是当前整个视图的节点数。只带 cursor 续读同一份增量，不再提供 diff_since，也不重新采集。分页期间 frame 失效会明确报错，不能应用不完整补丁。全部读完后，新的 snapshot_id 才能作为下一次基线。
+
+基线必须已读完全部分页，且没有遗漏或失效 frame；输入过早使未读分页失效时须新建普通快照。profile/text/text_limit/query 省略时继承，显式提供则必须一致。文档、子 frame 或 session 失效会拒绝旧基线；本次 frame 读取失败也明确报错，不把未知内容当成删除。采集或输出预算失败不会推进仍有效的基线；主文档变化后不会跨文档重试增量。changes=[] 仅表示当前视图内未发现差异，不证明事件未派发、页面所有事实不变或业务成功。
+
 | 事件 | ref / 快照分页的影响 |
 |---|---|
 | 输入、新 evaluate 表达式 | 快照 cursor 失效；节点及其语义身份未变时 ref 可复用 |
 | evaluate 缓存续读 | 不影响当前 refs 或快照分页 |
-| 新 snapshot（含新查询或视图） | 旧 refs 和快照 cursor 失效 |
+| 不带 diff_since 的新 snapshot（含新查询或视图） | 旧 refs 和快照 cursor 失效 |
+| snapshot(diff_since=...) | 身份未变的 refs 保留，新增节点取得新 ref；被删除/替换或 role/name/可访问身份变化的旧 ref 失效；替换原分页 |
 | 主文档导航、同文档导航或更新 | 全部失效 |
 | 子 frame 导航或移除 | 该子树 refs 失效，其余保留 |
 | 释放、关闭或断连 | 全部失效 |

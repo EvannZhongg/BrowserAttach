@@ -297,7 +297,7 @@ test('snapshot query starts a fresh observation, returns actionable refs and bin
   assert.equal(found.profile, 'full'); assert.equal(found.node_count, 1); assert.equal(found.total_node_count, 1);
   assert.match(found.snapshot, /Frame main.*\n.*button "Submit"/);
   assert.doesNotMatch(found.snapshot, /textbox|RootWebArea/);
-  assert.equal(found.next_cursor, null); assert.equal(found.viewport, undefined); assert.equal(found.snapshot_id, undefined);
+  assert.equal(found.next_cursor, null); assert.equal(found.viewport, undefined); assert.ok(found.snapshot_id);
   await assert.rejects(f.exec('click', { ref: oldRef }), /stale/);
   const ref = f.ref(found);
   await f.exec('click', { ref });

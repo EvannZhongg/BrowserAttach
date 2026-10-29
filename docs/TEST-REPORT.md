@@ -1,8 +1,15 @@
 # 验证报告
 
-当前版本 **0.28.2**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.29.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
-## 0.28（当前）
+## 0.29（当前）
+
+- 能力：snapshot(diff_since=snapshot_id) 在全量 AX 采集后返回 full/interactive 语义变化，以基线行范围表示插入、删除、重排及属性变化；保留身份未变的 ref。snapshot_id 始终返回，verbose 仅额外返回 viewport。fields 暂不支持增量；普通新 snapshot 仍废弃旧 ref。
+- 边界：只接受最新且完整读完、frame 覆盖完整的基线；视图参数继承并绑定。增量分页可重建视图，分页期间 frame 失效明确失败；文档/frame/session/claim 变化不得跨基线发布，覆盖缺失不当成删除，预算或采集失败不推进仍有效的基线。定向观察追加的 ref 在查询结果外也会重新核验。README、共享 instructions 和 skill 改为在下一步依赖新状态或结果不确定时观察。
+- 验证：全套单测以并发 4 单独运行，366 项通过；与双浏览器集成同时运行时，3 个既有短超时断言失败，单独复跑全部通过。新增 20 项差分测试涵盖空变化、同名替换、稳定 ref、查询和合并正文、属性顺序、千节点随机重排重建、分页及双预算、失效和超时迟到。Chrome 156 与 Edge 156 隔离 snapshots 组通过，包含闭合 Shadow DOM、同进程 iframe、OOPIF、局部值变化、分支增删移动、同名替换、精确重建和不抢焦点；fixture 的局部更新变化片段为 226 字符，原正文为 6324 字符，仅说明输出减少，不减少全量 AX 读取。
+- 打包与部署：包外安装、stdio schema 与配对目录检查通过，70 文件、24 工具。Hub 与配对 Chrome/Edge 扩展更新为 0.29.0 / ready，稳定副本 46 个非生成资源哈希一致，manifest 版本与身份核对通过；实际配对链路使用后台本地 fixture 核验新 schema、空变化（changes=[]）、局部值变化的单行片段、保留 ref 实际点击、节点替换后旧 ref 以 element_detached 失效，以及 fields 视图拒绝增量。已有 MCP 会话需重新连接以加载新 schema。记录：unit-0290.log、snapshot-unit-0290-final.log、snapshot-diffs-0290-{chromium,edge}.log、snapshot-diffs-{chromium,edge}.json、package-0290.log、deployment-0.29.0.json、runtime-mcp-0.29.0.json。
+
+## 0.28
 
 - 0.28.2：popups[].dom.text 在 CDP 返回前改为最多 120 字符预览，超过上限保留 text_truncated=true；控件文本仍为 1000，选项、选中/活动项与 refs 不变。共享 instructions 明确弹层选项/选中活动项用 read_control，整页字段值/状态用 snapshot(fields)；仍采集整个 frame AX，不宣称协议成本或总输出一定更低。全套单测 346 项通过（control.test.mjs 16 项，含新增的弹层文本预览边界用例；hub stdio 断言 24 个工具与 instructions 选型）；隔离 controls 组在 Chrome 156.0.8078.48 与 Edge 156.0.4314.42 通过；打包检查通过（69 文件、24 工具）；Hub 与 Chrome/Edge 扩展为 0.28.2 / ready，45 个非生成文件哈希一致，新 stdio 会话确认为 24 个工具且 instructions 含选型规则。测试脚本改用 CDP Extensions.loadUnpacked 加载扩展：品牌 Chrome/Edge 已忽略 --load-extension，且 --disable-extensions-except 会让 CDP 加载的扩展不启动。记录：control-preview-unit-0282.log、package-0282.log、controls-0282-chromium.log、controls-0282-edge.log、deployment-0.28.2.json、runtime-mcp-0.28.2.json。
 

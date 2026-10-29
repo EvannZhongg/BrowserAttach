@@ -83,7 +83,7 @@ The npm package includes an optional [browser-attach skill](skills/browser-attac
 1. `browser_discover(kind="browsers")` → `browser_discover(kind="tabs")` to confirm the browser, tab title and URL.
 2. `browser_claim_tab` with the `tab_id` from `discover(kind="tabs")` (optional `expected_url` / `expected_title` exact guards) to take control and receive this connection's `tab_handle`.
 3. `browser_snapshot` to get element `ref`s, then click, fill or run other actions.
-4. Observe again after each action, and finish with `browser_tab_control(action="release")`.
+4. Observe when the next decision needs new state, and finish with `browser_tab_control(action="release")`. Use `snapshot(diff_since=<snapshot_id>)` for changes to a fully read full/interactive view; a full-page refresh is not required after every action.
 
 When titles change often, omit `expected_title` and check the identity returned by claim instead. Elements may be addressed by `ref` or by a `selector` re-resolved on every call; design trade-offs: [architecture notes](docs/ARCHITECTURE.md#设计取舍).
 

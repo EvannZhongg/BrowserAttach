@@ -76,7 +76,7 @@ test('compact snapshot keeps coverage and pagination; verbose metadata can be re
   const entries = renderAX([node('a', 'button', 'Save one'), node('b', 'button', 'Save two')], 's', new Map(), 'main', undefined, options);
   const state = { id: 's', options, entries, totalNodes: 2, invalidFrames: new Set(), metadata: { viewport: { width: 800 }, omitted_frames: [{ frame_id: 'ad', reason: 'unavailable' }] } };
   const first = snapshotPage(state, { max_nodes: 1 });
-  assert.equal(first.viewport, undefined); assert.equal(first.snapshot_id, undefined); assert.equal(first.note, undefined);
+  assert.equal(first.viewport, undefined); assert.equal(first.snapshot_id, 's'); assert.equal(first.note, undefined);
   assert.equal(first.truncated, true); assert.equal(first.total_node_count, 2); assert.equal(first.omitted_frames.length, 1);
   assert.throws(() => snapshotPage(state, { cursor: first.next_cursor, query: 'Other' }), /original.*query/);
   const next = snapshotPage(state, { cursor: first.next_cursor, verbose: true });

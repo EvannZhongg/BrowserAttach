@@ -69,10 +69,22 @@ export function axContext(nodes) {
   return { byId, parents, fieldContext };
 }
 
-export function registerAXRef(node, token, refs, frameId, sessionId) {
+export function axRefKey(node) {
+  return JSON.stringify([node.frameId, node.sessionId, node.backendNodeId, node.role, node.name, !!node.ignored]);
+}
+
+export function indexAXRefs(refs) {
+  const index = new Map();
+  for (const [ref, node] of refs) index.set(axRefKey(node), [ref, node]);
+  return index;
+}
+
+export function registerAXRef(node, token, refs, frameId, sessionId, previousRefs) {
   if (!node.backendDOMNodeId || node.ignored) return null;
-  const ref = `${token}:${refs.size + 1}`;
-  refs.set(ref, { backendNodeId: node.backendDOMNodeId, frameId, sessionId, role: node.role?.value, name: String(node.name?.value || '') });
+  const identity = { backendNodeId: node.backendDOMNodeId, frameId, sessionId, role: node.role?.value, name: String(node.name?.value || '') };
+  const previous = previousRefs?.get(axRefKey(identity));
+  const ref = previous?.[0] || `${token}:${refs.size + 1}`;
+  refs.set(ref, previous?.[1] || identity);
   return ref;
 }
 
@@ -86,10 +98,10 @@ export function popupProperties(node) {
       if (ids.length) result[name] = ids;
     }
   }
-  return result;
+  return Object.fromEntries(['hasPopup', 'controls', 'owns', 'activedescendant'].filter(name => name in result).map(name => [name, result[name]]));
 }
 
-export function renderAX(nodes, token, refs, frameId, sessionId, options = snapshotOptions()) {
+export function renderAX(nodes, token, refs, frameId, sessionId, options = snapshotOptions(), previousRefs) {
   const { byId, parents, fieldContext } = axContext(nodes);
   const visited = new Set(), entries = [];
   const query = options.query?.toLowerCase();
@@ -153,7 +165,7 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
     }
     const states = (node.properties || []).filter(prop =>
       ['disabled', 'focused', 'expanded', 'checked', 'selected', 'required', 'invalid', 'level'].includes(prop.name)
-    ).map(prop => `${prop.name}=${JSON.stringify(prop.value?.value)}`);
+    ).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).map(prop => `${prop.name}=${JSON.stringify(prop.value?.value)}`);
     for (const [name, value] of Object.entries(popupProperties(node))) states.push(`${name}=${JSON.stringify(value)}`);
     if (node.value?.value != null) states.push(`value=${JSON.stringify(node.value.value)}`);
     const context = FIELD_ROLES.has(role) && !node.ignored ? fieldContext(node) : null;
@@ -169,8 +181,9 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
     let nextDepth = depth;
     if (!skip) {
       if (query == null || identityName.toLowerCase().includes(query) || String(node.value?.value ?? '').toLowerCase().includes(query) || context?.toLowerCase().includes(query)) {
-        const ref = registerAXRef(node, token, refs, frameId, sessionId);
-        entries.push({ node: true, frameId, line: `${'  '.repeat(Math.min(depth, 24))}${ref ? `[${ref}] ` : ''}${role} ${JSON.stringify(name)}${attributes ? ' ' + attributes : ''}` });
+        const ref = registerAXRef(node, token, refs, frameId, sessionId, previousRefs);
+        entries.push({ node: true, frameId, key: JSON.stringify(['node', frameId, sessionId, node.nodeId]),
+          line: `${'  '.repeat(Math.min(depth, 24))}${ref ? `[${ref}] ` : ''}${role} ${JSON.stringify(name)}${attributes ? ' ' + attributes : ''}` });
       }
       nextDepth++;
     }
@@ -184,10 +197,20 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
   return entries;
 }
 
-export function snapshotPage(state, { max_nodes = 600, max_chars = 24000, cursor, verbose = false, ...view } = {}) {
+export function validateSnapshotRequest({ max_nodes = 600, max_chars = 24000, verbose = false, cursor, diff_since, profile } = {}) {
   if (!Number.isInteger(max_nodes) || max_nodes < 1 || max_nodes > 3000) throw new Error('max_nodes must be 1..3000');
   if (!Number.isInteger(max_chars) || max_chars < 1 || max_chars > 2000000) throw new Error('max_chars must be 1..2000000');
   if (typeof verbose !== 'boolean') throw new Error('verbose must be a boolean');
+  if (diff_since != null) {
+    if (typeof diff_since !== 'string' || !diff_since.trim() || diff_since.length > 128) throw new Error('diff_since must contain 1..128 characters and not be blank');
+    if (cursor != null) throw new Error('cursor and diff_since are mutually exclusive');
+    if (profile === 'fields') throw new Error('diff_since supports full/interactive only');
+  }
+}
+
+export function snapshotPage(state, { max_nodes = 600, max_chars = 24000, cursor, verbose = false, ...view } = {}) {
+  validateSnapshotRequest({ max_nodes, max_chars, cursor, verbose, ...view });
+  if (state.deltaEntries && state.invalidFrames.size) throw Object.assign(new Error('Snapshot diff frame coverage was invalidated during pagination. Take a new browser_snapshot without diff_since.'), { diagnostics: { reason: 'diff_baseline_invalid' } });
   let offset = 0;
   if (cursor != null) {
     if (cursor !== state.nextCursor) throw new Error('Snapshot cursor is stale or unknown. Take a new browser_snapshot.');
@@ -196,25 +219,37 @@ export function snapshotPage(state, { max_nodes = 600, max_chars = 24000, cursor
     }
     offset = state.nextOffset;
   }
-  const lines = [], fields = [];
+  const lines = [], fields = [], changes = [];
   const structured = state.options.profile === 'fields';
+  const source = state.deltaEntries || state.entries;
   let count = 0, chars = 0, index = offset, reason = null;
-  for (; index < state.entries.length; index++) {
-    const entry = state.entries[index];
+  for (; index < source.length; index++) {
+    const entry = source[index];
     if (state.invalidFrames.has(entry.frameId)) continue;
-    const size = JSON.stringify(structured ? entry.field : entry.line).length + 2;
+    const last = changes.at(-1);
+    const newChange = entry.change && last?.start_line !== entry.change.start_line;
+    const header = newChange ? { ...entry.change, line_offset: entry.lineOffset, snapshot: '', complete: false } : null;
+    const size = (entry.line === null ? 0 : JSON.stringify(structured ? entry.field : entry.line).length + 2) +
+      (header ? JSON.stringify(header).length + 2 : 0);
     if (entry.node && count >= max_nodes) { reason = 'node_limit'; break; }
     if (chars + size > max_chars) {
-      if (!lines.length && !fields.length) throw new Error(`A snapshot ${structured ? 'field' : 'line'} requires max_chars >= ${size}. Increase max_chars to continue without losing text.`);
+      if (!lines.length && !fields.length && !changes.length) throw new Error(`A snapshot ${structured ? 'field' : 'line'} requires max_chars >= ${size}. Increase max_chars to continue without losing text.`);
       reason = 'text_budget'; break;
     }
-    if (structured) fields.push(entry.field); else lines.push(entry.line);
+    if (entry.change) {
+      if (header) changes.push(header);
+      const change = changes.at(-1);
+      if (entry.line !== null) change.snapshot += (entry.lineOffset > change.line_offset ? '\n' : '') + entry.line;
+      change.complete = entry.changeEnd;
+    } else if (structured) fields.push(entry.field); else lines.push(entry.line);
     chars += size; count += entry.node ? 1 : 0;
   }
-  const truncated = index < state.entries.length;
+  const truncated = index < source.length;
   state.nextOffset = index;
   state.nextCursor = truncated ? `${state.id}@${index}` : null;
+  if (!truncated) state.delivered = true;
   const { viewport, ...metadata } = state.metadata;
-  return { ...metadata, ...state.options, ...(verbose ? { viewport, snapshot_id: state.id } : {}), ...(structured ? { fields } : { snapshot: lines.join('\n') }), node_count: count,
+  return { ...metadata, ...state.options, snapshot_id: state.id, ...(verbose ? { viewport } : {}),
+    ...(state.deltaEntries ? { base_snapshot_id: state.baseId, changes, line_count: state.entries.length } : structured ? { fields } : { snapshot: lines.join('\n') }), node_count: count,
     total_node_count: state.totalNodes, truncated, truncation_reason: reason, next_cursor: state.nextCursor };
 }

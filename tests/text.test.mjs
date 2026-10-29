@@ -13,7 +13,7 @@ test('snapshots preserve AX value and invalid/selection signals without inferrin
       properties: [{ name: 'invalid', value: { value: 'false' } }] },
     { nodeId: '3', backendDOMNodeId: 3, role: { value: 'option' }, name: { value: '2026' }, properties: [{ name: 'selected', value: { value: true } }] },
   ], 'snapshot', new Map(), 'main');
-  assert.match(entries[0].line, /invalid="true".*expanded=true.*value="2026"/);
+  assert.match(entries[0].line, /expanded=true.*invalid="true".*value="2026"/);
   assert.match(entries[1].line, /invalid="false".*value=""/);
   assert.match(entries[2].line, /selected=true/);
 });

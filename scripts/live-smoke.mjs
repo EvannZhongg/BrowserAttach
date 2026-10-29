@@ -344,7 +344,7 @@ try {
   await evaluate(`document.querySelector('#wait-probe').remove()`);
   checks.push('text wait ignores script/style/hidden descendant literals and waits for rendered substring or full previous-text change');
   const whole = await call('snapshot', handle);
-  assert.equal(whole.profile, 'full'); assert.equal(whole.viewport, undefined); assert.equal(whole.snapshot_id, undefined); assert.equal(whole.note, undefined);
+  assert.equal(whole.profile, 'full'); assert.equal(whole.viewport, undefined); assert.ok(whole.snapshot_id); assert.equal(whole.note, undefined);
   const queried = await call('snapshot', { ...handle, query: 'increment' });
   assert.equal(queried.node_count, 1); assert.equal(queried.next_cursor, null); assert.ok(queried.snapshot.length < whole.snapshot.length);
   assert.doesNotMatch(queried.snapshot, /textbox/);

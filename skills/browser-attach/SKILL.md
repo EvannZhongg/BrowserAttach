@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.28.2"
+  version: "0.29.0"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -37,6 +37,7 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | --- | --- |
 | Rendered prose | `browser_read_text` |
 | Controls and actionable refs | `browser_snapshot(profile="interactive")` |
+| Changes since the latest fully read full/interactive snapshot | `browser_snapshot(diff_since=<snapshot_id>)`; retain the baseline and read all diff pages |
 | A known name, value or nearby field context | `browser_snapshot(query="...")`; use full view when searching prose |
 | Form inventory and current values | `browser_snapshot(profile="fields")` |
 | One control, its related popup and active/selected options | `browser_read_control`; input `observe` can attach this bounded read to an action |
@@ -44,7 +45,7 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | Visual layout or a canvas | `browser_screenshot` with its coordinate mapping |
 | Page data not exposed by these observations | A small, task-specific `browser_evaluate` expression |
 
-Queries and interactive views reduce returned content, not full AX collection cost. Use the connected snapshot tool's description for ref lifetime and pagination rules; refresh observations when targets change.
+Observe when the next decision depends on new state or an action outcome is uncertain; a full snapshot is not required after every action. Queries, interactive views and diffs reduce returned content, not full AX collection cost. Use the connected snapshot tool's description for ref lifetime, diff application and pagination rules; refresh invalidated baselines without diff_since.
 
 ## Locate and act
 

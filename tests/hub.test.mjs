@@ -309,6 +309,7 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.equal(snapshotSchema.include_hidden.type, 'boolean');
   assert.equal(snapshotSchema.text.type, 'boolean'); assert.equal(snapshotSchema.text_limit.maximum, 10000);
   assert.equal(snapshotSchema.query.maxLength, 2000); assert.equal(snapshotSchema.verbose.default, false);
+  assert.equal(snapshotSchema.diff_since.type, 'string'); assert.equal(snapshotSchema.diff_since.maxLength, 128);
   for (const name of ['upload_file', 'open_tab', 'discover', 'tab_control', 'evaluate', 'logs']) assert.ok(tools.some(tool => tool.name === `browser_${name}`));
   const discoverSchema = tools.find(tool => tool.name === 'browser_discover').inputSchema;
   const openSchema = tools.find(tool => tool.name === 'browser_open_tab').inputSchema;
@@ -364,7 +365,8 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   }
   assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'type', focused: true, text: 'x' }] })).isError, true);
   assert.equal(f.requests.at(-1).arguments.steps[0].focused, true);
-  for (const args of [{ profile: 'bad' }, { text: 'false' }, { text_limit: -1 }, { query: '' }, { verbose: 'true' }]) {
+  for (const args of [{ profile: 'bad' }, { text: 'false' }, { text_limit: -1 }, { query: '' }, { verbose: 'true' },
+    { diff_since: '' }, { diff_since: ' ' }, { diff_since: 'baseline', cursor: 'page' }, { diff_since: 'baseline', profile: 'fields' }]) {
     assert.equal((await call('snapshot', { tab_handle: handle, ...args })).isError, true);
   }
   await call('snapshot', { tab_handle: handle, profile: 'interactive', text: false, text_limit: 40, query: 'Save', verbose: true });
@@ -372,6 +374,8 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.equal(viewRequest.arguments.profile, 'interactive'); assert.equal(viewRequest.arguments.text, false);
   assert.equal(viewRequest.arguments.text_limit, 40);
   assert.equal(viewRequest.arguments.query, 'Save'); assert.equal(viewRequest.arguments.verbose, true);
+  await call('snapshot', { tab_handle: handle, diff_since: 'baseline' });
+  assert.equal(f.requests.at(-1).arguments.diff_since, 'baseline');
   await call('snapshot', { tab_handle: handle, profile: 'fields', include_hidden: true, query: 'TEXTS28' });
   const fieldRequest = f.requests.findLast(item => item.command === 'snapshot');
   assert.equal(fieldRequest.arguments.profile, 'fields'); assert.equal(fieldRequest.arguments.include_hidden, true);
