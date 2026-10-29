@@ -6,7 +6,7 @@ import { ensureHub } from './hub-runtime.mjs';
 import { VERSION } from './config.mjs';
 import { validateFiles } from './upload.mjs';
 import { dragOptions } from '../extension/drag.js';
-import { waitOptions, WAIT_CONDITIONS } from '../extension/wait.js';
+import { waitOptions, WAIT_CONDITIONS, VERIFY_CONDITIONS, MAX_WAIT_CHECKS } from '../extension/wait.js';
 import { scrollOptions } from '../extension/scroll.js';
 import { fillOptions, selectOptions, typeOptions } from '../extension/input.js';
 import { targetOptions } from '../extension/locator.js';
@@ -65,11 +65,16 @@ export function createMcp(client) {
   const settle = { settle_ms: timing('settle_ms').optional().describe('After preparation, before dispatch: ms or uniform [min,max]; min<=max.') };
   const typeDelay = timing('delay_ms').default(0).describe('Between characters: ms or independent uniform [min,max]; min<=max.');
   const waitFields = {
-    condition: z.enum(WAIT_CONDITIONS).describe('Element conditions require selector; url/network_idle forbid locator fields.'),
+    condition: z.enum(WAIT_CONDITIONS).optional().describe('Required unless checks is supplied. Element conditions require selector; url/network_idle forbid locator fields.'),
     expected: z.union([z.string().max(100000), z.boolean()]).optional().describe('Required for url (substring), value (exact), checked/selected/expanded (boolean; checked also "mixed"). text: expected substring XOR previous. Omit otherwise.'),
     previous: z.string().max(100000).optional().describe('text only: complete prior innerText, not a truncated preview; exclusive with expected. Change does not establish new-run completion.'),
-    idle_ms: integerRange('idle_ms', 100, 10000).default(500).describe('network_idle quiet interval.'),
+    idle_ms: integerRange('idle_ms', 100, 10000).optional().describe('network_idle quiet interval; default 500.'),
   };
+  const checks = { checks: z.array(z.object({ ...selector, ...frameScope, nth: target.nth, ...waitFields,
+    condition: z.enum(VERIFY_CONDITIONS),
+    expected: z.union([z.string().max(100000), z.boolean(), integerRange('expected count', 0, Number.MAX_SAFE_INTEGER)]).optional().describe('As single wait; count requires exact integer, value_present requires boolean (whitespace is nonempty).'),
+    not: z.boolean().optional().describe('Negate an available comparison; unavailable stays unavailable. Missing scalar targets do not pass negation.'),
+  }).strict()).min(1).max(MAX_WAIT_CHECKS).optional().describe('Exclusive with top-level condition/locator fields. All must pass in one polling round. count allows multiple matches and forbids nth. Requires dialog_policy=ask, including in batch.') };
   function tool(name, description, schema, method, transform) {
     server.registerTool(`browser_${name}`, { description, inputSchema: z.object(schema) }, async args => {
       try {
@@ -177,9 +182,9 @@ export function createMcp(client) {
     ...settle, trajectory: z.object({ curve_px: z.number().min(-100).max(100), duration_ms: integerRange('duration_ms', 100, 5000) }).strict().optional().describe('Opt-in curved, variable-speed steps/intervals; curve_px is signed CSS-pixel offset. Duration covers interpolation waits only.'),
     ...handle, ...inputTimeout, source: dragTarget, destination: dragTarget, mode: z.enum(['pointer', 'html5']).default('pointer').describe('pointer for mouse-driven dragging; html5 for HTML drag-and-drop.'), steps: integerRange('steps', 2, 100).default(20),
   }, null, args => { dragOptions(args); return args; });
-  tool('wait', 'Read-only wait for condition. State uses native properties/ARIA; missing state is unavailable, not false. Role absence need not mean DOM removal. Prefer a result/status container for text; compares full text, reports a bounded preview with length/truncation. Timeout reports last state; field values are omitted.', {
+  tool('wait', 'Wait for one condition, or verify checks under one deadline. checks returns status=pass/fail/unavailable, per-check expected/actual and zero-based failed/unavailable indices; unmet checks are normal results. fail means unmet by the deadline, not business failure. retry_safe applies only to repeating this read, never prior actions. No atomic cross-frame view or persistence guarantee. Text uses full innerText with bounded previews; field values and exact value expectations are omitted. Role absence need not mean DOM removal.', {
     ...handle, ...dialogPolicy, timeout_ms: integerRange('timeout_ms', 100, 30000).default(5000), ...selector, ...frameScope, nth: target.nth,
-    ...waitFields,
+    ...waitFields, ...checks,
   }, null, args => { waitOptions(args); return args; });
   const optionChoice = { value: z.string().optional().describe('Exactly one value/label/index; strings match exactly, index is zero-based.'), label: z.string().optional(), index: integerRange('index', 0, Number.MAX_SAFE_INTEGER).optional() };
   tool('select_option', 'Set an option on one ref/selector HTML select, including hidden selects, via synthetic input/change (events_trusted=false). Disabled/inert targets fail. Verifies retained selection only.', {
@@ -210,10 +215,10 @@ export function createMcp(client) {
       z.object({ action: z.literal('hover'), ...stepOptions, ...batchTarget, ...offset }).strict(),
       z.object({ action: z.literal('select_option'), ...stepOptions, ...batchTarget, ...optionChoice }).strict(),
       z.object({ action: z.literal('scroll'), ...stepOptions, ...batchLocator, ...scrollFields }).strict(),
-      z.object({ action: z.literal('wait'), ...stepOptions, ...batchLocator, ...waitFields }).strict(),
+      z.object({ action: z.literal('wait'), ...stepOptions, ...batchLocator, ...waitFields, ...checks }).strict(),
       z.object({ action: z.literal('press_key'), ...stepOptions, ...batchLocator, key: z.string() }).strict(),
-    ])).min(1).max(MAX_BATCH_STEPS).describe('Element steps require selector; type uses selector XOR focused=true; press_key optionally guards focus with selector; scroll may omit target, wait follows condition. Step observe uses a fresh selector; batch observe reads at the end. No refs; coordinates only for scroll x/y. Common locators: selector_type defaults css; label=exact associated HTML label with normalized whitespace; placeholder=exact attribute; role uses selector="link", name="Claim" (exact AX name, empty allowed). nth=zero-based DOM/AX-role order. Locator options need selector; frame/frame_id exclusive. frame needs at least one of exact url/title or nested CSS iframe path (each step unique, e.g. ["#frame"]). Steps may override dialog_policy.'),
-  }, null, args => { validateSteps(args.steps, args.start_at); return args; });
+    ])).min(1).max(MAX_BATCH_STEPS).describe('Element steps require selector; type uses selector XOR focused=true; press_key optionally guards focus with selector; scroll may omit target; wait uses condition or checks (non-pass stops with verification). Step observe uses a fresh selector; batch observe reads at the end. No refs; coordinates only for scroll x/y. Common locators: selector_type defaults css; label=exact associated HTML label with normalized whitespace; placeholder=exact attribute; role uses selector="link", name="Claim" (exact AX name, empty allowed). nth=zero-based DOM/AX-role order. Locator options need selector; frame/frame_id exclusive. frame needs at least one of exact url/title or nested CSS iframe path (each step unique, e.g. ["#frame"]). Steps may override dialog_policy.'),
+  }, null, args => { validateSteps(args.steps, args.start_at, args.dialog_policy); return args; });
   tool('press_key', 'Send a native key/chord to current focus and report its trusted keydown target. Optional ref/selector guards focus without focusing it; a mismatch before dispatch sends no key. Supports F1–F12, navigation/editing keys and US ASCII punctuation.', { ...handle, ...inputTimeout, ...target, key: z.string() });
   tool('scroll', 'Scroll one ref/selector container or viewport x/y (default center). DOM emits no wheel events; wheel sends native wheel input. until returns a fresh ref. Stopped searches report stop_reason, scroll_pending and confirmed progress; a boundary/miss does not prove end of data.', {
     ...handle, ...inputTimeout, ...target, ...scrollFields,

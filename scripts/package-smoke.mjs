@@ -46,6 +46,9 @@ try {
   const tools = (await client.listTools()).tools;
   assert.equal(tools.length, 24);
   assert.ok(tools.some(tool => tool.name === 'browser_read_control'));
+  const checks = tools.find(tool => tool.name === 'browser_wait').inputSchema.properties.checks;
+  assert.equal(checks.maxItems, 30);
+  assert.ok(checks.items.properties.condition.enum.includes('count'));
   assert.match(tools.find(tool => tool.name === 'browser_snapshot').inputSchema.properties.diff_since.description, /latest/);
   assert.ok(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.observe.anyOf.some(schema => schema.properties?.diff_since));
   assert.ok(tools.some(tool => tool.name === 'browser_logs'));

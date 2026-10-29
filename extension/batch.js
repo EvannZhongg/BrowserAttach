@@ -8,7 +8,7 @@ import { controlOptions } from './control.js';
 
 export const MAX_BATCH_STEPS = 30;
 
-export function validateSteps(steps, startAt = 0) {
+export function validateSteps(steps, startAt = 0, dialogPolicy = 'ask') {
   if (!Array.isArray(steps) || steps.length < 1 || steps.length > MAX_BATCH_STEPS) throw new Error(`steps must contain 1..${MAX_BATCH_STEPS} actions`);
   if (!Number.isInteger(startAt) || startAt < 0 || startAt >= steps.length) throw new Error('start_at must be an existing zero-based step index');
   for (const step of steps) {
@@ -24,7 +24,7 @@ export function validateSteps(steps, startAt = 0) {
       if (step.ref != null) throw new Error('Batch keyboard targets use a fresh selector, not ref');
       if (['selector', 'selector_type', 'name', 'frame', 'frame_id', 'nth'].some(key => step[key] != null)) targetOptions(step);
     }
-    else if (step.action === 'wait') waitOptions(step);
+    else if (step.action === 'wait') waitOptions({ ...step, dialog_policy: step.dialog_policy ?? dialogPolicy });
     else if (step.action === 'scroll') {
       if (step.ref != null) throw new Error('Batch scroll uses a fresh selector, not ref');
       if (step.selector != null) targetOptions(step);

@@ -1,8 +1,16 @@
 # 验证报告
 
-当前版本 **0.30.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.31.0**（2026-10-29）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
-## 0.30（当前）
+## 0.31（当前）
+
+- 能力：browser_wait 新增互斥的 checks[]（1–30 项），同一预算内整轮验证，返回 pass/fail/unavailable、期望/实际、零基 failed/unavailable 索引及仅作用于本次只读检查的 retry_safe。新增精确 count、非空 value_present 和简单 not；不可读、缺失标量目标、无效 ARIA 及网络跟踪溢出不因取反通过。保留单条件接口及超时报错方式，字段值及精确值期望不回显。
+- 边界：复用严格定位、DOM/AX 检查器与网络事实；同组 DOM 条件合并读取，AX 按浏览器节点身份去重计数。frame 单次解析与分组子预算避免缺失 frame 独占等待，当前轮未读项不继承旧成功；claim/document/frame 变化阻止旧证据通过，后读 AX 组不能覆盖先读 DOM 组的 frame 版本。checks 仅允许 ask，不处理对话框、不滚动或派发输入；batch 在非 pass 时停止并保留 verification，含继承策略的参数预检先于首次输入。
+- 验证：并发 4 的全套单测 399 项通过，新增 14 项验证组覆盖三态、否定、隐私、交替通过、集合/唯一定位、XPath 非元素、frame/AX 不可用、缓慢分组、文档/frame/control 变化、跨组版本、节点替换、可操作性、网络溢出、batch 停止及对话框；stdio 检查新 schema、互斥参数预检、整数传递和普通 fail 结果不设置 isError。Chrome / Edge 隔离 verify 组通过，覆盖 9 条一次判定、完整失败/不可用索引、精确值不回显、batch 预检与停止/继续、后台 actionability、长文本完整比较、重渲染、严格定位、OOPIF、模态保持与不抢焦点。
+- 打包：包外安装、71 文件、24 工具、新 checks schema 及稳定扩展目录检查通过。记录：unit-0310-final.log、verify-0310-{chromium,edge}.log、wait-verify-{chromium,edge}.json、package-0310.log。
+- 本机部署：断开占用的 MCP 连接后，协调升级完成，Hub 与 Chrome/Edge 扩展均为 0.31.0 / ready；稳定扩展副本 47 个非生成资源逐文件一致。新 stdio 会话核验 24 工具及 checks schema，实际配对链路的后台本地 fixture 验证多条件通过、fail/unavailable、精确值不回显、batch 非 pass 停止且写入只发生一次、原活动标签保持；测试页已关闭。200 ms 短预算下允许末轮读取未完成而报告 unavailable，不能据此重放前序动作。记录：runtime-0310.log、deployment-0.31.0.json。既有 MCP 会话需重新连接以加载新 schema。
+
+## 0.30
 
 - 能力：snapshot(diff_since="latest") 在扩展的标签队列内复用当前基线，无需调用方保存 ID；结果始终明确 mode=diff/full。无基线、fields 视图、视图改变或基线失效时返回 full/reset_reason，不跨文档作差分。显式 ID 保持严格，未读页附 snapshot_id/next_cursor，失效游标不作为可用续读位置返回。
 - 动作组合：单个动作及整批末尾支持 observe={diff_since:"latest"或显式ID,max_nodes?,max_chars?,verbose?,timeout_ms?}；动作前绑定基线/视图并预检，动作后在剩余总预算内采集，默认观察上限 5 秒。观察失败独立保留原动作结果，已派发未知结果可以附观察证据而不重放；步骤 observe 保持控件 selector 形式，不自动每步读取整页 AX。仍不减少 getFullAXTree 成本，不提供页面稳定或业务成功保证。

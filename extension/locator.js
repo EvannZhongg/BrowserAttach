@@ -19,7 +19,7 @@ export function targetOptions(args, { coordinates = false, focused = false } = {
   if (args.coordinate_space != null && (!hasPoint || !['viewport', 'document'].includes(args.coordinate_space))) throw new Error('coordinate_space must be viewport or document and applies to coordinate clicks only');
 }
 
-export function queryElement(selector, type = 'css', nth, waitForMatch = false) {
+export function queryElement(selector, type = 'css', nth, waitForMatch = false, countOnly = false) {
   if (nth != null && (!Number.isSafeInteger(nth) || nth < 0)) throw new Error('nth must be a nonnegative safe integer (zero-based)');
   const failure = (message, reason, detail = {}) => Object.assign(new Error(message), {
     diagnostics: { reason, selector_type: type, ...detail },
@@ -42,6 +42,12 @@ export function queryElement(selector, type = 'css', nth, waitForMatch = false) 
   } catch (error) {
     const hint = type === 'css' ? 'Use browser-native CSS, not Playwright selectors such as :has-text(). For accessible names use selector_type="role", selector="<actual AX role>", name="<exact accessible name>"; label matches associated HTML labels and placeholder matches the exact placeholder attribute. Inspect browser_snapshot query to find the actual role/name.' : null;
     throw failure(`${error.message}${hint ? ` ${hint}` : ''}`, 'selector_invalid', hint ? { hint } : {});
+  }
+  if (countOnly) {
+    if (type === 'xpath') for (let index = 0; index < count; index++) {
+      if (at(index).nodeType !== 1) throw failure('Selector must resolve to elements', 'selector_not_element');
+    }
+    return count;
   }
   if (waitForMatch && (count === 0 || (nth != null && nth >= count))) return null;
   if (nth == null && count !== 1) {
@@ -125,7 +131,7 @@ function roleSuggestions(nodes, args) {
     omitted_suggestions: Math.max(0, candidates.length - 10) };
 }
 
-export function matchRole(nodes, args) {
+export function matchingRoles(nodes, args) {
   const byId = new Map(nodes.map(node => [node.nodeId, node]));
   const children = new Set(nodes.flatMap(node => node.childIds || []));
   const pending = nodes.filter(node => !children.has(node.nodeId)).reverse(), seen = new Set(), matches = new Map();
@@ -137,7 +143,11 @@ export function matchRole(nodes, args) {
         (args.name == null || String(node.name?.value || '') === args.name)) matches.set(node.backendDOMNodeId, node);
     for (let i = (node.childIds?.length || 0) - 1; i >= 0; i--) pending.push(byId.get(node.childIds[i]));
   }
-  const candidates = [...matches.values()];
+  return [...matches.values()];
+}
+
+export function matchRole(nodes, args) {
+  const candidates = matchingRoles(nodes, args);
   if (args.nth == null && candidates.length > 1) {
     const preview = candidates.slice(0, 10).map((node, nth) => ({ nth, role: node.role?.value, name: String(node.name?.value || '').slice(0, 120) }));
     throw Object.assign(new Error(`Role selector must match exactly one element; matched ${candidates.length}. Provide name or an explicit zero-based nth. Candidates: ${JSON.stringify(preview)}`), {

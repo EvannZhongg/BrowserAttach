@@ -16,7 +16,7 @@ import { NAVIGATION_OBSERVATION_TIMEOUT_MS } from './limits.js';
 import { deadline } from './actionability.js';
 import { scrollOptions, createScrolling } from './scroll.js';
 import { validateSteps } from './batch.js';
-import { waitFor } from './wait.js';
+import { waitFor, waitOptions } from './wait.js';
 import { boundedRead, createOutcomes } from './outcomes.js';
 import { createDialogs } from './dialogs.js';
 import { createDrag, dragOptions } from './drag.js';
@@ -187,12 +187,12 @@ export function createController(api, notify = () => {}) {
     if (command === 'handle_dialog') return await dialogs.handle(tabId, args);
     if (dialogs.has(tabId)) {
       if (command === 'snapshot') return { dialog: dialogs.get(tabId), note: 'Use browser_handle_dialog to accept or dismiss this dialog.' };
-      if (command !== 'release_tab') throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
+      if (command !== 'release_tab' && !(command === 'wait' && args.checks)) throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
     }
     if (command === 'snapshot') return await observations.snapshot(tabId, args);
     if (command === 'read_control') return await readControl(tabId, args);
     if (command === 'batch') {
-      validateSteps(args.steps, args.start_at ?? 0);
+      validateSteps(args.steps, args.start_at ?? 0, args.dialog_policy ?? 'ask');
       const budget = args.budget || deadline(args.timeout_ms ?? 15000), results = [];
       const claim = claims.get(tabId), documentVersion = observations.version(tabId);
       for (let index = args.start_at ?? 0; index < args.steps.length; index++) {
@@ -203,7 +203,14 @@ export function createController(api, notify = () => {}) {
           await budget.run(async () => controlCurrentUrl((await api.tabs.get(tabId)).url, step.action));
           const { action: command, ...inputArgs } = step;
           const stepBudget = budget.child(step.timeout_ms ?? 30000, command === 'wait' ? 'wait' : 'input');
-          results.push(await perform(tabId, command, { ...inputArgs, dialog_policy: step.dialog_policy ?? args.dialog_policy ?? 'ask', budget: stepBudget }));
+          const result = await perform(tabId, command, { ...inputArgs, dialog_policy: step.dialog_policy ?? args.dialog_policy ?? 'ask', budget: stepBudget });
+          if (command === 'wait' && inputArgs.checks && result.status !== 'pass') {
+            return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index,
+              next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: true,
+              error: 'Verification did not pass', input_dispatched: false, verification: result,
+              application_result: 'not_checked', observe_again: true };
+          }
+          results.push(result);
         } catch (error) {
           const { observation, ...failure } = errorData(error);
           return { completed: false, results, started_at: args.start_at ?? 0, failed_step: index, next_unattempted_step: index + 1 < args.steps.length ? index + 1 : null, retry_failed_step_safe: error.input_dispatched === false, ...failure,
@@ -234,7 +241,14 @@ export function createController(api, notify = () => {}) {
       return { result_type: 'element', ...await observations.rememberElement(tabId, target, result.element.objectId, frameId, budget), observe_again: true };
       } finally { await boundedRead(() => cdp(target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach-evaluation' }), 100).catch(() => {}); }
     }
-    if (command === 'wait') return await waitFor(cdp, value, sessions, network, pointer, tabId, args);
+    if (command === 'wait') {
+      const claim = claims.get(tabId);
+      return await waitFor(cdp, value, sessions, network, pointer, tabId, args, {
+        assertClaim() { if (!claim || claims.get(tabId) !== claim) throw Object.assign(new Error('Tab control ended during verification'), { input_dispatched: false }); },
+        documentVersion: () => observations.version(tabId), frameVersion: frameId => observations.frameVersion(tabId, frameId),
+        dialogOpen: () => dialogs.has(tabId), checkAccess: async () => controlCurrentUrl((await api.tabs.get(tabId)).url, command),
+      });
+    }
     if (command === 'drag') {
       dragOptions(args);
       args = { ...args, budget: args.budget || deadline(args.timeout_ms ?? 5000) };
@@ -325,6 +339,7 @@ export function createController(api, notify = () => {}) {
   }
 
   async function perform(tabId, command, args) {
+    if (command === 'wait' && args.checks) waitOptions(args);
     let observationKind, snapshotPlan;
     try {
       if (args.observe != null) observationKind = actionObservationOptions(args.observe);

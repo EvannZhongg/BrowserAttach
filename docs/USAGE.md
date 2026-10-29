@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.30.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.31.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -53,7 +53,7 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 | `browser_type` | 在当前选区逐字符输入 |
 | `browser_press_key` | 向当前焦点发送单键或组合键 |
 | `browser_select_option` | 设置一个 HTML select 选项 |
-| `browser_wait` | 只读等待元素、字段值、控件状态、文本、URL 或网络空闲 |
+| `browser_wait` | 单条件等待，或 checks[] 多条件只读验证并返回期望/实际与三态结果 |
 | `browser_scroll` | 滚动容器或有界查找虚拟列表项 |
 | `browser_batch` | 在同一标签队列中执行有限步骤 |
 | `browser_navigate` | URL 导航、后退或前进 |
@@ -428,6 +428,33 @@ text 比较始终使用完整 innerText。current.text 只预览前 500 字符�
 ```
 
 network_idle 的 idle_ms 默认 500，范围 100–10000。它只覆盖接管后观察到的页面/iframe 请求，不包含独立 worker 或 WebSocket 消息；长轮询会阻止满足。请求跟踪溢出时 tracking_overflow=true，不能报告已确认空闲。业务就绪优先等待具体元素或标志。
+
+也可提供 `checks`（1–30 项）进行多条件验证，与顶层 condition、expected、previous、idle_ms 和定位字段互斥。每项沿用上述条件和定位参数，另外支持：
+
+| 参数/条件 | 语义 |
+|---|---|
+| `condition:"count", expected:整数` | 指定 frame 内匹配的元素数量精确相等；允许多匹配，不接受 nth。CSS/XPath/label/placeholder 按 DOM 匹配，role 按未忽略且有 DOM 身份的 AX 匹配去重 |
+| `condition:"value_present", expected:true/false` | 与 value 相同的字段取值范围，检查字符串是否非空；不 trim，空白字符串为非空，不证明表单有效或编辑器模型已写入 |
+| `not:true` | 对有效比较取反；不可用状态不能因取反通过。text/value/控件状态等单元素条件缺少目标时为 unavailable；检查节点消失使用 absent 或 count=0 |
+
+```json
+{"tab_handle":"...","timeout_ms":5000,"checks":[
+  {"selector":"#name","condition":"value_present","expected":true},
+  {"selector":"#rows > tr","condition":"count","expected":5},
+  {"selector":".error","condition":"count","expected":0},
+  {"selector":"#status","condition":"text","expected":"处理中","not":true}
+]}
+```
+
+所有项必须在同一轮通过才提前返回；不累计不同时刻的成功。同一 frame 的 DOM 条件合并读取，AX、跨 frame 及命中检查为分步观察，不承诺原子视图。读取过程中主文档或 frame 身份改变会使相应观测不可用，再在剩余预算内重新读取。缺失或缓慢的 frame 不独占整份等待预算。
+
+返回 `status=pass/fail/unavailable`、`timed_out`、`retry_safe:true`、零基索引数组 `failed` / `unavailable` 及完整 `results`。每项提供 index、condition、定位、expected、可选 not、status 和 actual；文本/URL 及较长文本期望提供有界预览和截断信息，比较仍使用完整字符串。value 的实际字段内容及精确 expected 均不回显，只提供比较结果；value_present 只报告是否非空。
+
+`pass` 表示本轮全部符合期望；预算结束时，只要存在确定不符项整体为 `fail`，否则有不可读项为 `unavailable`。未完成本轮读取的项标为不可用，不沿用之前的通过状态。fail 只表示截止时未满足，不能据此断言提交失败或稍后不会成功；缺失/无效 ARIA、frame 不可读、网络跟踪溢出等不当成 false。未通过的检查属于正常结果，不设置 MCP isError；非法参数、定位歧义、权限或控制权错误仍为工具错误。
+
+checks 仅接受 `dialog_policy:"ask"`，不自动接受或关闭对话框；被对话框阻塞时报告 unavailable。`retry_safe` 仅指重复本次只读检查不会再次提交，不保证连接仍有效，也不允许重放前序动作。原单条件接口及其超时报错方式保留。
+
+batch 的 wait 步骤也支持 checks；未通过时停止后续步骤，在 `verification` 中保留完整结果，并返回 completed=false、failed_step、retry_failed_step_safe=true 和 MCP isError。若 batch 默认采用 accept/dismiss，此步骤须显式指定 dialog_policy=ask；所有步骤的有效策略在首次输入前预检。重查安全仅适用于失败的验证步骤，整批仍可能包含已完成的写入。
 
 ### browser_fill
 

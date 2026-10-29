@@ -51,6 +51,7 @@ async function fixture(t, options) {
       if (data.command === 'release_owner') released.add(data.owner);
       if (data.command === 'snapshot') result = { snapshot: '[s1:1] button "Test"' };
       if (data.command === 'batch') result = { completed: false, results: [{ value_verified: true }], failed_step: 1, error: 'Outcome is unknown' };
+      if (data.command === 'wait' && data.arguments.checks) result = { status: 'fail', timed_out: true, retry_safe: true, failed: [0], unavailable: [], results: [{ index: 0, status: 'fail', expected: 1, actual: { count: 0 } }] };
       if (data.command === 'screenshot') result = { data: PNG, capture: { css_width: 1, css_height: 1,
         image_origin_css: { x: 0, y: 0 }, viewport: { scroll_x: 0, scroll_y: 0 } } };
       ws.send(JSON.stringify({ id: data.id, result }));
@@ -292,6 +293,12 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.equal(readControlSchema.timeout_ms.maximum, 5000); assert.equal(readControlSchema.max_options.maximum, 100);
   const batchSchema = tools.find(tool => tool.name === 'browser_batch').inputSchema.properties;
   assert.equal(batchSchema.steps.maxItems, 30); assert.equal(batchSchema.start_at.maximum, 29);
+  const waitSchema = tools.find(tool => tool.name === 'browser_wait').inputSchema;
+  assert.ok(!waitSchema.required.includes('condition'));
+  assert.equal(waitSchema.properties.checks.maxItems, 30);
+  assert.ok(waitSchema.properties.checks.items.properties.condition.enum.includes('count'));
+  assert.ok(waitSchema.properties.checks.items.properties.condition.enum.includes('value_present'));
+  assert.equal(waitSchema.properties.checks.items.properties.not.type, 'boolean');
   assert.ok(tools.find(tool => tool.name === 'browser_press_key').inputSchema.properties.ref);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const logSchema = tools.find(tool => tool.name === 'browser_logs').inputSchema;
@@ -351,6 +358,20 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.deepEqual(f.requests.find(item => item.command === 'list_tabs').arguments, {});
   const result = await call('claim_tab', { browser_id: browser.id, tab_id: 9, expected_title: 'Demo', expected_url: f.tabs[0].url });
   const handle = JSON.parse(result.content[0].text).tab_handle;
+  const checks = [{ selector: '.row', condition: 'count', expected: 1 }];
+  const beforeWait = f.requests.length;
+  for (const args of [{}, { checks: [] }, { checks, selector: '.row' }, { checks, condition: 'attached' },
+    { checks, dialog_policy: 'dismiss' }, { checks: [{ ...checks[0], nth: 0 }] },
+    { checks: [{ selector: '#field', condition: 'value_present', expected: 'true' }] }]) {
+    assert.equal((await call('wait', { tab_handle: handle, ...args })).isError, true);
+  }
+  assert.equal(f.requests.length, beforeWait);
+  const verification = await call('wait', { tab_handle: handle, checks });
+  assert.ok(!verification.isError); assert.equal(JSON.parse(verification.content[0].text).status, 'fail');
+  assert.deepEqual(f.requests.at(-1).arguments.checks, checks);
+  assert.equal(f.requests.at(-1).arguments.idle_ms, undefined);
+  assert.equal((await call('batch', { tab_handle: handle, steps: [{ action: 'wait', checks }] })).isError, true);
+  assert.deepEqual(f.requests.at(-1).arguments.steps[0].checks, checks);
   const beforeSemantic = f.requests.length;
   for (const args of [{ text: 'x' }, { focused: true, ref: 'r', text: 'x' }, { focused: true, frame_id: 'child', text: 'x' }, { selector: 'input', name: 'Name', text: 'x' }]) {
     assert.equal((await call('type', { tab_handle: handle, ...args })).isError, true);
