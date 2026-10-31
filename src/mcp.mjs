@@ -141,7 +141,7 @@ export function createMcp(client) {
     include_hidden: z.boolean().optional().describe('fields only, default false: include native fields omitted from AX; ref may be null. Password values omitted.'),
     text: z.boolean().optional().describe('Default true; false hides prose, preserving control names and values.'),
     text_limit: integerRange('text_limit', 0, 10000).optional().describe('Prose preview length, marked with …; control names/values stay complete. Default 80 for interactive, unlimited for full.'),
-    query: z.string().min(1).max(2000).optional().describe('Case-insensitive literal substring of names, values or nearby context. fields also searches HTML labels, DOM id/name/placeholder and selected options. Zero matches is not an error.'),
+    query: z.string().min(1).max(2000).optional().describe('Case-insensitive literal substring of names, values, AX descriptions or nearby context. fields also searches HTML labels, DOM id/name/placeholder and selected options. Zero matches is not an error.'),
     diff_since: z.string().min(1).max(128).optional().describe('snapshot_id is strict. "latest" uses this claim\'s baseline, returning mode=full/reset_reason if unavailable or view changed. Full/interactive only; unread pages report next_cursor in diagnostics. Exclusive with cursor.'),
     verbose: z.boolean().default(false).describe('Include viewport.'),
   }, undefined, args => { validateSnapshotRequest(args); return args; });
@@ -176,7 +176,7 @@ export function createMcp(client) {
     logOptions(args);
     return args;
   });
-  tool('click', 'Click exactly one ref/selector/x+y; elements auto-scroll and may recenter once before dispatch, with hit checks. Native target_verified requires an element; coordinates return null and verify trusted delivery to the hit only. Native select requires select_option.', {
+  tool('click', 'Click exactly one ref/selector/x+y; elements auto-scroll and may recenter once before dispatch, with hit checks. Native target_verified requires an element; coordinates return null, include a compact hit_target and verify trusted delivery to the hit only. Native select requires select_option.', {
     ...offset, ...settle, detailed: z.boolean().default(false).describe('Include hit target geometry/classes and page readiness on success; failures always retain diagnostics.'),
     ...handle, ...inputTimeout, ...target, button: z.enum(['left', 'middle', 'right']).default('left'), click_count: z.union([z.literal(1), z.literal(2)]).default(1), modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).default([]), x: z.number().optional(), y: z.number().optional(), coordinate_space: z.enum(['viewport', 'document']).optional(), mode: z.enum(['native', 'dom']).default('native').describe('DOM: ref/selector, left single, no modifiers; invoked only acknowledges HTMLElement.click returning, delivery_verified=null.'),
   }, null, args => {
@@ -185,7 +185,7 @@ export function createMcp(client) {
     if (args.mode === 'dom' && !args.ref && !args.selector) throw new Error('DOM click requires ref or selector; coordinates are unsupported.');
     return args;
   });
-  tool('hover', 'Move to exactly one ref/selector/x+y, verify trusted mousemove, and leave the pointer there without clicking.', {
+  tool('hover', 'Move to exactly one ref/selector/x+y, including disabled controls, verify trusted pointermove, and leave the pointer there without clicking. Inert, hidden and obstructed targets remain unavailable.', {
     ...offset,
     ...handle, ...inputTimeout, ...target, x: z.number().optional(), y: z.number().optional(), coordinate_space: z.enum(['viewport', 'document']).optional(),
   }, null, args => { targetOptions(args, { coordinates: true }); offsetOption(args); return args; });
@@ -202,7 +202,7 @@ export function createMcp(client) {
     ...handle, ...inputTimeout, ...target, ...optionChoice,
   }, null, args => { targetOptions(args); selectOptions(args); return args; });
   const focused = { focused: z.literal(true).optional().describe('Pin current editable focus without refocusing; exclusive with ref/selector and locator options.') };
-  tool('read_control', 'Read one explicit control: separate native DOM/AX values, rendered text and state; related popups, active descendant and currently exposed options in AX order. Bounded refs preserve the existing snapshot. No library-specific inference, complete virtual list, application commit or atomic DOM/AX view.', {
+  tool('read_control', 'Read one explicit control: separate native DOM/AX values, rendered text, raw state and explicit descriptions; related popups, active descendant and currently exposed options in AX order. Bounded refs preserve the existing snapshot. No inferred disabled reason, complete virtual list, application commit or atomic DOM/AX view.', {
     ...handle, ...controlFields,
   }, null, args => { controlOptions(args); return args; });
   tool('type', 'Type printable characters with trusted keys without clearing. Choose exactly one ref/selector/focused=true; stop on focus loss/detachment. Enter/Tab use press_key; ordinary multiline replacement uses fill.', { ...handle, ...inputTimeout, ...target, ...focused, text: z.string().max(10000), delay_ms: typeDelay }, null, args => { targetOptions(args, { focused: true }); typeOptions(args); return args; });

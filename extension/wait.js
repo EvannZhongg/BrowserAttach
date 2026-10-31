@@ -48,10 +48,10 @@ function checkOptions(args) {
 
 export function inspectWait(query, inspect, args) {
   if (args.condition === 'count') {
-    const count = query(args.selector, args.selector_type ?? 'css', undefined, false, true);
+    const count = query(args.selector, args.selector_type ?? 'css', undefined, { countOnly: true });
     return { satisfied: count === args.expected, count };
   }
-  const element = query(args.selector, args.selector_type ?? 'css', args.nth, true);
+  const element = query(args.selector, args.selector_type ?? 'css', args.nth, { missing: 'null' });
   if (!element) return { satisfied: args.condition === 'absent', state: 'absent' };
   if (element.isConnected === false) return { satisfied: false, state: 'detached_during_observation' };
   if (args.condition === 'attached') return { satisfied: true, state: 'attached' };
@@ -202,7 +202,7 @@ async function sampleChecks(cdp, value, sessions, network, pointer, tabId, entri
   if (dom.length) {
     const { executionContextId } = await send('Page.createIsolatedWorld', { frameId, worldName: 'browser-attach-locator' });
     const results = await checkedValue(await send('Runtime.evaluate', { contextId: executionContextId, returnByValue: true,
-      expression: `(${inspectChecks.toString()})(${queryElement.toString()},${inspectWait.toString()},${inspectTarget.toString()},${JSON.stringify(dom.map(({ check }) => check))})` }), send, value);
+      expression: `(${inspectChecks.toString()})(${queryElement.toString()},${inspectWait.toString()},${inspectTarget.toString()},${JSON.stringify(dom.map(({ check }) => check))})` }), send, value, { frame_id: frameId });
     dom.forEach(({ index }, offset) => values.set(index, results[offset]));
   }
   const roles = entries.filter(({ check }) => check.selector_type === 'role');

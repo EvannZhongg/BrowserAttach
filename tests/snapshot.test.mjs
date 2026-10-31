@@ -5,6 +5,16 @@ import { renderAX, snapshotOptions, snapshotPage } from '../extension/snapshot.j
 const node = (nodeId, role, name = '', childIds = [], extra = {}) =>
   ({ nodeId, role: { value: role }, name: { value: name }, childIds, ...extra });
 
+test('AX descriptions remain distinct from names, are bounded and query full source text', () => {
+  const nodes = [node('delete', 'button', 'Delete', [], { backendDOMNodeId: 2, description: { value: 'x'.repeat(1100) + 'disable first' } })];
+  for (const profile of ['full', 'interactive']) {
+    const refs = new Map();
+    const entries = renderAX(nodes, 'description', refs, 'main', undefined, snapshotOptions({ profile, query: 'disable first', text: false }));
+    assert.equal(entries.length, 1); assert.match(entries[0].line, /button "Delete" description="x{1000}" description_truncated=true/);
+    assert.equal(refs.get('description:1').name, 'Delete');
+  }
+});
+
 test('popup semantics preserve browser-resolved idrefs without inventing ownership or changing ref identity', () => {
   const nodes = [node('category', 'menuitem', 'Category', [], { backendDOMNodeId: 2, properties: [
     { name: 'hasPopup', value: { value: 'menu' } }, { name: 'expanded', value: { value: false } },

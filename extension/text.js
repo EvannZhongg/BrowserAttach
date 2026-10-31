@@ -12,10 +12,12 @@ export async function readText(cdp, value, tabId, args) {
   }
   const options = { selector: args.selector, selector_type: args.selector_type, nth: args.nth, mode, offset, max_chars: max };
   const send = (method, params) => cdp(tabId, method, params);
+  const frameId = args.node?.frameId ?? args.diagnostic_frame_id;
+  const context = frameId ? { frame_id: frameId } : undefined;
   if (args.node) return await checkedValue(await send('Runtime.callFunctionOn', { objectId: args.node.objectId, returnByValue: true,
-    functionDeclaration: `function(args) { return (${extractText.toString()})(args, () => this); }`, arguments: [{ value: options }] }), send, value);
+    functionDeclaration: `function(args) { return (${extractText.toString()})(args, () => this); }`, arguments: [{ value: options }] }), send, value, context);
   return await checkedValue(await send('Runtime.evaluate', { returnByValue: true, ...(args.context_id != null ? { contextId: args.context_id } : {}),
-    expression: `(${extractText.toString()})(${JSON.stringify(options)},${queryElement.toString()})` }), send, value);
+    expression: `(${extractText.toString()})(${JSON.stringify(options)},${queryElement.toString()})` }), send, value, context);
 }
 
 export function extractText(args, query) {

@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.32.1**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.33.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -162,12 +162,12 @@ snapshot 返回 AX 语义树，每行 `[token:n] role "name" 状态`；`[token:n
 | `include_hidden` | 仅 fields，默认 false；true 额外读取未暴露到 AX 的原生字段，如隐藏 input |
 | `text` | true；false 隐去独立正文，保留控件名称和值 |
 | `text_limit` | 正文名称预览上限 0–10000；interactive 默认 80，full 默认不截断；控件名称和值保留完整 |
-| `query` | 1–2000 字符的名称/value/context 字面子串，不区分大小写；零命中正常返回 |
+| `query` | 1–2000 字符的名称/value/AX description/context 字面子串，不区分大小写；零命中正常返回 |
 | `max_nodes` / `max_chars` | 600 / 24000；范围分别为 1–3000 / 1–2000000，两个预算独立 |
 | `diff_since` | 显式 snapshot_id 严格校验；`"latest"` 在扩展的标签队列内选择基线，必要时明确返回全量重置；与 cursor 互斥，不支持 fields 增量 |
 | `verbose` | false；true 额外返回 viewport；snapshot_id 始终返回 |
 
-full/interactive 查询在当前视图中匹配完整名称/value/context，再截取正文预览；不搜索 role、ref 或未暴露给 AX 的属性。阅读查询保留 full，interactive 会先筛掉正文。视图和查询减少返回量，不减少完整 AX 树采集。
+full/interactive 查询在当前视图中匹配完整名称/value/AX description/context，再截取正文预览；不搜索 role、ref 或未暴露给 AX 的属性。阅读查询保留 full，interactive 会先筛掉正文。视图和查询减少返回量，不减少完整 AX 树采集。
 
 ```json
 {"tab_handle":"...","query":"保存","max_nodes":20}
@@ -229,11 +229,11 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 }
 ```
 
-- `ax` 是浏览器提供的名称、角色、值及 disabled/readonly/required/invalid/checked/selected/expanded/multiselectable 状态；缺失属性不推断为 false。`labels` 来自浏览器 AX 名称的真实 HTML label 来源，context 则是现有有界附近文本，两者不改写 AX name。
+- `ax` 是浏览器提供的名称、角色、值、description 及 disabled/readonly/required/invalid/checked/selected/expanded/multiselectable 状态；缺失属性不推断为 false。`labels` 来自浏览器 AX 名称的真实 HTML label 来源，context 则是现有有界附近文本，两者不改写 AX name。
 - `dom.id/name/type/placeholder` 来自原生 DOM 快照属性；input 缺少 type 时记录 text。`dom.value` 的 value_source 区分 input_value、textarea_value、selected_option、text_content。input/textarea 捕获到的空值保留为 `value:""`；未捕获到值时省略 value，不视为空值。select 附 multiple 和 selected_options 的值/标签；checkbox/radio 附原生 checked，AX checked=mixed 另行保留。contenteditable/output 的值是捕获的 textContent，不声称为编辑器完整模型。
 - 默认包括暴露到 AX 的原生 input/textarea/select/output/contenteditable，以及 AX 字段角色的自定义控件；不把普通按钮当字段。文件 input 即使 AX 角色是 button 也识别为字段。include_hidden=true 才额外包括未暴露到 AX 的原生字段；此类行 ax/ref 可为 null，只提供可观察的 DOM 事实。密码字段省略 DOM 与 AX 值，返回 value_redacted=true。
 - 文件 input 的 `dom.files={available,count,names}` 只报告隔离世界读取时的当前本地选择，不读取文件内容，不代表服务端附件数量或接受结果；读取失败为 available=false。上传后组件清空 input 时 count 可为 0。
-- query 在 AX 名称/值、labels/context、DOM id/name/placeholder/value 和选中选项值/标签上作字面子串匹配。text/text_limit 只控制正文，不截断字段值。分页续读不重新采集；要核对当前值应发起新的字段观察。
+- query 在 AX 名称/值/description、labels/context、DOM id/name/placeholder/value 和选中选项值/标签上作字面子串匹配。text/text_limit 只控制正文，不截断字段值。分页续读不重新采集；要核对当前值应发起新的字段观察。
 - DOM 与 AX 按所属 frame/session 的 backend 节点身份关联，支持闭合 Shadow DOM 和 OOPIF。两次捕获之间节点被替换时不按 id/name 猜测新节点，只有 AX 事实的行 dom=null；无法判断原生字段类型时也省略 AX value。各 frame 与文件列表分步读取，不提供跨来源原子快照、业务提交值、组件内部模型或并发写入归属判断。读取最终保存结果仍需任务相关的页面或接口证据。
 
 ### browser_read_control
@@ -245,7 +245,8 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 {"tab_handle":"...","selector":"#education-wrapper","popup_selector":"#education-popup"}
 ```
 
-- `control.dom` 保留原生 value/checked/indeterminate、readonly/disabled、innerText、ARIA 属性和几何事实；`control.ax` 分开保留浏览器 AX 名称、值、状态与关联。不把过滤 input 的空 value 当作未选择；组件显示文本在外层时，应明确读取包含该文本的节点。密码字段不输出 DOM/AX value。
+- `control.dom` 保留原生 value/checked/indeterminate、readonly/disabled/required、innerText、原始 aria-disabled/readonly/required/invalid 属性和几何事实；`control.ax` 分开保留浏览器 AX 名称、值、状态与关联。不把过滤 input 的空 value 当作未选择；组件显示文本在外层时，应明确读取包含该文本的节点。密码字段不输出 DOM/AX value。
+- 说明来源分开保留：DOM 的 title、aria_description、aria_describedby；descriptions 只读取同一 Document/ShadowRoot 内显式 aria-describedby 引用的文本（最多 8 项，每项 1000 字符，标记不可用、截断及省略数）；AX 的 description 是浏览器解析结果，最多 1000 字符并标记 description_truncated。不会推断 disabled_reason，也不自动 hover 打开提示。full/interactive/fields 同样保留 AX description，query 匹配完整来源文本。
 - `popups` 只来自浏览器已解析的 controls/owns 关系，或同 frame 内唯一的显式 CSS `popup_selector`，最多 8 个；不根据位置、class 或活动项的祖先猜测弹层所有权。每个弹层分开返回 DOM 与 AX 事实；几何 visible 不代表可点击，零尺寸外壳也不否定其选项存在。
 - `active_descendant` 来自浏览器已解析的 activedescendant；角色属于 option/menuitem/menuitemcheckbox/menuitemradio/treeitem 时同时返回 `active_option`。`active_option_status` 区分 observed/unavailable/ambiguous/non_option。`selected_options` 保留当前观察到的 AX selected=true 项；原生 select 另在 dom.selected_options 保留实际值与标签。
 - `options` 按 AX 树遍历顺序列出控件子树及关联弹层中当前暴露的选项，附可操作 ref；不代表完整虚拟列表或按键移动索引。`observed_options` 是本次发现数，`omitted_options/omitted_selected_options/omitted_popups` 标记输出省略；活动项与选中项独立保留，不因 options 截断而直接丢失。
@@ -301,7 +302,7 @@ selector 每次重新解析，省略 nth 时必须唯一；歧义立即报错并
 | `placeholder` | placeholder 属性的完整精确值 |
 | `role` | 浏览器 AX role，可另传 `name` 精确匹配 accessible name；包括浏览器提供的隐式角色 |
 
-`name` 仅适用于 role。`nth` 从 0 开始，按 DOM 顺序选择，role 则按 AX 树顺序；准备阶段可等待目标出现。重复匹配应缩小范围或显式 nth，不按可见性猜选。label 不推断兄弟 div 的标签关系，ARIA 命名可通过 role/name 定位。
+`name` 仅适用于 role。`nth` 从 0 开始，按 DOM 顺序选择，role 则按 AX 树顺序；准备阶段可等待目标出现。元素定位失败保留 selector、selector_type、实际 frame_id、显式 nth 和最后匹配数 matched；零匹配为 selector_not_found，有匹配但 nth 越界为 selector_nth_out_of_range，二者仍可在准备预算内等待，不自动改选索引。重复匹配应缩小范围或显式 nth，不按可见性猜选。label 不推断兄弟 div 的标签关系，ARIA 命名可通过 role/name 定位。
 
 role 应写为 `selector_type:"role", selector:"link", name:"Claim"`，而不是把 Claim 写入 selector，也不能根据外观假定 role=button。role 准备超时的 selector_not_found 在最后一次成功读取的 AX 树中，按 name（未提供时按 selector）给出不区分大小写的名称子串建议：同名优先，最多 10 项，名称最多 120 字符，截断时标记 name_truncated，omitted_suggestions 表示省略数。suggestions 只辅助重新观察，不改变精确匹配，不自动使用候选。
 
@@ -334,7 +335,7 @@ frame.url/title 精确匹配子 frame，path 是逐层且每层唯一的 CSS ifr
 
 `wait_result.status=pass/fail/unavailable` 与动作回执分开；条件未通过不会覆盖已确认的输入送达，也不自动重放动作。条件等待可跨同文档路由及完整导航，每轮重新解析 selector 并检查当前页面权限和控制权；dialog_policy 只作用于动作，等待始终为 ask。条件可能在动作前就已成立，pass 不证明因果关系或业务成功。已派发动作报错时也可附只读 wait_result，仍保留原动作错误；后续需要重查时单独调用 browser_wait。batch 步骤支持 wait_for；非 pass 停止并保留该步骤的动作回执，retry_failed_step_safe=false。主文档变化后仍在下一步骤前停止，不自动跨页续跑整批。
 
-click/hover/fill/type 的输入准备会检查可见、启用、非 inert 和几何稳定；fill 还要求可编辑且非只读。select_option 不要求可见几何。timeout_ms 默认 5000，范围 100–30000，覆盖准备、派发和校验；click/hover/press_key 的派发及回执另有 1250 ms 上限，清理最多 250 ms，长 timeout 主要用于等待目标。
+click/fill/type 的输入准备会检查可见、启用、非 inert 和几何稳定；hover 不要求启用，仍检查可见、非 inert、几何稳定与命中；fill 还要求可编辑且非只读。select_option 不要求可见几何。timeout_ms 默认 5000，范围 100–30000，覆盖准备、派发和校验；click/hover/press_key 的派发及回执另有 1250 ms 上限，清理最多 250 ms，长 timeout 主要用于等待目标。
 
 准备失败的 diagnostics.reason 区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only、unstable_geometry 和 no_visible_click_point；遮挡仍使用 obstructed/frame_obstructed。不可操作时附当前矩形及至多 8 层 composed 祖先（含目标）的 display、visibility、opacity、pointer-events、overflow、可滚动方向及 transition 属性/时长，ancestors_truncated 表示更深信息未采集。这些是当前样式证据，不推断 hover 触发条件或动画是否即将结束；opacity=0 不单独拒绝输入。
 
@@ -365,11 +366,11 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 
 detailed=true 的成功结果或失败诊断中的 hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
 
-成功点击默认仅返回落点、frame 和核验证据，省略命中元素详情与实时标签元数据。DOM 模式调用一次 HTMLElement.click()，返回 invoked=true、method=dom、delivery_verified=null、events_trusted=false，只确认调用返回，不证明页面处理；需要结果条件时使用 wait_for。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
+成功元素点击默认仅返回落点、frame 和核验证据；坐标点击另带精简 hit_target（tag/id/role、最多 120 字符的 text 及 text_truncated、disabled、clickable_hint 和最近 clickable_target），复用派发前的命中读取，不增加一次查询。完整几何/classes 与实时标签元数据仍需 detailed=true。DOM 模式调用一次 HTMLElement.click()，返回 invoked=true、method=dom、delivery_verified=null、events_trusted=false，只确认调用返回，不证明页面处理；需要结果条件时使用 wait_for。HTML select 的原生点击会在派发前拒绝，改用 select_option；系统弹层已打开时先按 Esc。
 
 ### browser_hover / browser_drag
 
-hover 接受原生 click 相同的目标，仅发送 mousemove。清理不移走指针，悬停菜单展开后可直接点击子项：
+hover 接受原生 click 相同的目标，也允许 disabled 控件；仅派发鼠标移动，以可信 pointermove 路径核验送达。清理不移走指针，悬停菜单展开后可直接点击子项：
 
 ```js
 browser_hover({tab_handle, selector:"#menu"})
@@ -687,7 +688,7 @@ navigation 的 event=requested/committed/same_document 分别表示渲染器请�
 
 随后读取 method/status、headers、request_body/response_body（text/format/bytes/truncated）；capture.enabled=false 关闭后续捕获，已有记录保留到正常清理。
 
-Authorization、Proxy-Authorization、Cookie、Set-Cookie 及 JSON/form 中命名的 password/token 等敏感字段始终脱敏，普通业务文本仍可能含个人信息。max_body_bytes 范围 1024–262144；二进制、未捕获、超限或缓存不足的正文标记 unavailable，不能当作空正文。单条放不进读取预算时返回截断预览并推进游标，正文较大时提高 max_chars 或降低捕获上限。捕获不修改缓存、service worker 或请求流量。
+Authorization、Proxy-Authorization、Cookie、Set-Cookie 及 headers、JSON/form、纯文本头行中以 password/token/secret/api-key/CSRF/XSRF 等凭据名称结尾的字段脱敏，支持厂商前缀、大小写与分隔符差异（如 x-csrf-token、lark_oapi_csrf_token、x-api-key、accessToken），普通业务文本仍可能含个人信息。max_body_bytes 范围 1024–262144；二进制、未捕获、超限或缓存不足的正文标记 unavailable，不能当作空正文。单条放不进读取预算时返回截断预览并推进游标，正文较大时提高 max_chars 或降低捕获上限。捕获不修改缓存、service worker 或请求流量。
 
 ## 标签栏控制标记
 

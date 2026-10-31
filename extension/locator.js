@@ -19,10 +19,10 @@ export function targetOptions(args, { coordinates = false, focused = false } = {
   if (args.coordinate_space != null && (!hasPoint || !['viewport', 'document'].includes(args.coordinate_space))) throw new Error('coordinate_space must be viewport or document and applies to coordinate clicks only');
 }
 
-export function queryElement(selector, type = 'css', nth, waitForMatch = false, countOnly = false) {
+export function queryElement(selector, type = 'css', nth, { missing = 'error', countOnly = false } = {}) {
   if (nth != null && (!Number.isSafeInteger(nth) || nth < 0)) throw new Error('nth must be a nonnegative safe integer (zero-based)');
   const failure = (message, reason, detail = {}) => Object.assign(new Error(message), {
-    diagnostics: { reason, selector_type: type, ...detail },
+    diagnostics: { reason, selector, selector_type: type, ...(nth == null ? {} : { nth }), ...detail },
   });
   let element, count, at;
   try {
@@ -49,7 +49,8 @@ export function queryElement(selector, type = 'css', nth, waitForMatch = false, 
     }
     return count;
   }
-  if (waitForMatch && (count === 0 || (nth != null && nth >= count))) return null;
+  // A numeric miss preserves the count in the same CDP response as a node hit.
+  if (missing !== 'error' && (count === 0 || (nth != null && nth >= count))) return missing === 'count' ? count : null;
   if (nth == null && count !== 1) {
     const candidates = Array.from({ length: Math.min(count, 10) }, (_, nth) => {
       const node = at(nth), text = (node.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 120);
@@ -62,7 +63,7 @@ export function queryElement(selector, type = 'css', nth, waitForMatch = false, 
     throw failure(`Selector must match exactly one element; matched ${count}. Scope the selector or provide an explicit zero-based nth. Candidates: ${JSON.stringify(candidates)}${count > candidates.length ? ` (${count - candidates.length} more omitted)` : ''}`,
       count ? 'selector_ambiguous' : 'selector_not_found', { matched: count, candidates, omitted_candidates: Math.max(0, count - candidates.length) });
   }
-  if (nth != null && nth >= count) throw failure(`Selector nth=${nth} is out of range; matched ${count}`, 'selector_not_found', { matched: count, nth });
+  if (nth != null && nth >= count) throw failure(`Selector nth=${nth} is out of range; matched ${count}`, count ? 'selector_nth_out_of_range' : 'selector_not_found', { matched: count });
   element = at(nth ?? 0);
   if (element.nodeType !== 1) throw failure('Selector must resolve to an element', 'selector_not_element');
   return element;
@@ -76,17 +77,23 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
   const role = args.selector_type === 'role';
   const context = role ? null : await send('Page.createIsolatedWorld', { frameId, worldName: 'browser-attach-locator' });
   let backendNodeId, roleNodes;
+  const locator = { selector: args.selector, selector_type: args.selector_type ?? 'css', frame_id: frameId,
+    ...(args.name == null ? {} : { name: args.name }), ...(args.nth == null ? {} : { nth: args.nth }) };
   try {
     while (true) {
+      let matched = 0;
       if (role) {
         const { nodes } = await send('Accessibility.getFullAXTree', { frameId });
         roleNodes = nodes;
-        backendNodeId = matchRole(nodes, args)?.backendDOMNodeId;
+        const candidates = matchingRoles(nodes, args);
+        matched = candidates.length;
+        backendNodeId = matchRole(nodes, args, candidates)?.backendDOMNodeId;
       } else {
         const result = await send('Runtime.evaluate', { contextId: context.executionContextId, objectGroup: 'browser-attach',
-          expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},true)` });
+          expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},{missing:"count"})` });
         await checkedValue(result, send, value);
-        if (result.result?.subtype !== 'null') {
+        if (result.result?.type === 'number') matched = result.result.value;
+        else {
           if (!result.result?.objectId) throw Object.assign(new Error('Selector did not resolve to an element'), {
             diagnostics: { reason: 'selector_not_element', frame_id: frameId },
           });
@@ -96,12 +103,14 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
       }
       if (backendNodeId != null) break;
       if (!wait) return null;
-      budget.describe?.(`selector ${JSON.stringify(args.selector)}${args.name == null ? '' : ` name=${JSON.stringify(args.name)}`}${args.nth == null ? '' : ` nth=${args.nth}`} to appear; current=no matching element`,
-        { reason: 'selector_not_found', selector_type: args.selector_type ?? 'css', frame_id: frameId, ...(args.nth == null ? {} : { nth: args.nth }) });
+      const outOfRange = matched > 0 && args.nth != null;
+      budget.describe?.(`selector ${JSON.stringify(args.selector)}${args.name == null ? '' : ` name=${JSON.stringify(args.name)}`}${args.nth == null ? '' : ` nth=${args.nth}`} in frame ${JSON.stringify(frameId)}; matched=${matched}; current=${outOfRange ? 'nth out of range' : 'no matching element'}`,
+        { ...locator, reason: outOfRange ? 'selector_nth_out_of_range' : 'selector_not_found', matched });
       await budget.run(() => new Promise(resolve => setTimeout(resolve, 20)));
     }
   } catch (error) {
-    if (role && error.diagnostics?.reason === 'selector_not_found' && !budget.has_dispatched()) {
+    error.diagnostics = { ...locator, ...error.diagnostics };
+    if (role && ['selector_not_found', 'selector_nth_out_of_range'].includes(error.diagnostics.reason) && !budget.has_dispatched()) {
       const hint = 'For selector_type="role", selector is the actual AX role (e.g. "link"), and name is the exact accessible name (e.g. "Claim"). Suggestions are diagnostic only; inspect browser_snapshot query before choosing a target.';
       const suggestions = roleSuggestions(roleNodes || [], args);
       error.diagnostics = { ...error.diagnostics, ...suggestions, hint };
@@ -146,8 +155,7 @@ export function matchingRoles(nodes, args) {
   return [...matches.values()];
 }
 
-export function matchRole(nodes, args) {
-  const candidates = matchingRoles(nodes, args);
+export function matchRole(nodes, args, candidates = matchingRoles(nodes, args)) {
   if (args.nth == null && candidates.length > 1) {
     const preview = candidates.slice(0, 10).map((node, nth) => ({ nth, role: node.role?.value, name: String(node.name?.value || '').slice(0, 120) }));
     throw Object.assign(new Error(`Role selector must match exactly one element; matched ${candidates.length}. Provide name or an explicit zero-based nth. Candidates: ${JSON.stringify(preview)}`), {

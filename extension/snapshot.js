@@ -101,6 +101,11 @@ export function popupProperties(node) {
   return Object.fromEntries(['hasPopup', 'controls', 'owns', 'activedescendant'].filter(name => name in result).map(name => [name, result[name]]));
 }
 
+export function descriptionProperties(node) {
+  const text = node.description?.value;
+  return typeof text === 'string' && text ? { description: text.slice(0, 1000), ...(text.length > 1000 ? { description_truncated: true } : {}) } : {};
+}
+
 export function renderAX(nodes, token, refs, frameId, sessionId, options = snapshotOptions(), previousRefs) {
   const { byId, parents, fieldContext } = axContext(nodes);
   const visited = new Set(), entries = [];
@@ -167,6 +172,7 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
       ['disabled', 'focused', 'expanded', 'checked', 'selected', 'required', 'invalid', 'level'].includes(prop.name)
     ).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0).map(prop => `${prop.name}=${JSON.stringify(prop.value?.value)}`);
     for (const [name, value] of Object.entries(popupProperties(node))) states.push(`${name}=${JSON.stringify(value)}`);
+    for (const [name, value] of Object.entries(descriptionProperties(node))) states.push(`${name}=${JSON.stringify(value)}`);
     if (node.value?.value != null) states.push(`value=${JSON.stringify(node.value.value)}`);
     const context = FIELD_ROLES.has(role) && !node.ignored ? fieldContext(node) : null;
     if (context && context !== name) states.push(`context=${JSON.stringify(context)}`);
@@ -180,7 +186,7 @@ export function renderAX(nodes, token, refs, frameId, sessionId, options = snaps
     }
     let nextDepth = depth;
     if (!skip) {
-      if (query == null || identityName.toLowerCase().includes(query) || String(node.value?.value ?? '').toLowerCase().includes(query) || context?.toLowerCase().includes(query)) {
+      if (query == null || identityName.toLowerCase().includes(query) || String(node.value?.value ?? '').toLowerCase().includes(query) || String(node.description?.value ?? '').toLowerCase().includes(query) || context?.toLowerCase().includes(query)) {
         const ref = registerAXRef(node, token, refs, frameId, sessionId, previousRefs);
         entries.push({ node: true, frameId, key: JSON.stringify(['node', frameId, sessionId, node.nodeId]),
           line: `${'  '.repeat(Math.min(depth, 24))}${ref ? `[${ref}] ` : ''}${role} ${JSON.stringify(name)}${attributes ? ' ' + attributes : ''}` });

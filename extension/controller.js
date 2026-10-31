@@ -293,11 +293,11 @@ export function createController(api, notify = () => {}) {
         try { return { ...await budget.run(() => readText(cdp, value, node.target, { ...args, node })), scope: args.frame || args.frame_id ? 'frame' : 'main_frame', frame_id: node.frameId }; }
         finally { await boundedRead(() => cdp(node.target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach' }), 100).catch(() => {}); }
       }
-      if (!args.frame && !args.frame_id) return await readText(cdp, value, tabId, args);
+      if (!args.frame && !args.frame_id) return await readText(cdp, value, tabId, { ...args, diagnostic_frame_id: observations.mainFrame(tabId) });
       const budget = deadline(5000), frameId = await resolveFrame(cdp, value, sessions, tabId, args, budget), target = sessions.target(tabId, frameId);
       const contextId = observations.context(tabId, target.sessionId, frameId);
       if (contextId == null) throw new Error('Page frame context is unavailable; observe again');
-      return { ...await readText(cdp, value, target, { ...args, context_id: contextId }), scope: 'frame', frame_id: frameId };
+      return { ...await readText(cdp, value, target, { ...args, context_id: contextId, diagnostic_frame_id: frameId }), scope: 'frame', frame_id: frameId };
     }
     if (command === 'screenshot') return await screenshots.capture(tabId, args);
     if (command === 'release_tab') { await release(tabId); return { released: true }; }

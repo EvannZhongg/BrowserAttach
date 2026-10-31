@@ -1,6 +1,73 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { fixture } from './helpers/controller-fixture.mjs';
+import { inspectTarget } from '../extension/actionability.js';
+import { installGuard, clickOptions } from '../extension/click.js';
+
+test('disabled hover retains target preparation and trusted pointer receipt without enabling clicks', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  const element = { isConnected: true, tagName: 'BUTTON', matches: () => true, hasAttribute: () => false,
+    getRootNode: () => ({}), getBoundingClientRect: () => ({ x: 10, y: 10, width: 90, height: 40 }),
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ display: 'block', visibility: 'visible' }) } } };
+  let binding;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.addBinding') binding = args.name;
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function inspectTarget')) {
+      return { result: { value: inspectTarget.apply(element, args.arguments.map(arg => arg.value)) } };
+    }
+    if (method === 'Input.dispatchMouseEvent' && args.type === 'mouseMoved') {
+      f.api.debugger.onEvent.emit(target, 'Runtime.bindingCalled', { name: binding, executionContextId: 42, payload: '{"matched":true}' });
+    }
+    return send(target, method, args);
+  };
+  const hovered = await f.exec('hover', { selector: '#disabled' });
+  assert.equal(hovered.delivery_verified, true); assert.equal(hovered.target_verified, true);
+  assert.deepEqual(f.calls.filter(call => call.method === 'Input.dispatchMouseEvent').map(call => call.args.type), ['mouseMoved']);
+  f.calls.length = 0;
+  await assert.rejects(f.exec('click', { selector: '#disabled', timeout_ms: 100 }), error => {
+    assert.equal(error.input_dispatched, false); assert.equal(error.diagnostics.reason, 'disabled'); return true;
+  });
+  assert.ok(!f.calls.some(call => call.method.startsWith('Input.')));
+  element.hasAttribute = name => name === 'inert';
+  assert.equal(inspectTarget.call(element, false, true).reason, 'inert');
+});
+
+test('hover guard accepts disabled trusted pointermove only on the verified path; click guard still blocks', () => {
+  for (const hover of [true, false]) {
+    const listeners = new Map(), reports = [];
+    const win = { addEventListener: (type, listener) => listeners.set(type, listener), removeEventListener: type => listeners.delete(type),
+      setTimeout: () => 1, clearTimeout() {}, receipt: payload => reports.push(JSON.parse(payload)) };
+    const element = { nodeType: 1, isConnected: true, ownerDocument: { defaultView: win }, getRootNode: () => ({}), matches: () => true, closest: () => null };
+    const guard = installGuard.call(element, 'receipt', { ...clickOptions({}), hover }, 100, true);
+    let prevented = false;
+    const event = { type: hover ? 'pointermove' : 'click', button: 0, isTrusted: false, composedPath: () => [element],
+      preventDefault: () => { prevented = true; }, stopImmediatePropagation() {} };
+    const listener = listeners.get(event.type);
+    listener(event); assert.equal(reports.length, 0);
+    listener({ ...event, isTrusted: true });
+    assert.equal(reports[0].matched, hover); assert.equal(prevented, !hover);
+    if (hover) { listener({ ...event, isTrusted: true, composedPath: () => [] }); assert.equal(reports.at(-1).matched, false); }
+    guard.stop(); assert.equal(listeners.size, 0); assert.equal(win.receipt, undefined);
+  }
+});
+
+test('coordinate click returns a bounded hit identity by default without another renderer read', async () => {
+  const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
+  const hit = { tag: 'span', id: 'label', role: null, classes: ['large'], rect: { width: 10 }, text: 'x'.repeat(300), disabled: false, clickable_hint: true,
+    clickable_target: { tag: 'button', id: 'delete', role: 'button', classes: ['danger'], text: 'Delete' } };
+  let reads = 0;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function describeHit')) { reads++; return { result: { value: hit } }; }
+    return send(target, method, args);
+  };
+  const compact = await f.exec('click', { x: 20, y: 20 });
+  assert.equal(compact.target_verified, null); assert.equal(compact.delivery_verified, true); assert.equal(reads, 1);
+  assert.equal(compact.hit_target.tag, 'span'); assert.equal(compact.hit_target.text.length, 120);
+  assert.equal(compact.hit_target.clickable_target.id, 'delete'); assert.equal(compact.hit_target.rect, undefined); assert.equal(compact.hit_target.classes, undefined);
+  const detailed = await f.exec('click', { x: 20, y: 20, detailed: true });
+  assert.deepEqual(detailed.hit_target, hit); assert.equal(reads, 2);
+});
 
 test('inactive left single click verifies ref, selector and coordinate delivery without activation', async () => {
   for (const target of ['ref', 'selector', 'viewport', 'document']) {

@@ -1,8 +1,15 @@
 # 验证报告
 
-当前版本 **0.32.1**（2026-10-30）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.33.0**（2026-10-31）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
 
-## 0.32（当前）
+## 0.33：控件与操作证据
+
+- disabled hover 的准备和回执与点击准入分开，使用可信 pointermove；保留非 inert、可见、稳定几何、命中关系及显式激活边界。read_control 分别返回原始 DOM/ARIA 状态、title/aria-description、同根 aria-describedby 引用文本与 AX description；full/interactive/fields 保留有界 AX description，query 比较完整来源文本，不改写名称或 ref 身份。
+- 坐标点击默认附精简命中身份和最近可点击祖先，复用已有读取；元素点击默认精简和 detailed 完整输出保持。定位查询在同一次响应中保留最后匹配数，区分零匹配与 nth 越界，并保留查询、索引和实际 frame；原始结构化错误继续跨输入、只读文本、等待及 batch 边界传递。凭据名称归一化与后缀规则统一用于 headers、JSON/form 和纯文本头行，覆盖厂商前缀、CSRF/XSRF、API key、camelCase。
+- 验证：全套单元测试 423/423 通过（并发 4）。Chrome / Edge 156 的临时 Profile observability 组均通过，覆盖 disabled 按钮可信悬停、tooltip、点击派发前拒绝、显式说明和 AX 查询、闭合 Shadow DOM、iframe/fieldset 继承禁用、坐标命中摘要、定位计数与请求/响应脱敏；操作期间焦点保持。初次全套运行的 3 处失败来自旧查询格式的测试替身/断言，更新后相关 92 项与全套复跑通过。包外安装、71 文件、24 工具及配对目录独立检查通过。
+- 部署：本机 Hub 已 stop/start，Chrome、Edge 扩展均自动重载为 0.33.0 / ready；46 个普通资源逐文件 SHA-256 一致，生成 manifest 配对配置一致。新 stdio 会话确认 24 工具、新说明与两浏览器版本。已有 MCP 会话需重新连接以加载新版工具说明；内部 queryElement 改为具名选项，新增 selector_nth_out_of_range 及观察返回字段，无旧实现兼容层。记录：unit-0330-final.tap、diagnostics-0330.tap、observability-chromium.log、observability-edge-final.log、observability-{chromium,edge}.json、package-0330.log、deployment-0.33.0.json。
+
+## 0.32
 
 - **0.32.1**：按本次指定版本交付。evaluate 区分来源失效与控制权清理，已完成 JSON 可返回无 cursor 的有界历史回执，ref/控制权仍严格；输入及新 evaluate 的 wait_for.checks 复用只读检查器、共享总预算并独立返回 wait_result，跨导航重解析且不重放动作，batch 非 pass 保留该动作回执后停止。网络新增 origin/type/method/status/event/identity 筛选和从同一缓冲派生的 requests 摘要；成功点击默认精简、detailed=true 提供完整详情，DOM invoked 与可信送达分开；针对性恢复及顶层小记录数组/缓存续读提示已同步。全套单测 413 项通过（并发 4 复跑与串行一致）；早前一次并发运行曾出现 1 项既有 120 ms wait 用例的时序性 unavailable，未因此放宽生产语义。Chrome/Edge 临时 Profile 的 evidence 组均通过（历史 JSON、一次点击后的 SPA/完整导航等待、正文脱敏、焦点保持）；包外安装、71 文件及 24 工具检查通过。Hub 与两浏览器扩展均为 0.32.1/ready，46 个普通扩展资源逐文件哈希一致；真实配对链路以后台本地 fixture 核验历史 JSON、一次 DOM 动作+等待及网络摘要/正文捕获，原活动标签保持，测试页关闭。记录：unit-0321-serial.tap、unit-0321-rerun.log、evaluate-0321-final.tap、evidence-0321-{chrome,edge}-final.log、package-0321.log、runtime-0321-final.log、deployment-0.32.1.json。既有 MCP 客户端需要重连以加载新 schema/instructions；本次含返回结构变化，不保留旧字段兼容层。
 

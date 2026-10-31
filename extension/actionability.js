@@ -38,11 +38,11 @@ export function deadline(timeout_ms = 5000, phase = 'input', parentEnd = Infinit
   return { run, has_dispatched: () => dispatched, child(ms, childPhase = phase) { return deadline(ms, childPhase, end); }, describe(detail, state) { waiting = detail; diagnostics = state; }, dispatch() { if (Date.now() >= end) throw error(); dispatched = true; }, remaining: () => Math.max(0, end - Date.now()) };
 }
 
-export async function waitForTarget(cdp, value, target, node, budget, { editable = false } = {}) {
+export async function waitForTarget(cdp, value, target, node, budget, { editable = false, hover = false } = {}) {
   let previous;
   while (true) {
     const bounds = value(await budget.run(() => cdp(target, 'Runtime.callFunctionOn', {
-      objectId: node.objectId, functionDeclaration: inspectTarget.toString(), arguments: [{ value: editable }], returnByValue: true,
+      objectId: node.objectId, functionDeclaration: inspectTarget.toString(), arguments: [{ value: editable }, { value: hover }], returnByValue: true,
     })));
     if (bounds?.detached || bounds?.unsupported) throw Object.assign(new Error(`${bounds.detached
       ? 'Element is detached; take a new snapshot.'
@@ -50,13 +50,13 @@ export async function waitForTarget(cdp, value, target, node, budget, { editable
       input_dispatched: budget.has_dispatched(), diagnostics: { reason: bounds.detached ? 'element_detached' : 'unsupported_editable', frame_id: node.frameId },
     });
     if (bounds?.ready && previous && JSON.stringify(bounds) === JSON.stringify(previous)) return;
-    budget.describe?.(`visible, enabled, stable target; current=${JSON.stringify(bounds)}`, { reason: bounds?.ready ? 'unstable_geometry' : bounds?.reason || 'not_actionable', frame_id: node.frameId, target: bounds });
+    budget.describe?.(`visible, ${hover ? '' : 'enabled, '}stable target; current=${JSON.stringify(bounds)}`, { reason: bounds?.ready ? 'unstable_geometry' : bounds?.reason || 'not_actionable', frame_id: node.frameId, target: bounds });
     previous = bounds?.ready ? bounds : null;
     await budget.run(() => new Promise(resolve => setTimeout(resolve, 20)));
   }
 }
 
-export function inspectTarget(editable) {
+export function inspectTarget(editable, hover = false) {
   let element = this?.nodeType === 3 ? this.parentElement : this;
   if (!element?.isConnected) return { detached: true };
   const tag = element.tagName?.toLowerCase();
@@ -83,7 +83,8 @@ export function inspectTarget(editable) {
   }
   // Inert and disabled state can be inherited through a slot or shadow host.
   for (let parent = element; parent; parent = next(parent)) {
-    if (parent.matches(':disabled') || parent.hasAttribute('inert')) return failure(parent.matches(':disabled') ? 'disabled' : 'inert', parent);
+    if (parent.hasAttribute('inert')) return failure('inert', parent);
+    if (!hover && parent.matches(':disabled')) return failure('disabled', parent);
   }
   if (style.display === 'none') return failure('display_none');
   if (style.visibility !== 'visible') return failure('visibility_hidden');

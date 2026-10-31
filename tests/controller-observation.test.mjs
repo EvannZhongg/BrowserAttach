@@ -60,7 +60,7 @@ test('selectors resolve afresh per action, route isolated frame nodes and refuse
   f.api.debugger.sendCommand = async (target, method, args) => {
     if (method === 'Runtime.evaluate' && args.expression.includes('function queryElement')) {
       resolutions++;
-      if (args.expression.endsWith('("button","css",undefined,true)')) return { exceptionDetails: { text: 'Selector must match exactly one element; matched 2' } };
+      if (args.expression.endsWith('("button","css",undefined,{missing:"count"})')) return { exceptionDetails: { text: 'Selector must match exactly one element; matched 2' } };
       return { result: { objectId: 'selector-node' } };
     }
     if (method === 'DOM.describeNode' && args.objectId === 'selector-node') return { node: { backendNodeId: 12 } };

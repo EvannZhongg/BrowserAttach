@@ -234,7 +234,9 @@ test('batch uses one queue, fresh selector resolution and explicit native Tab fo
   const actions = f.calls.filter(c => c.method === 'Input.insertText' || c.method === 'Input.dispatchMouseEvent' && c.args.type === 'mouseReleased' || c.method === 'Input.dispatchKeyEvent' && c.args.type === 'rawKeyDown');
   assert.deepEqual(actions.map(c => c.args.text || c.args.key || 'click'), ['click', '2026', 'Tab', 'click', 'Escape']);
   const queries = f.calls.filter(c => c.method === 'Runtime.evaluate' && c.args.expression.includes('function queryElement'));
-  assert.equal(queries.length, 3); assert.ok(queries[1].args.expression.endsWith('("input","css",1,true)'));
+  assert.equal(queries.length, 3);
+  const fields = [{ nodeType: 1, id: 'first' }, { nodeType: 1, id: 'second' }];
+  assert.equal(vm.runInNewContext(queries[1].args.expression, { document: { querySelectorAll: () => fields } }), fields[1]);
 });
 
 test('batch accepts semantic selectors and focused type while prevalidating ambiguity in target options', async () => {

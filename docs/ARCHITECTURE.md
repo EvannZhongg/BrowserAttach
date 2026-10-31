@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.32.1**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.33.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -88,9 +88,9 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 ## 观察模型
 
 - **AX 渲染**：从 `Accessibility.getFullAXTree` 读取，移除 `InlineTextBox`，合并纯文本列表项与段落名称，丢弃 `generic` / `none` 且无名称无状态的节点，只保留少量状态属性和浏览器提供的 value、invalid。树遍历、交互视图筛选和正文合并使用迭代，跨 frame 逐项合并结果，避免深树递归和大数组参数展开溢出；分页前仍采集并渲染完整 AX 树，max_nodes 不限制采集成本。每行 `[token:n] role "name"`，`token` 是创建该 ref 时的随机前缀，增量中可沿用更早观察的 ref；这些字段不证明应用已保存。
-- **弹层语义**：AX 树与 fields 共用同一提取函数，保留 hasPopup 与浏览器已解析的 controls/owns DOM idrefs；不输出内部 AX/backend ID、不推断归属、不注册额外 refs。expanded 沿用原有状态提取；查询、分页和 ref 生命周期不变。
+- **弹层语义**：AX 树与 fields 共用同一提取函数，保留有界 AX description、hasPopup 与浏览器已解析的 controls/owns DOM idrefs；不输出内部 AX/backend ID、不推断归属、不注册额外 refs。expanded 沿用原有状态提取；查询、分页和 ref 生命周期不变。
 - **交互视图**：可选 `profile=interactive` 在同一渲染器中仅保留 AX 控件角色、可聚焦/可编辑节点及其祖先链和控件内文本，不以 backendNodeId/ref 是否存在判断交互性。独立文本和合并正文可隐藏或截取预览，控件名称、值和 ref 的原始 AX 身份保留；默认 `full` 行为不变。筛选仍读取完整 AX 树，只降低输出与分页成本；视图参数绑定分页观察。
-- **文本查询与精简输出**：`snapshot(query=...)` 复用同一次 AX 渲染，按当前视图中节点的完整名称（含合并正文）、value 或字段 context 做不区分大小写的字面子串筛选，只输出匹配行和对应 frame 标题；不搜索 role/ref 或任意 DOM 属性，不新增索引缓存。新查询仍采集新观察并使旧 refs 失效，query 与分页绑定。始终返回 snapshot_id，默认省略 viewport 和重复规则说明，`verbose=true` 额外返回 viewport。
+- **文本查询与精简输出**：`snapshot(query=...)` 复用同一次 AX 渲染，按当前视图中节点的完整名称（含合并正文）、value、description 或字段 context 做不区分大小写的字面子串筛选，只输出匹配行和对应 frame 标题；不搜索 role/ref 或任意 DOM 属性，不新增索引缓存。新查询仍采集新观察并使旧 refs 失效，query 与分页绑定。始终返回 snapshot_id，默认省略 viewport 和重复规则说明，`verbose=true` 额外返回 viewport。
 - **语义差分**：full/interactive 的 diff_since 在全量采集后，按 frame/session/AX 节点身份及语义行对齐；最长递增子序列在 O(n log n) 内保留共同节点的顺序，以基线行范围表示新增、删除、移动和属性变化，避免后代变化扩大成整棵祖先树替换。不暴露另一套可操作 ID，不减少 getFullAXTree 成本。复用现有每标签观察，仅保存最新完整视图和当前差分页；旧视图不形成历史链。按 frame/session/backend/role/name/ignored 索引复用已核验身份的 refs，未进入当前查询结果的额外 refs 也需在本次 AX 中核验；普通新 snapshot 仍废弃旧 refs。
 - **差分基线与提交**：显式 snapshot_id 对应的视图必须读完全部分页且 frame 覆盖完整；视图参数绑定基线，fields 不支持增量。输入过早使分页失效不会把未读完的观察标为完成。文档/frame/session 失效、frame 读取失败均明确拒绝增量，不推断删除；只在输出首分页成功后发布新观察并退役消失/身份变化的 refs。采集或输出失败不推进仍有效的基线，迟到结果不能发布；主文档变化不得跨基线重试差分。变化项可跨页，以 line_offset/complete 拼接后按基线 start_line 倒序应用。
 - **latest 与重置**：latest 由扩展在既有标签队列内解析，不在 Hub 镜像基线 ID。可用完整基线仍走差分；无基线、fields 视图、视图变化或文档/frame/session 失效时返回 mode=full/reset_reason，成功发布时才替换当前观察并退役旧 refs。采集竞态可沿用一次只读重试转为全量，不跨文档比较；仍受原 deadline 和 claim 校验约束。未读分页始终拒绝，错误 diagnostics 给出 snapshot_id/next_cursor；不自动补读、不丢弃未读内容、不新增历史快照。
@@ -117,12 +117,12 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 
 - **type 与 fill**：fill 替换文字，type 保留选区，逐字符复用原生按键与 keydown 回执；字符之间可延迟，不把 insertText 伪装成键盘序列。浏览器处理 keypress/input 及 preventDefault，非 ASCII 不模拟系统 IME。fill 对 input/textarea 精确核验 value；native 在 insertText 前另核对替换选区与焦点，丢失则停止，避免已知失效选区造成追加。contenteditable 的 native 核验临时选中内容并读取浏览器 Selection.toString，finally 恢复原选区及方向；复用浏览器对编辑占位 br/div 的纯文本语义，不实现 HTML 解析器。此过程可能触发 selectionchange，不插入额外文本。dom 使用 innerText setter 生成可见 br，再核验 innerText，无 HTML sink、不主动聚焦。两者统一 CRLF/CR 为 LF，两种模式均仅允许请求中的普通空格在同位置以 NBSP 保留；不合并空白或空行，不等待异步保存，差异仍报告结果未知。
 - **焦点输入与语义定位**：type 的 focused=true 与 ref/selector 互斥，复用 press_key 的 frame/开放 Shadow DOM 焦点解析，固定最初可编辑元素并逐字检查，不重新聚焦。selector_type 的 label/placeholder 在隔离世界按真实 HTML 关联/属性查询，role/name 每次读取所选 frame 的 AX 树并严格匹配，以 AX 树顺序支持 nth；统一返回原有节点结构，继续复用输入、命中核验及 batch 流程，无组件库适配器。
-- **定位与输入恢复提示**：非法 CSS 附原生语法及 role/label/placeholder 提示，不实现 Playwright 兼容层。role 准备失败仅在错误路径复用最后一次 AX 树，给出有界名称建议，不额外查询、不改变匹配或自动操作。原生回执未知时提示显式 activate 后重新观察，并保留禁止自动重放的边界；fill_selection_lost 提示可显式选择键盘编辑路径，不自动补发。
+- **定位与输入恢复提示**：非法 CSS 附原生语法及 role/label/placeholder 提示，不实现 Playwright 兼容层。role 准备失败仅在错误路径复用最后一次 AX 树，给出有界名称建议，不额外查询、不改变匹配或自动操作。定位查询未命中时在同一次 CDP 返回中保留匹配数，nth 越界与零匹配分别诊断，并附实际 frame 与查询；不增加第二次 count 查询。原生回执未知时提示显式 activate 后重新观察，并保留禁止自动重放的边界；fill_selection_lost 提示可显式选择键盘编辑路径，不自动补发。
 - **只重试准备**：等待阶段可以反复轮询，但一旦派发就不再重试。超时分为"未派发"和"已派发、结果未知"两种错误文本。
 - **原生指针就绪检查**：准备前和派发前各做一次至多 500 ms 的有界检查；要求未冻结/丢弃的 tab 与未最小化的窗口。无修饰键的左键单击可在非活动标签尝试执行；hover、drag、其他按钮、双击及带修饰键的点击仍要求活动标签。检查失败以 TAB_NOT_READY 明确报告当前指针输入未派发，并提示 tab_control(action=activate) → snapshot → 所请求动作。click 的 detailed=true 及 hover 成功结果的 page_state.tab_active 记录派发前检查观察到的活动状态。普通操作不主动激活；仅显式 tab_control(action=activate) 在 focus_window=true 时请求窗口聚焦和 Page.bringToFront。
 - **焦点信号边界**：OS 窗口失焦、遮挡或 document.visibilityState=hidden 不一定阻止 CDP 输入；document.hasFocus() 在 iframe 导航后也可能为 false。这些值作为 page_state 诊断，不独立拒绝点击。实际送达仍由隔离世界的可信事件回执校验；没有回执时不自动重放。
 - **送达预算**：原生 click/hover/press_key 的派发及可信回执另有 1250 ms 上限，清理最多 250 ms；系统菜单捕获输入时快速释放队列，仍报告结果未知并提示 Esc，不自动重放。
-- **hover 与 drag**：hover 复用点击准备与隔离校验，仅派发一次 mouseMoved，清理不移走指针。drag 显式区分 pointer 与 HTML5；后者从真实 dragstart 截获 DragData，再用 CDP 派发 dragover/drop，校验可信 dragstart/drop/dragend。目的节点在按住后滚入视口；所有步骤共用标签队列和总预算，失败时只取消/释放本次手势。
+- **hover 与 drag**：hover 复用指针准备与隔离校验，仅对 disabled 放宽准备和回执限制，以可信 pointermove 核验；可见、非 inert、稳定几何与命中关系仍必需。仅派发一次 mouseMoved，清理不移走指针。drag 显式区分 pointer 与 HTML5；后者从真实 dragstart 截获 DragData，再用 CDP 派发 dragover/drop，校验可信 dragstart/drop/dragend。目的节点在按住后滚入视口；所有步骤共用标签队列和总预算，失败时只取消/释放本次手势。
 - **可选输入参数**：显式 offset 在元素 content quad 上插值后沿用命中与 OOPIF 边界检查；settle_ms 在 click/drag 首次派发前等待并复查就绪。drag trajectory 只替换既有插值段，采用法向控制点、平滑进度及随机间隔权重；type 的 delay_ms 可逐间隔独立区间采样。所有等待共用总预算，超时后没有继续派发的链；省略参数时不使用随机数，沿用既有确定性路径。不新增 tab 级历史、冷却、自动激活或重放路径。
 - **条件等待**：wait 复用严格 selector、可操作性和命中检查，支持出现、无匹配、可见、可操作、字段值精确相等、checked/selected/expanded、文本/URL 子串及网络空闲。控件优先读取明确的原生属性，否则读取对应 ARIA 属性；缺失/无效状态保持 unavailable，不当作 false。字段值不回显；文本使用 innerText，比较在 500 字符预览截取前完成。每次只读轮询重新解析 selector，可在节点替换时重读，歧义立即失败；AX 无匹配不证明 DOM 移除。单步与 batch 共享条件 schema 和参数校验，等待超时不改变前序动作的派发事实。
 - **可操作性诊断**：区分 display_none、visibility_hidden、zero_size、disabled、inert、read_only 和 unstable_geometry；无可见落点单独返回 no_visible_click_point。失败时最多采集 8 层 composed 祖先的样式、滚动方向和 transition 属性/时长，成功路径保留原有几何就绪语义；不以 opacity=0 拒绝输入，不自动 hover、移除遮挡或等待推断出的组件状态。
@@ -131,12 +131,12 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **字段与编辑器边界**：fill 复用 prepareFill 的只读预检，在标记派发前拒绝已识别的 Monaco/CM5 代理 textarea；实际聚焦/赋值前再次检查，不增加适配器注册或私有全局扫描。native 对暴露选区偏移的 input/textarea 验证完整替换范围，email 保留 select() 与最终值核验。verification_source 记录 dom_value/selection_text/inner_text，与预期来源 verification_basis 分开。页面侧代理诊断经 checkedValue 跨 CDP 保留；选区/值核验失败仍保留未知结果与禁止重放语义。
 - **模型读取与等待诊断**：editor 模式只接受明确暴露且关联唯一编辑器的字符串模型；能力缺失/异常与多实例歧义分别返回 editor_model_unavailable/editor_model_ambiguous，所选节点调用也使用 checkedValue 保留诊断，不用 DOM 视图补全。text wait 继续完整比较 innerText，仅对预览增加长度、截断和容器回读提示；不增加业务新鲜度状态。
 - **原生下拉**：select_option 不要求可见或稳定几何，先只读核对节点、禁用/inert 祖先与唯一选项，再在一次派发中复查并用 selectedIndex setter 和合成 input/change 设置，核验保留结果并返回 events_trusted=false。单步和 batch 共用实现。native click 的 select 命中（含 UA shadow 内部节点和关联 label）在派发前拒绝。
-- **命中提示**：普通命中保留实际 hit node，沿父元素、Shadow host、slot 查找最近的 HTML/ARIA 可点击候选，详细结果或失败诊断返回 clickable_target；hint=false 表示未识别候选，不代表无法响应事件。CSSPseudoElement 先解析为事件所属的 originating element，提示标记 pseudo_element=true，并使用该元素安装事件校验。语义候选不会被用于替换点击目标。
+- **命中提示**：普通命中保留实际 hit node，沿父元素、Shadow host、slot 查找最近的 HTML/ARIA 可点击候选，坐标点击默认返回有界身份摘要与 clickable_target；详细结果或失败诊断保留完整命中信息；hint=false 表示未识别候选，不代表无法响应事件。CSSPseudoElement 先解析为事件所属的 originating element，提示标记 pseudo_element=true，并使用该元素安装事件校验。语义候选不会被用于替换点击目标。
 - **遮挡失败诊断**：requested_target 与 blocked_by 分别描述请求目标及遮挡物，hit_target 保留实际命中语义。请求目标描述最多额外读取 100 ms，失败仍保留 backend/frame ID；当前 frame 的遮挡复用已读取的 hit_target；祖先 frame 遮挡额外用至多 200 ms 读取命中描述，诊断节点消失时保留原遮挡错误与 backend node ID。命中元素与最近可点击祖先均附 tag/id/classes，classes 至多 8 项、每项 100 字符，只作当次身份线索，不生成唯一 selector 或替换目标。错误包含命中点和受阻 frame。根据共享预算的派发状态区分“未派发”和“结果未知”，避免 drag 按住后准备目的节点时误报零输入。
 - **滚动查找诊断**：until 未命中或中断时保留 isError，以 scroll_search_stopped 和 stop_reason 区分预算、步数、文档/frame/控制权变化及其他异常；记录已确认的滚动次数、最后结果和是否有未确认调用。一次无位移只作为 boundary_observed 证据，继续只读等待列表增长，不声明数据到底。超时后不接续循环或重发滚动。
 - **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 只用于显式元素目标，纯坐标为 null，target_verification 标明 element/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。元素命中关系比较先把双方 backend 节点显式解析到目标 frame 的同一隔离 world，避免先前定向读取留下的默认 wrapper 导致跨 world 对象比较失败。value_verified 表示字段保留文本与核验预期一致；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
-- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、明确的 controls/owns 弹层及 activedescendant。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。定位器形式的 observe 复用相同读取。
+- **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、原始 ARIA 属性、title/aria-description、同根 aria-describedby 文本及浏览器 AX description、明确的 controls/owns 弹层及 activedescendant。显式描述引用最多 8 项、每项 1000 字符，来源与缺失/截断分开报告，不自动悬停或推断禁用原因。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。定位器形式的 observe 复用相同读取。
 - **动作后快照观察**：单个动作或整批末尾的 observe 可用 diff_since，在 perform 入口验证并绑定动作前的基线/视图/claim；派发后复用 snapshot 采集与 latest 重置规则，不重新解析成动作后的另一份基线。参数或未读基线错误在输入前拒绝；派发后观察受剩余动作预算约束，以独立 observation 返回，失败不覆盖动作结果，已派发失败仍可保留证据，不重放或推断业务成功。默认观察上限为 5 秒，可显式调整但不能超过剩余总预算；步骤 observe 保持控件 selector 形式。
 - **动作后条件等待**：wait_for 仅接受 checks 与子预算；输入前预检，派发后在原标签队列和 deadline 中复用同一 waitFor 检查器，然后才执行 observe。等待期间临时覆盖对话框策略为 ask，重新解析新文档 selector 并检查权限/claim；wait_result 与动作回执独立，未知动作不因条件通过而变成已核验送达。batch 对步骤 wait_result 非 pass 停止并保留该动作回执；不放宽下一步骤的文档边界，不添加后台任务或自动重放。
 - **键盘目标证据**：press_key 可带只检查、不聚焦的 ref/selector 守卫。准备期核对目标及 composed 后代焦点，可信回执再次核对实际事件路径并报告目标/frame；闭合 Shadow DOM 在相应 root 捕获路径。守卫不匹配时停止，派发后的不匹配尝试阻止事件继续传播但仍属未知结果；每次均排队 keyUp。无目标按键保持当前焦点语义。
@@ -164,7 +164,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - 统一裁剪事件已有栈：总共最多 8 帧、两层内联异步父栈，保留 async_depth 和截断标记，不查询 parentId 或启用 Debugger。网络 initiator 仅写入 request 行，网络事实表只增加 loader_id，不保存调试栈；浏览器 Log 保留可用的 request_id。
 - 上限为每类 500 条 / 1,048,576 字符，活跃请求表 500 项；淘汰记录 `dropped_through_seq`，读取返回 `data_loss`。
 - network 的 requests 视图在读取时从现有缓冲按 session/request/hop 汇总，不维护第二份网络历史或影响 wait/fetch 的事实表。每项使用最新事件 seq 排序和续读；新事件可再次返回请求更新。origin/type/method/status/event/identity 筛选作用于对应视图，摘要不回传 headers/正文，切换视图或条件需从 0 回看；筛选不改变淘汰或捕获范围。
-- 导航保留缓冲，tab_control(action=release) / detach / 关闭 / 断连清理；不落盘、不修改缓存策略与 service worker。默认不读取 headers/正文；按需开启只捕获之后的 XHR/fetch，凭据头和命名敏感字段脱敏，解压后体积、并发读取、浏览器缓存和扩展日志均有界，未捕获/超限明示 unavailable。
+- 导航保留缓冲，tab_control(action=release) / detach / 关闭 / 断连清理；不落盘、不修改缓存策略与 service worker。默认不读取 headers/正文；按需开启只捕获之后的 XHR/fetch，凭据头和命名敏感字段按统一的名称归一化与凭据后缀规则脱敏，覆盖厂商前缀、CSRF/XSRF、API key 及 camelCase 的 JSON/form 字段和纯文本头行，解压后体积、并发读取、浏览器缓存和扩展日志均有界，未捕获/超限明示 unavailable。
 - 正文读取最多 8 个并发任务；已知解压后超限的响应不读取。请求关联表溢出时可能缺少 URL/hop，但保留 request_id；控制台与网络时间戳分别采用 Unix 毫秒和 CDP 单调秒，不合并为统一时间轴。
 
 ## 安全与隐私

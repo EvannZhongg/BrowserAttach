@@ -10,6 +10,38 @@ import { validateSteps } from '../extension/batch.js';
 const ax = (id, backend, role, name, childIds = [], properties = []) => ({ nodeId: id, backendDOMNodeId: backend, role: { value: role }, name: { value: name }, childIds, properties });
 const state = (name, value) => ({ name, value: { value } });
 const relation = (name, backendDOMNodeId, idref) => ({ name, value: { relatedNodes: [{ backendDOMNodeId, idref }] } });
+
+test('control facts preserve raw DOM state and explicit description sources without inferring a disabled reason', async () => {
+  const attrs = { 'aria-disabled': 'true', 'aria-readonly': 'false', 'aria-required': 'true', 'aria-invalid': 'grammar',
+    'aria-description': 'Direct ARIA explanation', 'aria-describedby': 'reason missing reason', title: 'Title explanation' };
+  const element = { nodeType: 1, tagName: 'BUTTON', isConnected: true, id: 'delete', disabled: true, innerText: 'Delete',
+    getAttribute: name => attrs[name] ?? null, getBoundingClientRect: () => ({ width: 20, height: 20 }), contains: () => false,
+    getRootNode: () => ({ activeElement: null, getElementById: id => id === 'reason' ? { textContent: 'Disable the app first' } : null }),
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: 'visible' }) } } };
+  const dom = readControlDOM.call(element, 30);
+  assert.equal(dom.disabled, true); assert.equal(dom.aria_disabled, 'true'); assert.equal(dom.aria_invalid, 'grammar');
+  assert.equal(dom.aria_readonly, 'false'); assert.equal(dom.aria_required, 'true');
+  assert.equal(dom.aria_description, attrs['aria-description']); assert.equal(dom.title, attrs.title);
+  assert.deepEqual(dom.descriptions, [{ source: 'aria-describedby', id: 'reason', available: true, text: 'Disable the app first' },
+    { source: 'aria-describedby', id: 'missing', available: false }]);
+  assert.equal(dom.disabled_reason, undefined);
+  const f = controlFixture(); await f.claim();
+  f.nodes[2].description = { value: 'Browser-resolved explanation' };
+  const result = await f.exec('read_control', { selector: '#education' });
+  assert.equal(result.control.ax.description, 'Browser-resolved explanation');
+});
+
+test('description reads are bounded, stay in the owning root and retain unavailable references', () => {
+  const ids = Array.from({ length: 10 }, (_, i) => `hint-${i}`), lookups = [];
+  const element = { nodeType: 1, tagName: 'DIV', isConnected: true, innerText: '',
+    getAttribute: name => name === 'aria-describedby' ? ids.join(' ') : null, contains: () => false,
+    getBoundingClientRect: () => ({ width: 20, height: 20 }),
+    getRootNode: () => ({ getElementById: id => { lookups.push(id); return { textContent: 'x'.repeat(2000) }; } }),
+    ownerDocument: { defaultView: { getComputedStyle: () => ({ visibility: 'visible' }) } } };
+  const result = readControlDOM.call(element, 30);
+  assert.equal(result.descriptions.length, 8); assert.equal(result.omitted_descriptions, 2);
+  assert.deepEqual(lookups, ids.slice(0, 8)); assert.equal(result.descriptions[0].text.length, 1000); assert.equal(result.descriptions[0].text_truncated, true);
+});
 function controlFixture() {
   const f = fixture(), send = f.api.debugger.sendCommand;
   const nodes = [ax('root', 1, 'RootWebArea', '', ['button', 'control', 'popup', 'unrelated']),

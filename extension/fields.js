@@ -1,4 +1,4 @@
-import { axContext, FIELD_ROLES, registerAXRef, popupProperties } from './snapshot.js';
+import { axContext, FIELD_ROLES, registerAXRef, popupProperties, descriptionProperties } from './snapshot.js';
 
 const INPUT_BUTTONS = new Set(['button', 'submit', 'reset', 'image']);
 const AX_STATES = new Set(['disabled', 'readonly', 'required', 'invalid', 'checked', 'selected', 'expanded', 'multiselectable']);
@@ -78,7 +78,7 @@ export function renderFields(axNodes, domNodes, strings, token, refs, frameId, s
     if (ax) {
       if (dom && node.value?.value != null && !protectedValue) ax.value = node.value.value;
       for (const property of node.properties || []) if (AX_STATES.has(property.name)) ax[property.name] = property.value?.value;
-      Object.assign(ax, popupProperties(node));
+      Object.assign(ax, popupProperties(node), descriptionProperties(node));
     }
     const labels = [];
     for (const source of node?.name?.sources || []) {
@@ -90,7 +90,7 @@ export function renderFields(axNodes, domNodes, strings, token, refs, frameId, s
     }
     const context = ax ? fieldContext(node) : null;
     const field = { ref: null, frame_id: frameId, labels, context, ax, dom };
-    const terms = [ax?.name, ax?.value, context, ...labels, dom?.id, dom?.name, dom?.placeholder, dom?.value,
+    const terms = [ax?.name, ax?.value, node?.description?.value, context, ...labels, dom?.id, dom?.name, dom?.placeholder, dom?.value,
       ...(dom?.selected_options || []).flatMap(option => [option.value, option.label])];
     if (query != null && !terms.some(term => term != null && String(term).toLowerCase().includes(query))) return;
     if (ax) field.ref = registerAXRef(node, token, refs, frameId, sessionId);

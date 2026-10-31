@@ -16,7 +16,7 @@ test('isolated selector diagnostics survive action, wait, text and batch boundar
     if (method === 'Runtime.evaluate' && args.expression.includes('function queryElement')) {
       try {
         const value = vm.runInNewContext(args.expression, { document });
-        return { result: { value, ...(value === null ? { subtype: 'null' } : {}) } };
+        return { result: { value, type: typeof value, ...(value === null ? { subtype: 'null' } : {}) } };
       } catch (error) {
         const objectId = `error-${remoteErrors.size}`; remoteErrors.set(objectId, error);
         return { exceptionDetails: { exception: { objectId, description: error.message } } };
@@ -33,12 +33,16 @@ test('isolated selector diagnostics survive action, wait, text and batch boundar
     ['click', { selector: 'button' }, 'selector_ambiguous'],
     ['fill', { selector: '[', text: 'secret' }, 'selector_invalid'],
     ['click', { selector: '.missing', timeout_ms: 100 }, 'selector_not_found'],
+    ['click', { selector: 'button', nth: 3, timeout_ms: 100 }, 'selector_nth_out_of_range'],
     ['read_text', { selector: '.missing' }, 'selector_not_found'],
+    ['read_text', { selector: 'button', nth: 3 }, 'selector_nth_out_of_range'],
     ['wait', { selector: 'button', condition: 'attached' }, 'selector_ambiguous'],
   ];
   for (const [command, args, reason] of cases) {
     await assert.rejects(f.exec(command, args), error => {
       assert.equal(error.diagnostics.reason, reason);
+      assert.equal(error.diagnostics.frame_id, 'main');
+      if (args.nth != null) { assert.equal(error.diagnostics.nth, args.nth); assert.equal(error.diagnostics.matched, 2); }
       if (command !== 'read_text') assert.equal(error.input_dispatched, false);
       const wire = errorFromData(JSON.parse(JSON.stringify(errorData(error))));
       assert.deepEqual(wire.diagnostics, error.diagnostics);

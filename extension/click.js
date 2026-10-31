@@ -67,6 +67,7 @@ export function createClick(cdp, value, { prepare, assertReady }) {
         target_verification: { basis: node ? 'element' : 'coordinate_hit', hit_relation: relation } };
       if (options.hover) return { hovered: rootPoint, hit_target: hitTarget, page_state: pageState, ...verification, application_result: 'not_checked', observe_again: true };
       return { clicked: rootPoint, ...verification, application_result: 'not_checked', frame_id: node?.frameId || frameId,
+        ...(!node && !args.detailed ? { hit_target: compactHit(hitTarget) } : {}),
         ...(args.detailed ? { hit_target: hitTarget, page_state: pageState, coordinate_space: 'viewport_css_pixels', button: options.button, click_count: options.click_count } : {}), observe_again: true };
     } finally {
       pending.delete(tabId);
@@ -83,23 +84,24 @@ export function createClick(cdp, value, { prepare, assertReady }) {
   return { click, event, cancel };
 }
 
-function installGuard(name, options, expiryMs, verifyDelivery) {
+export function installGuard(name, options, expiryMs, verifyDelivery) {
   const target = this.nodeType === 3 ? this.parentElement : this;
   const win = target.ownerDocument.defaultView, report = win[name];
   let rejected = false, completed = 0;
-  const types = options.hover ? ['mousemove'] : ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'contextmenu', 'dblclick'];
+  // Disabled controls can receive pointer movement even when mouse clicks are suppressed.
+  const types = options.hover ? ['pointermove'] : ['pointerdown', 'mousedown', 'pointerup', 'mouseup', 'click', 'auxclick', 'contextmenu', 'dblclick'];
   const listeners = [];
   function listener(event, expected) {
     if (!event.isTrusted) return;
     const element = target.nodeType === 3 ? target.parentElement : target;
     const modifiers = (event.altKey ? 1 : 0) | (event.ctrlKey ? 2 : 0) | (event.metaKey ? 4 : 0) | (event.shiftKey ? 8 : 0);
-    const matched = (options.hover || event.button === options.domButton) && modifiers === options.modifiers && !rejected && target.isConnected && !element.matches(':disabled') && !element.closest('[inert]') &&
+    const matched = (options.hover || event.button === options.domButton) && modifiers === options.modifiers && !rejected && target.isConnected && (options.hover || !element.matches(':disabled')) && !element.closest('[inert]') &&
       event.composedPath().some(node => node === expected);
     if (!matched) {
       rejected = true; event.preventDefault(); event.stopImmediatePropagation();
       report(JSON.stringify({ matched: false }));
     } else {
-      const terminal = options.hover ? 'mousemove' : options.button === 'right' ? 'contextmenu' : options.button === 'middle' ? 'auxclick' : options.click_count === 2 ? 'dblclick' : 'click';
+      const terminal = options.hover ? 'pointermove' : options.button === 'right' ? 'contextmenu' : options.button === 'middle' ? 'auxclick' : options.click_count === 2 ? 'dblclick' : 'click';
       if (verifyDelivery && event.type === terminal && expected === target) {
         completed++;
         if (options.button === 'left' || completed === options.click_count) report(JSON.stringify({ matched: true }));
@@ -126,6 +128,13 @@ function installGuard(name, options, expiryMs, verifyDelivery) {
   }
   expiry = win.setTimeout(stop, expiryMs);
   return { stop };
+}
+
+function compactHit(hit) {
+  const identity = ({ tag, id, role, text }) => ({ tag, id: id?.slice(0, 200) ?? null, role: role?.slice(0, 200) ?? null,
+    text: text?.slice(0, 120), ...(text?.length > 120 ? { text_truncated: true } : {}) });
+  return { ...identity(hit), disabled: hit.disabled, clickable_hint: hit.clickable_hint,
+    clickable_target: hit.clickable_target ? identity(hit.clickable_target) : null };
 }
 
 export function clickOptions(args) {

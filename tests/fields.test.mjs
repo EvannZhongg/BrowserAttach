@@ -10,6 +10,12 @@ function render(nodes, dom, args = {}) {
   return { options, refs, entries: renderFields(nodes, capture.documents[0].nodes, capture.strings, 'fields', refs, 'main', undefined, options) };
 }
 
+test('field descriptions preserve AX provenance and query beyond the bounded preview', () => {
+  const nodes = [axField(2, 'Field', 'textbox', { description: { value: 'x'.repeat(1100) + 'reason' } })];
+  const field = render(nodes, [{ tag: 'input', backend: 2 }], { query: 'reason' }).entries[0].field;
+  assert.equal(field.ax.description.length, 1000); assert.equal(field.ax.description_truncated, true); assert.equal(field.ax.name, 'Field');
+});
+
 test('field AX facts expose popup type and resolved portal ids without requiring DOM ancestry', () => {
   const nodes = [axField(2, 'Search', 'combobox', { properties: [
     { name: 'hasPopup', value: { value: 'listbox' } }, { name: 'expanded', value: { value: true } },

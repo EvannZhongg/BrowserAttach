@@ -61,9 +61,9 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     const send = (method, params) => budget.run(() => cdp(target, method, params));
     let point, view;
     if (node) {
-      await waitForTarget(cdp, value, target, node, budget);
+      await waitForTarget(cdp, value, target, node, budget, { hover: args.hover === true });
       if (args.scroll !== false) await send('DOM.scrollIntoViewIfNeeded', { backendNodeId: node.backendNodeId });
-      await waitForTarget(cdp, value, target, node, budget);
+      await waitForTarget(cdp, value, target, node, budget, { hover: args.hover === true });
       const { quads } = await send('DOM.getContentQuads', { backendNodeId: node.backendNodeId });
       view = await budget.run(() => viewport(target));
       for (const quad of quads || []) {

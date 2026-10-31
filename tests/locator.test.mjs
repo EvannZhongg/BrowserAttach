@@ -4,6 +4,36 @@ import vm from 'node:vm';
 import { queryElement, targetOptions, resolveSelector, resolveFrame, matchRole } from '../extension/locator.js';
 import { deadline } from '../extension/actionability.js';
 
+test('selector timeouts preserve the last count, nth and actual frame without a second DOM query', async () => {
+  for (const type of ['css', 'xpath', 'label', 'placeholder', 'role']) {
+    for (const count of [0, 2]) {
+      const nodes = Array.from({ length: count }, (_, i) => ({ nodeType: 1, id: String(i), labels: [{ textContent: 'Row' }], getAttribute: () => 'Row' }));
+      let queries = 0, reads = 0;
+      const query = vm.runInNewContext(`(${queryElement.toString()})`, { document: {
+        querySelectorAll: () => { queries++; return nodes; },
+        evaluate: () => { queries++; return { snapshotLength: count, snapshotItem: i => nodes[i] }; },
+      }, XPathResult: { ORDERED_NODE_SNAPSHOT_TYPE: 7 } });
+      const cdp = async (target, method) => {
+        if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
+        if (method === 'Runtime.evaluate') { reads++; return { result: { type: 'number', value: query('Row', type, 3, { missing: 'count' }) } }; }
+        if (method === 'Accessibility.getFullAXTree') return { nodes: nodes.map((node, i) => ({ nodeId: String(i), backendDOMNodeId: i + 1, role: { value: 'Row' } })) };
+        throw new Error(`Unexpected diagnostic query: ${method}`);
+      };
+      const sessions = { frames: async () => [{ id: 'main' }, { id: 'child' }], target: () => ({ tabId: 9 }) };
+      await assert.rejects(resolveSelector(cdp, r => r.result?.value, sessions, 9,
+        { selector: 'Row', selector_type: type, nth: 3, frame_id: 'child' }, deadline(100)), error => {
+        assert.equal(error.input_dispatched, false); assert.equal(error.diagnostics.matched, count);
+        assert.equal(error.diagnostics.reason, count ? 'selector_nth_out_of_range' : 'selector_not_found');
+        assert.equal(error.diagnostics.nth, 3); assert.equal(error.diagnostics.frame_id, 'child'); assert.equal(error.diagnostics.selector, 'Row');
+        return true;
+      });
+      assert.equal(queries, reads);
+      assert.equal(await resolveSelector(cdp, r => r.result?.value, sessions, 9,
+        { selector: 'Row', selector_type: type, nth: 3 }, deadline(100), { wait: false }), null);
+    }
+  }
+});
+
 test('explicit nth selects CSS/XPath document order; omission remains strict', () => {
   const elements = ['first', 'second'].map((id, index) => ({ nodeType: 1, id, tagName: 'BUTTON', textContent: `Choice ${index}`,
     matches: () => index === 1, closest: () => null, getBoundingClientRect: () => ({ width: 10, height: index ? 0 : 10 }),
@@ -23,7 +53,8 @@ test('explicit nth selects CSS/XPath document order; omission remains strict', (
     assert.equal(query('input', type, 0), elements[0]);
     assert.equal(query('input', type, 1), elements[1]);
     assert.throws(() => query('input', type, 2), /out of range.*matched 2/);
-    assert.equal(query('input', type, 2, true), null);
+    assert.equal(query('input', type, 2, { missing: 'null' }), null);
+    assert.equal(query('input', type, 2, { missing: 'count' }), 2);
   }
   for (const args of [{ ref: 'a', nth: 0 }, { x: 1, y: 1, nth: 0 }, { selector: 'input', nth: -1 }, { selector: 'input', nth: 1.5 }]) {
     assert.throws(() => targetOptions(args, { coordinates: true }), /nth/);
@@ -96,7 +127,7 @@ test('selector preparation waits for a later-rendered option, but never retries 
   const cdp = async (target, method) => {
     calls.push(method);
     if (method === 'Page.createIsolatedWorld') return { executionContextId: 1 };
-    if (method === 'Runtime.evaluate') return ++samples < 3 ? { result: { subtype: 'null', value: null } } : { result: { objectId: 'option' } };
+    if (method === 'Runtime.evaluate') return ++samples < 3 ? { result: { type: 'number', value: 0 } } : { result: { objectId: 'option' } };
     if (method === 'DOM.describeNode') return { node: { backendNodeId: 2 } };
     if (method === 'DOM.resolveNode') return { object: { objectId: 'page-option' } };
   };
@@ -111,7 +142,7 @@ test('selector preparation waits for a later-rendered option, but never retries 
     : { executionContextId: 1 }, value, sessions, 1, { selector: '.option' }, deadline(500)), /matched 2/);
   assert.equal(attempts, 1);
   await assert.rejects(resolveSelector(async (target, method) => method === 'Runtime.evaluate'
-    ? { result: { subtype: 'null', value: null } } : { executionContextId: 1 }, value, sessions, 1, { selector: '.missing' }, deadline(100)), /no input was dispatched/);
+    ? { result: { type: 'number', value: 0 } } : { executionContextId: 1 }, value, sessions, 1, { selector: '.missing' }, deadline(100)), /no input was dispatched/);
 });
 
 
@@ -159,12 +190,12 @@ test('label locators use real control associations, normalize whitespace, and pr
   const first = field(['  工作\n 职责  ']), second = field(['工作 职责']), unlabeled = field([]);
   const query = vm.runInNewContext(`(${queryElement.toString()})`, { document: { querySelectorAll: () => [first, second, unlabeled] } });
   assert.equal(query('工作 职责', 'label', 1), second);
-  assert.equal(query('工作职责', 'label', undefined, true), null);
+  assert.equal(query('工作职责', 'label', undefined, { missing: 'null' }), null);
   assert.throws(() => query('工作 职责', 'label'), /matched 2/);
   const placeholder = `Name ["quoted"]`;
   first.getAttribute = () => placeholder; second.getAttribute = () => `${placeholder} `; unlabeled.getAttribute = () => null;
   assert.equal(query(placeholder, 'placeholder'), first);
-  assert.equal(query('Name', 'placeholder', undefined, true), null);
+  assert.equal(query('Name', 'placeholder', undefined, { missing: 'null' }), null);
 });
 
 test('role locators use exact browser AX identities in tree order and re-resolve each call', async () => {

@@ -1,6 +1,6 @@
 import { deadline } from './actionability.js';
 import { targetOptions, resolveSelector } from './locator.js';
-import { popupProperties } from './snapshot.js';
+import { popupProperties, descriptionProperties } from './snapshot.js';
 import { boundedRead } from './outcomes.js';
 
 const OPTION_ROLES = new Set(['option', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
@@ -20,6 +20,7 @@ function axFacts(node, protectedValue = false) {
   if (!node || node.ignored) return null;
   const name = String(node.name?.value || '');
   const facts = { role: node.role?.value, name: name.slice(0, 1000), ...(name.length > 1000 ? { name_truncated: true } : {}) };
+  Object.assign(facts, descriptionProperties(node));
   if (!protectedValue && node.value?.value != null) {
     facts.value = typeof node.value.value === 'string' ? node.value.value.slice(0, 1000) : node.value.value;
     if (typeof node.value.value === 'string' && node.value.value.length > 1000) facts.value_truncated = true;
@@ -157,6 +158,7 @@ export function readControlDOM(maxOptions, textLimit = 1000) {
     if (String(this.value).length > 1000) result.value_truncated = true;
   }
   if (['input', 'textarea'].includes(tag)) result.readonly = this.readOnly;
+  if (['input', 'textarea', 'select'].includes(tag)) result.required = this.required;
   if (['input', 'textarea', 'select', 'button', 'option'].includes(tag)) result.disabled = this.disabled;
   if (tag === 'input' && ['checkbox', 'radio'].includes(this.type)) {
     result.checked = this.checked;
@@ -180,12 +182,28 @@ export function readControlDOM(maxOptions, textLimit = 1000) {
   const active = this.getRootNode().activeElement;
   result.focused = active === this;
   result.contains_focus = active === this || this.contains(active);
-  for (const name of ['expanded', 'checked', 'selected', 'activedescendant', 'controls', 'owns', 'valuetext', 'valuenow']) {
+  for (const name of ['disabled', 'readonly', 'required', 'invalid', 'description', 'describedby', 'expanded', 'checked', 'selected', 'activedescendant', 'controls', 'owns', 'valuetext', 'valuenow']) {
     const attribute = this.getAttribute(`aria-${name}`);
     if (attribute != null && !(result.value_redacted && ['valuetext', 'valuenow'].includes(name))) {
       result[`aria_${name}`] = clip(attribute);
       if (attribute.length > 1000) (result.truncated_attributes ||= []).push(`aria-${name}`);
     }
+  }
+  const title = this.getAttribute('title');
+  if (title != null) {
+    result.title = clip(title);
+    if (title.length > 1000) (result.truncated_attributes ||= []).push('title');
+  }
+  if (result.aria_describedby) {
+    const ids = [...new Set(this.getAttribute('aria-describedby').trim().split(/\s+/).filter(Boolean))];
+    const root = this.getRootNode();
+    result.descriptions = ids.slice(0, 8).map(id => {
+      const node = root.getElementById?.(id);
+      if (!node) return { source: 'aria-describedby', id, available: false };
+      const text = node.textContent || '';
+      return { source: 'aria-describedby', id, available: true, text: clip(text), ...(text.length > 1000 ? { text_truncated: true } : {}) };
+    });
+    if (ids.length > 8) result.omitted_descriptions = ids.length - 8;
   }
   return result;
 }

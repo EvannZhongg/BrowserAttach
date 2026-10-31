@@ -137,7 +137,7 @@ test('scroll search timeout supersedes old selector preparation diagnostics with
   const f = fixture(); await f.claim(); const send = f.api.debugger.sendCommand;
   let queries = 0;
   f.api.debugger.sendCommand = async (target, method, args) => {
-    if (method === 'Runtime.evaluate' && args.expression.startsWith('(function queryElement') && !queries++) return { result: { subtype: 'null' } };
+    if (method === 'Runtime.evaluate' && args.expression.startsWith('(function queryElement') && !queries++) return { result: { type: 'number', value: 0 } };
     if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function findScrollText')) return new Promise(() => {});
     return send(target, method, args);
   };
