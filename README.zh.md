@@ -1,10 +1,7 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/EvannZhongg/BrowserAttach/main/extension/icons/BrowserAttach.png" width="112" alt="BrowserAttach logo">
-</p>
-
 # BrowserAttach
 
 <p align="center">
+  <strong>把 MCP 客户端接入你正在使用的浏览器。</strong><br>
   <a href="README.md">English</a> · <strong>简体中文</strong>
 </p>
 

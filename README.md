@@ -1,10 +1,7 @@
-<p align="center">
-  <img src="https://raw.githubusercontent.com/EvannZhongg/BrowserAttach/main/extension/icons/BrowserAttach.png" width="112" alt="BrowserAttach logo">
-</p>
-
 # BrowserAttach
 
 <p align="center">
+  <strong>Attach an MCP client to the browser you already use.</strong><br>
   <strong>English</strong> · <a href="README.zh.md">简体中文</a>
 </p>
 
