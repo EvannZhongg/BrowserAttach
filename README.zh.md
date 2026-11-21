@@ -12,20 +12,24 @@
 
 [![npm version](https://img.shields.io/npm/v/@evan_zhong/browser-attach)](https://www.npmjs.com/package/@evan_zhong/browser-attach) [![license](https://img.shields.io/npm/l/@evan_zhong/browser-attach)](LICENSE)
 
-让 MCP 客户端操作你已经打开、已经登录的 Chrome / Edge 标签页。BrowserAttach 通过本机配对扩展连接浏览器，保留现有登录状态，不需要启动远程调试端口或单独的自动化浏览器。
+你的 Agent 能读写文件、能调用 API，却碰不到你屏幕上那个已经登录的页面。BrowserAttach 让 MCP 客户端直接操作你已打开、已登录的 Chrome / Edge 标签页 —— 本机扩展配对，不需要远程调试端口，也不需要另起一个没有登录态的自动化浏览器。
 
 [npm](https://www.npmjs.com/package/@evan_zhong/browser-attach) · [使用指南](docs/USAGE.md) · [架构与设计](docs/ARCHITECTURE.md) · [Agent 集成](docs/AGENT-INTEGRATION.md) · [验证报告](docs/TEST-REPORT.md) · [问题反馈](https://github.com/EvannZhongg/BrowserAttach/issues) · [贡献指南](CONTRIBUTING.md)
 
-## 能做什么
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="MCP 客户端接管用户自己 Chrome 中已登录的 GitHub 标签页，读取可访问性快照与 ref，点击 Go to file，逐字原生输入查询并打开 package.json" width="900">
+</p>
 
-- 发现多个浏览器配置，精确选择并独占接管标签页，完成后释放。
-- 在浏览器扩展详情中为 BrowserAttach 开启 **允许访问文件网址** 后，可操作已打开的普通 `file://` 标签页；发现、接管、观察与输入工具完全相同。
-- 读取可访问性树，按名称、value 或邻近字段 context 查询并取得可操作引用，检查字段值和编辑器模型；通过 ref 或严格 CSS/XPath、HTML label、placeholder、AX role/name 定位点击和填写，也可显式向当前聚焦字段逐字输入。
-- 原生指针悬停、分步拖拽、条件等待；无需打开系统弹层即可选择 HTML 下拉选项。
-- 导航与历史前进/后退、打开或关闭标签页，处理 JavaScript 对话框，上传本机文件并截取整页或单个元素。
-- 在主页面执行 JavaScript 表达式，读取接管后的控制台、页面异常和网络生命周期日志；需要校验 XHR/fetch 时显式开启有界、脱敏的请求/响应详情。
-- 在临时后台标签中复用配置的登录态读取一个 HTTP(S) URL，返回渲染文本、当前 DOM 或完整 JSON，并在可观察时附带主文档 HTTP 状态。
-- 使用标准 stdio MCP，共提供 24 个工具。Hub 仅监听本机 loopback，通过随机密钥配对扩展。
+<p align="center"><sub>接管 → 可访问性快照 → 原生点击 → 逐字原生输入 → 页面随之跳转。取自真实 Chrome 配置，没有自动化浏览器参与。</sub></p>
+
+## 解决什么问题
+
+- **复用你已有的登录态** —— 动作发生在已经打开、已经登录的标签页里，不导出 cookie，也不用为第二个浏览器重新登录。
+- **不需要调试端口，也不需要重启浏览器** —— 不必带参数重启 Chrome / Edge；Hub 仅监听 loopback，通过随机密钥与本机扩展配对。
+- **明确接管，而不是并发抢占** —— 发现、独占 claim、完成后释放；同一标签只有一个 owner，操作串行排队。
+- **让 Agent 真正读懂页面** —— 可访问性树快照与跨动作稳定的 ref，按需读取字段值、弹层与已选选项，也可用严格 CSS/XPath、HTML label、placeholder、AX role/name 定位。
+- **输入语义保持透明** —— 原生指针 click/hover/drag/scroll 与 DOM 合成事件明确区分，结果未知时不自动重放，普通操作不抢焦点。
+- **一次调用跑完一串动作** —— 1–30 步 batch、条件等待与 `diff_since` 差分观察；另有截图、上传、对话框、JavaScript 求值、console/network 日志与后台 `fetch`，共 24 个标准 stdio MCP 工具。
 
 ## 环境要求
 

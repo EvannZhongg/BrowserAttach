@@ -12,20 +12,24 @@
 
 [![npm version](https://img.shields.io/npm/v/@evan_zhong/browser-attach)](https://www.npmjs.com/package/@evan_zhong/browser-attach) [![license](https://img.shields.io/npm/l/@evan_zhong/browser-attach)](LICENSE)
 
-Drive the Chrome / Edge tabs you already have open and already signed in from an MCP client. BrowserAttach connects to the browser through a locally paired extension, keeps your existing sign-in state, and needs neither a remote debugging port nor a separate automation browser.
+Your agent can read files and call APIs, but it cannot touch the page you are already signed in to. BrowserAttach lets an MCP client drive the Chrome / Edge tabs you already have open and already signed in — through a locally paired extension, with no remote debugging port and no separate automation browser.
 
 [npm](https://www.npmjs.com/package/@evan_zhong/browser-attach) · [Usage guide](docs/USAGE.md) · [Architecture](docs/ARCHITECTURE.md) · [Agent integration](docs/AGENT-INTEGRATION.md) · [Test report](docs/TEST-REPORT.md) · [Issues](https://github.com/EvannZhongg/BrowserAttach/issues) · [Contributing](CONTRIBUTING.md)
 
-## What it does
+<p align="center">
+  <img src="docs/assets/demo.gif" alt="An MCP client claims the already signed-in GitHub tab in the user's own Chrome, reads a snapshot with refs, clicks Go to file, types a query natively and opens package.json" width="900">
+</p>
 
-- Discover multiple browser profiles, pick one precisely, claim a tab exclusively, and release it when done.
-- Control existing ordinary `file://` tabs after enabling BrowserAttach's **Allow access to file URLs** setting in the browser's extension details; use the same discovery, claim, observation and input tools.
-- Read the accessibility tree, query names/values/nearby field context, inspect field values and supported editor models; click, fill and type through refs or strict CSS/XPath, HTML label, placeholder and AX role/name locators. Type can also target the currently focused field explicitly.
-- Native pointer hover, stepped drags and conditional waits; select HTML options without opening a native popup.
-- Navigate and go back/forward, open or close tabs, handle JavaScript dialogs, upload local files, and capture the whole page or a single element.
-- Evaluate JavaScript expressions in the main page; read console, page-error, network and navigation logs captured after claiming, with bounded available stacks and request initiators; opt in to bounded, redacted request/response details when XHR/fetch needs verification.
-- Read one HTTP(S) URL in a temporary background tab with the profile's sign-in, returning rendered text, current DOM, or complete JSON with the main-document HTTP status when observed.
-- Standard stdio MCP with 24 tools. The Hub listens on loopback only and pairs with the extension through a random key.
+<p align="center"><sub>Claim → accessibility snapshot → native click → native typing → the page follows. Captured from a real Chrome profile, with no automation browser involved.</sub></p>
+
+## What it solves
+
+- **Your existing sign-in is reused** — actions run in the tabs that are already open and already logged in; no cookie export and no second browser to authenticate.
+- **No debugging port, no browser restart** — nothing to relaunch with flags; the Hub listens on loopback only and pairs with the extension through a random key.
+- **Explicit takeover instead of concurrent trampling** — discover, claim a tab exclusively, release it when done; one owner per tab and serialized operations.
+- **The agent can actually read the page** — accessibility-tree snapshots with refs that survive actions, targeted reads of field values, popups and selected options, or strict CSS/XPath, HTML label, placeholder and AX role/name locators.
+- **Input semantics stay transparent** — native pointer click/hover/drag/scroll is kept distinct from DOM-synthesized events, an unknown outcome is never replayed automatically, and ordinary operations never steal focus.
+- **A whole sequence in one call** — 1–30 batch steps, conditional waits and `diff_since` observation; plus screenshots, uploads, dialogs, JavaScript evaluation, console/network logs and background `fetch` — 24 tools over standard stdio MCP.
 
 ## Requirements
 
