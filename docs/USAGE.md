@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.33.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.34.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -359,6 +359,7 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 | `offset` | 原生元素内的 {x_ratio,y_ratio}，各为 0–1；默认可见区域中心 |
 | `settle_ms` | 派发前等待：0–1000 整数或有序 [min,max] 区间，默认 0 |
 | `detailed` | 默认 false；true 在成功时附完整 hit_target、page_state 和点击参数，失败始终保留诊断 |
+| `capture_file_chooser` | 默认 false；本次点击临时捕获文件 input，结束后恢复手动选择，见[文件上传](#文件上传) |
 
 原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 分开返回 requested_target（请求目标）和 blocked_by（遮挡物），保留 hit_target 表示实际命中，并附命中点及受阻 frame，前序输入可能已经送达。
 
@@ -598,7 +599,19 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 {"tab_handle":"...","ref":"<文件输入框 ref>","files":["C:/Users/example/Documents/report.pdf"]}
 ```
 
-隐藏 input 或自定义上传按钮可先 browser_click；结果或 snapshot 出现 file_chooser.pending=true 后，调用 browser_upload_file 省略 ref/selector，使用被拦截的真实 input，不弹系统文件框。开放 Shadow DOM 也可用 evaluate 返回元素 ref。
+接管本身不拦截文件选择器，用户可以继续手动点击上传并选择文件。直接指定 input/关联 label 上传也不启用拦截。开放 Shadow DOM 可用 evaluate 返回元素 ref。
+
+需要通过隐藏 input 或自定义上传按钮捕获实际入口时，显式使用：
+
+```json
+{"tab_handle":"...","selector":"#choose-file","capture_file_chooser":true}
+```
+
+这是 browser_click 的可选参数，batch 的 click 步骤也支持。它只在本次点击及等待选择器期间拦截，选择器等待与点击共享 timeout_ms；收到事件、失败或超时后关闭拦截，然后才执行 wait_for/observe。file_chooser.pending=true 后，调用 browser_upload_file 省略 ref/selector，使用捕获的真实 input；等待 MCP 赋值期间已恢复手动选择，files=[] 清空该 input 并结束待处理记录。
+
+file_chooser.pending=false 表示本次没有可用的待处理 input：reason=not_opened 是期限内未捕获，source_changed 是来源失效，unsupported_chooser 是事件没有支持的文件 input。点击回执与捕获结果独立，未捕获不证明点击未执行，不自动重放。关闭拦截不会重新弹出已被拦截的选择框，用户需要再次点击。清理失败返回 file_chooser_cleanup 和释放标签的恢复指引，不报告已恢复手动选择。
+
+捕获期间同一标签的手动点击也可能被拦截；协议不能按点击来源区分。capture_file_chooser 不增加用户激活，DOM 模式仍受浏览器的文件选择器激活要求约束；需要可信点击时显式使用 native。0.34 起，普通 browser_click 不再自动捕获文件选择器；旧上传流程需要补充此参数。
 
 - files 是浏览器本机的绝对可读文件路径，最多 100 个；支持中文、空格及空文件，内容不传给 MCP 或 Hub。
 - 多文件要求 multiple；禁用控件、目录、webkitdirectory 和失效目标会被拒绝。accept 只是页面提示，网站可自行拒绝格式。

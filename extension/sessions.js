@@ -13,7 +13,7 @@ export function createSessions(cdp, invalidate, detached = () => {}, networkOpti
       await send(method, method === 'Network.enable' ? networkOptions(target.tabId) : {});
     }
     await send('Page.setLifecycleEventsEnabled', { enabled: true });
-    await send('Page.setInterceptFileChooserDialog', { enabled: true });
+    if (state.interceptFileChoosers) await send('Page.setInterceptFileChooserDialog', { enabled: true });
     await send('Target.setAutoAttach', autoAttach);
   }
   async function start(tabId) {
@@ -87,14 +87,33 @@ export function createSessions(cdp, invalidate, detached = () => {}, networkOpti
     }
     return [...result.values()];
   }
-  return { start, settle, event, target, frames,
+  async function interceptFileChoosers(tabId, enabled, run) {
+    const state = tabs.get(tabId);
+    if (!state) {
+      if (enabled) throw new Error('Tab sessions are unavailable');
+      return;
+    }
+    state.interceptFileChoosers = enabled;
+    if (enabled) await run(() => settle(tabId));
+    // Disable without waiting for frame setup: an in-flight setup observes the
+    // flag before enabling interception, so it cannot re-enable after cleanup.
+    const results = await Promise.allSettled([{ tabId }, ...[...state.sessions.values()].map(entry => entry.target)].map(target => run(async () => {
+      if (tabs.get(tabId) !== state || !has(target)) return;
+      try { await cdp(target, 'Page.setInterceptFileChooserDialog', { enabled }); }
+      catch (error) { if (tabs.get(tabId) === state && has(target)) throw error; }
+    })));
+    const failure = results.find(result => result.status === 'rejected');
+    if (failure) throw failure.reason;
+  }
+  const has = source => !source.sessionId || !!tabs.get(source.tabId)?.sessions.has(source.sessionId);
+  return { start, settle, event, target, frames, interceptFileChoosers,
     rememberParent: (tabId, child, parent) => tabs.get(tabId)?.parents.set(child, parent),
     parent(tabId, sessionId) {
       const entry = tabs.get(tabId)?.sessions.get(sessionId);
       if (!entry) throw new Error('Frame session is detached; observe again.');
       return { frameId: entry.frameId, ownerFrameId: tabs.get(tabId).parents.get(entry.frameId), target: { tabId, ...(entry.parent ? { sessionId: entry.parent } : {}) } };
     },
-    has: source => !source.sessionId || !!tabs.get(source.tabId)?.sessions.has(source.sessionId),
+    has,
     targets: tabId => [{ tabId }, ...[...(tabs.get(tabId)?.sessions.values() || [])].map(entry => entry.target)],
     forget: tabId => tabs.delete(tabId) };
 }

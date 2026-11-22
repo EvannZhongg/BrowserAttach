@@ -138,6 +138,7 @@ function compactHit(hit) {
 }
 
 export function clickOptions(args) {
+  if (args.capture_file_chooser != null && typeof args.capture_file_chooser !== 'boolean') throw new Error('capture_file_chooser must be boolean');
   if (args.detailed != null && typeof args.detailed !== 'boolean') throw new Error('detailed must be boolean');
   offsetOption(args);
   if (args.settle_ms != null) {

@@ -17,8 +17,9 @@ import { checkSnapshotDiff } from './snapshot-diff-cases.mjs';
 import { checkWaitVerification } from './wait-verify-cases.mjs';
 import { checkActionEvidence } from './action-evidence-cases.mjs';
 import { checkObservability } from './observability-cases.mjs';
+import { checkFileChoosers } from './file-chooser-cases.mjs';
 
-const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, observability: { type: 'boolean', default: false }, evidence: { type: 'boolean', default: false }, verify: { type: 'boolean', default: false }, snapshots: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
+const { values } = parseArgs({ options: { executable: { type: 'string' }, family: { type: 'string', default: 'chromium' }, headless: { type: 'boolean', default: false }, uploads: { type: 'boolean', default: false }, observability: { type: 'boolean', default: false }, evidence: { type: 'boolean', default: false }, verify: { type: 'boolean', default: false }, snapshots: { type: 'boolean', default: false }, controls: { type: 'boolean', default: false }, preparation: { type: 'boolean', default: false }, issues: { type: 'boolean', default: false }, primitives: { type: 'boolean', default: false }, extended: { type: 'boolean', default: false }, forms: { type: 'boolean', default: false }, regressions: { type: 'boolean', default: false }, 'input-capture': { type: 'boolean', default: false }, 'tab-indicators': { type: 'boolean', default: false } } });
 if (!values.executable) throw new Error('Pass --executable PATH to a Chrome or Edge 125+ build that permits --enable-unsafe-extension-debugging');
 const dir = await mkdtemp(join(tmpdir(), 'attach-interaction-'));
 const rows = Array.from({ length: 200 }, (_, i) => `<li>Row ${i+1}: alpha beta gamma delta epsilon</li>`).join('');
@@ -60,7 +61,7 @@ const profile=join(dir,'profile');await mkdir(profile);
 const browser=spawn(values.executable,[
  `--user-data-dir=${profile}`,
  '--remote-debugging-port=0','--no-first-run','--no-default-browser-check','--enable-unsafe-extension-debugging','--window-size=1000,800','about:blank',
- ...(values.headless?['--headless=new']:[]), ...(values.extended || values.issues || values.snapshots || values.verify?['--site-per-process']:[]),
+ ...(values.headless?['--headless=new']:[]), ...(values.uploads || values.extended || values.issues || values.snapshots || values.verify?['--site-per-process']:[]),
 ],{windowsHide:true,stdio:'ignore'});
 const pause=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 async function until(fn, description) { for(let i=0;i<100;i++){const value=await fn();if(value)return value;await pause(100)}throw new Error(description); }
@@ -94,7 +95,9 @@ try {
  const focus = () => evaluate(`chrome.windows.getAll({populate:true}).then(w=>w.map(x=>({id:x.id,focused:x.focused,state:x.state,active:x.tabs.filter(t=>t.active).map(t=>t.id)})).sort((a,b)=>a.id-b.id))`);
  await evaluate(`chrome.tabs.update(${cover.id},{active:true})`);await pause(250);
  const operationsFocus=await focus();
- if (values.observability) {
+ if (values.uploads) {
+  await checkFileChoosers({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, evaluate, tab, dir, base, focus, results });
+ } else if (values.observability) {
   await checkObservability({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, base, focus, results });
  } else if (values.evidence) {
   await checkActionEvidence({ call: (method, args = {}) => { results.last_operation = { method, args }; return client.call(method, { ...h, ...args }); }, page, base, focus, results });
@@ -418,8 +421,8 @@ try {
   const full=await call('screenshot',{full_page:true});assert.ok(full.capture.css_height>=1480);results.cases.push({scenario:'element_and_full_capture',capture:shot.capture});
   const file1=join(dir,'one.txt'),file2=join(dir,'two.txt');await writeFile(file1,'one');await writeFile(file2,'two');
   const fileRef=await call('evaluate',{expression:'() => window.closedInput',result_type:'element'});await call('upload_file',{ref:fileRef.ref,files:[file1,file2]});assert.equal(await page('window.closedInput.files.length'),2);await call('upload_file',{ref:fileRef.ref,files:[]});assert.equal(await page('window.closedInput.files.length'),0);
-  await call('click',{selector:'#chooseclosed'});await call('upload_file',{files:[file1,file2]});assert.equal(await page('window.closedInput.files.length'),2);
-  await call('click',{selector:'#chooseclosed'});await call('upload_file',{files:[]});assert.equal(await page('window.closedInput.files.length'),0);
+  await call('click',{selector:'#chooseclosed',capture_file_chooser:true});await call('upload_file',{files:[file1,file2]});assert.equal(await page('window.closedInput.files.length'),2);
+  await call('click',{selector:'#chooseclosed',capture_file_chooser:true});await call('upload_file',{files:[]});assert.equal(await page('window.closedInput.files.length'),0);
   const uploadEvents=await page('window.uploadEvents');assert.equal(uploadEvents[0].trusted,true);assert.equal(uploadEvents[2].trusted,false);
   results.cases.push({scenario:'closed_shadow_multiple_clear',uploadEvents});
   const alertBatch=await call('batch',{dialog_policy:'accept',steps:[{action:'click',selector:'#alert'},{action:'click',selector:'#increment'}]});assert.equal(alertBatch.completed,true);assert.ok(alertBatch.dialogs.some(d=>d.message==='Continue alert'&&d.accepted));
@@ -953,7 +956,7 @@ try {
  const file=join(dir,'background.txt');await writeFile(file,'background upload');
  const uploadSnapshot=await client.call('snapshot',h);
  const uploadRef=uploadSnapshot.snapshot.match(/\[([^\]]+)\] button "Choose file"/)[1];
- await client.call('click',{...h,ref:uploadRef,mode:'dom'});await client.call('upload_file',{...h,files:[file]});
+ await client.call('click',{...h,ref:uploadRef,mode:'dom',capture_file_chooser:true});await client.call('upload_file',{...h,files:[file]});
  assert.equal(await page('document.querySelector("#file").files[0].text()'),'background upload');
  assert.equal((await evaluate(`chrome.tabs.get(${tab.id})`)).active,false);
  assert.equal((await evaluate(`chrome.tabs.get(${cover.id})`)).active,backgroundFocus.active);
@@ -1051,6 +1054,6 @@ try {
  if(claim)await client?.call('release_tab',{tab_handle:claim.tab_handle}).catch(()=>{});
  await client?.close();await closeBrowser?.().catch(()=>{});ws?.terminate();browser.kill();await hub.close();for(const socket of sockets)socket.destroy();await new Promise(resolve=>server.close(resolve));
  await mkdir(join(ROOT,'test-results'),{recursive:true});
-  await writeFile(join(ROOT,'test-results',`${values.observability?'observability':values.evidence?'action-evidence':values.verify?'wait-verify':values.snapshots?'snapshot-diffs':values.controls?'controls':values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
+  await writeFile(join(ROOT,'test-results',`${values.uploads?'uploads':values.observability?'observability':values.evidence?'action-evidence':values.verify?'wait-verify':values.snapshots?'snapshot-diffs':values.controls?'controls':values.preparation?'preparation':values.issues?'issues':values.extended?'extended':values.primitives?'primitives':values.forms?'forms':values['tab-indicators']?'tab-indicators':values['input-capture']?'input-capture':values.regressions?'regressions':'interaction'}-${values.family}.json`),JSON.stringify(results,null,2));
  await rm(dir,{recursive:true,force:true,maxRetries:5,retryDelay:100}).catch(()=>{});
 }

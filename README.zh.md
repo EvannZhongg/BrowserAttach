@@ -105,7 +105,7 @@ npm 包附带可选的 [browser-attach skill](skills/browser-attach/SKILL.md)，
 | `browser_batch` | 单队列顺序执行 1–30 步 click/fill/type/press_key/hover/scroll/select_option/wait，失败即停并返回部分结果 |
 | `browser_navigate` | HTTP(S)/file 导航、后退前进与加载等待 |
 | `browser_handle_dialog` | alert、confirm、prompt |
-| `browser_upload_file` | 原生文件 input 或拦截的文件选择器 |
+| `browser_upload_file` | 原生文件 input 或通过 `click(capture_file_chooser=true)` 捕获的选择器 |
 | `browser_screenshot` | 视口或整页 PNG，附坐标映射 |
 | `browser_evaluate` | 主页面 JS 求值、Promise 等待、有界结果 |
 | `browser_logs` | 用 `kind=console/network` 选择控制台、异常或请求日志，支持过滤和游标续读 |

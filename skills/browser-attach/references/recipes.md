@@ -32,7 +32,7 @@ When no usable relation is exposed, provide a unique `popup_selector` instead of
 
 Confirm the selected item. Filtering alone does not commit it. Context text near a field is a hint, not an HTML label association.
 
-For attachments, pass task-intended absolute paths to `browser_upload_file` using the observed file input/label. Alternatively click the site's upload control; when `file_chooser.pending=true`, omit the target to use the intercepted input. Wait for the site's processing indicator or attachment state, then re-observe fields if parsing rebuilt the form.
+For attachments, pass task-intended absolute paths to `browser_upload_file` using the observed file input/label. Alternatively click the site's upload control with `capture_file_chooser=true`; when `file_chooser.pending=true`, omit the upload target to use the captured input. Ordinary claims/clicks preserve manual selection; capture disables interception before returning. A missing chooser does not undo the click or justify replaying it. Wait for the site's processing indicator or attachment state, then re-observe fields if parsing rebuilt the form.
 
 If the task needs an XHR/fetch response as evidence, enable `browser_logs(kind="network", capture={"enabled":true})` before the action, then inspect the relevant events. Capture covers subsequent requests, is bounded, and redacts named secrets; a response is evidence only for the request it describes.
 

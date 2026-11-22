@@ -1,6 +1,14 @@
 # 验证报告
 
-当前版本 **0.33.0**（2026-10-31）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.34.0**（2026-11-22）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+
+## 0.34：按次点击捕获文件选择器
+
+- 接管和普通点击不再持续拦截文件选择器。click 与 batch 的 click 步骤增加 capture_file_chooser=true，显式捕获期间才拦截；点击与异步选择器等待共用预算，结束后有界关闭各 session 拦截，再执行 wait_for/observe。捕获 input 可在关闭拦截后继续 upload_file，文件赋值回执与业务结果语义保持。旧的“普通点击后省略上传目标”流程需补充新参数。
+- 选择器未出现或来源失效时保留点击回执，不重放；清理失败返回 file_chooser_cleanup 和释放标签的恢复指引。OOPIF 初始化继承当前状态，迟到初始化不能在关闭后重新开启；session 分离清除对应待处理 input。捕获期间仍不能区分人和 Agent 的点击；DOM 点击不获得额外用户激活。
+- 验证：全套单元测试 434/434 通过（并发 4），最终捕获相关 14 项复核通过。Chrome / Edge 157 临时 Profile 的 uploads 专项均通过，覆盖普通点击/直接上传不拦截、原生/DOM 显式捕获、延迟选择器、showPicker、失败/超时恢复、OOPIF 上传与分离、batch 和焦点；Chrome extended 组通过，包含闭合 Shadow DOM 多文件赋值/清空。包外安装、24 工具及新 schema 检查通过。
+- 完整 live-smoke 在 SSE network_idle 的既有 degraded=true 断言处失败，复跑及未修改的 HEAD 基线均在同一行失败；未修改该网络逻辑，也未将完整 smoke 记为通过。专项不使用真实账户数据，headless 验证关闭拦截的真实协议回执，不声称核验 Windows 文件选择框外观。
+- 部署：通过现有 stop/start 重启本机配对目录的 Hub，当前连接的扩展自动重载到 0.34.0 / ready，46 个普通扩展资源逐文件 SHA-256 一致；新 stdio 会话确认 24 工具与 capture_file_chooser schema。已有 MCP 客户端需重连以加载新参数。记录：unit-0340.tap、chooser-final.tap、uploads-{chromium,edge}.json、extended-chromium.json、package-0340.log、live-0340-chrome{,-rerun}.log、live-baseline-0330.log、deployment-0.34.0.json。
 
 ## 0.33：控件与操作证据
 

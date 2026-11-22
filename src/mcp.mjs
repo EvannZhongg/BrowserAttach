@@ -64,6 +64,7 @@ export function createMcp(client) {
   const timing = name => z.union([integerRange(name, 0, 1000), z.tuple([integerRange(name, 0, 1000), integerRange(name, 0, 1000)]).refine(([min, max]) => min <= max, 'Use an ordered [min, max] pair')]);
   const offset = { offset: z.object({ x_ratio: z.number().min(0).max(1), y_ratio: z.number().min(0).max(1) }).strict().optional().describe('Native element only: ratios within its content quad; hit checks still apply.') };
   const settle = { settle_ms: timing('settle_ms').optional().describe('After preparation, before dispatch: ms or uniform [min,max]; min<=max.') };
+  const captureFileChooser = { capture_file_chooser: z.boolean().optional().describe('Opt in for this click: suppress the file dialog, await a chooser within timeout_ms, then restore manual selection. Upload the pending input with upload_file; concurrent manual clicks are also intercepted during capture.') };
   const typeDelay = timing('delay_ms').default(0).describe('Between characters: ms or independent uniform [min,max]; min<=max.');
   const waitCheck = { ...selector, ...frameScope, nth: target.nth,
     condition: z.enum(WAIT_CONDITIONS).describe('Element conditions require selector; url/network_idle forbid locator fields.'),
@@ -177,7 +178,7 @@ export function createMcp(client) {
     return args;
   });
   tool('click', 'Click exactly one ref/selector/x+y; elements auto-scroll and may recenter once before dispatch, with hit checks. Native target_verified requires an element; coordinates return null, include a compact hit_target and verify trusted delivery to the hit only. Native select requires select_option.', {
-    ...offset, ...settle, detailed: z.boolean().default(false).describe('Include hit target geometry/classes and page readiness on success; failures always retain diagnostics.'),
+    ...offset, ...settle, ...captureFileChooser, detailed: z.boolean().default(false).describe('Include hit target geometry/classes and page readiness on success; failures always retain diagnostics.'),
     ...handle, ...inputTimeout, ...target, button: z.enum(['left', 'middle', 'right']).default('left'), click_count: z.union([z.literal(1), z.literal(2)]).default(1), modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).default([]), x: z.number().optional(), y: z.number().optional(), coordinate_space: z.enum(['viewport', 'document']).optional(), mode: z.enum(['native', 'dom']).default('native').describe('DOM: ref/selector, left single, no modifiers; invoked only acknowledges HTMLElement.click returning, delivery_verified=null.'),
   }, null, args => {
     targetOptions(args, { coordinates: true });
@@ -219,7 +220,7 @@ export function createMcp(client) {
     ...handle, ...dialogPolicy, ...observe, start_at: integerRange('start_at', 0, MAX_BATCH_STEPS - 1).default(0).describe('Explicitly skip a reviewed completed prefix.'), timeout_ms: integerRange('timeout_ms', 100, 30000).default(15000),
     steps: z.array(z.discriminatedUnion('action', [
       z.object({ action: z.literal('click'), ...stepOptions, ...batchTarget, mode: z.enum(['native', 'dom']).default('native').describe('DOM: left single click, no modifiers.'),
-        ...offset, ...settle, detailed: z.boolean().default(false),
+        ...offset, ...settle, ...captureFileChooser, detailed: z.boolean().default(false),
         button: z.enum(['left', 'middle', 'right']).default('left'), click_count: z.union([z.literal(1), z.literal(2)]).default(1), modifiers: z.array(z.enum(['Alt', 'Control', 'Meta', 'Shift'])).default([]) }).strict(),
       z.object({ action: z.literal('fill'), ...stepOptions, ...batchTarget, text: z.string(), ...expectedValue, mode: fillMode }).strict(),
       z.object({ action: z.literal('type'), ...stepOptions, ...batchTarget, selector: batchLocator.selector, ...focused, text: z.string().max(10000).describe('Printable trusted keys; Enter/Tab use press_key. Stops on target focus loss/detachment.'), delay_ms: typeDelay }).strict(),
@@ -241,7 +242,7 @@ export function createMcp(client) {
   tool('handle_dialog', 'Accept/dismiss a JS dialog and return its original details and accepted.', {
     ...handle, accept: z.boolean(), prompt_text: z.string().optional().describe('Response sent to the website for a prompt dialog.'),
   });
-  tool('upload_file', 'Set browser-host absolute file paths on one file-input/label ref/selector, or omit target for the pending chooser. [] clears/cancels; multiple files need a multiple input; directories unsupported. assignment_acknowledged confirms the command, not event delivery/upload. count_verified compares retained FileList count (null if unreadable); mismatch is not assignment failure. Observe before uploading again.', {
+  tool('upload_file', 'Set browser-host absolute file paths on one file-input/label ref/selector, or omit target for a pending chooser captured by click(capture_file_chooser=true). [] clears/cancels; multiple files need a multiple input; directories unsupported. assignment_acknowledged confirms the command, not event delivery/upload. count_verified compares retained FileList count (null if unreadable); mismatch is not assignment failure. Observe before uploading again.', {
     ...handle, ...inputTimeout, ...target, files: z.array(z.string()).max(100),
   }, null, async args => ({ ...args, files: await validateFiles(args.files) }));
   tool('screenshot', 'Capture viewport, full_page or one ref/selector element as PNG with image-to-viewport CSS mapping. Element/full_page are exclusive. Full-page points may need scrolling before input. If background rendering stalls, explicitly activate or use AX/text.', {

@@ -308,6 +308,7 @@ test('real stdio MCP exposes 24 tools including bounded control reads, ordered b
   assert.ok(logSchema.properties.resource_types && logSchema.properties.url_origin && logSchema.properties.request_id);
   assert.ok(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.wait_for);
   assert.equal(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.detailed.default, false);
+  assert.equal(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.capture_file_chooser.type, 'boolean');
   assert.deepEqual(logSchema.properties.kind.enum, ['console', 'network', 'navigation']);
   assert.ok(logSchema.required.includes('kind'));
   assert.equal(logSchema.properties.after_seq.default, 0);

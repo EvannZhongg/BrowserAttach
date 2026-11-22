@@ -619,12 +619,12 @@ try {
   await call('upload_file', { ...handle, ref: await ref('Multiple'), files: [file, empty] });
   await until(async () => (await state()).files.multiple?.length === 2, 'multiple file content');
   assert.equal((await state()).files.multiple[1].size, 0); checks.push('multiple + empty file');
-  const click = await call('click', { ...handle, ref: await ref('Choose file') });
+  const click = await call('click', { ...handle, ref: await ref('Choose file'), capture_file_chooser: true });
   await until(async () => (await snapshot()).file_chooser, 'intercepted chooser');
   await call('upload_file', { ...handle, files: [file, empty] });
   await until(async () => (await state()).files.hidden?.length === 2, 'hidden chooser input');
   checks.push('Choose file -> hidden input upload without native dialog');
-  await call('click', { ...handle, ref: await ref('Show picker') });
+  await call('click', { ...handle, ref: await ref('Show picker'), capture_file_chooser: true });
   await until(async () => (await snapshot()).file_chooser, 'showPicker interception');
   await call('upload_file', { ...handle, files: [file] });
   await until(async () => (await state()).files['shadow-upload']?.length === 1, 'showPicker input');
@@ -651,7 +651,7 @@ try {
   }
   assert.equal((await rawCall('upload_file', { ...handle, ref: await ref('Single'), files: [join(temp, 'missing')] })).isError, true); checks.push('missing file rejected');
   assert.deepEqual((await state()).errors, [], 'Upload interactions must not generate page JavaScript errors');
-  await call('click', { ...handle, ref: await ref('Choose file') });
+  await call('click', { ...handle, ref: await ref('Choose file'), capture_file_chooser: true });
   await until(async () => (await snapshot()).file_chooser, 'chooser before navigation');
   await call('navigate', { ...handle, url: `${url}?fresh` });
   await until(async () => !(await snapshot()).file_chooser, 'navigation cleanup');
@@ -702,7 +702,7 @@ try {
   }
   const mouseState = await frameState('child');
   assert.equal(mouseState.right, 3); assert.equal(mouseState.middle, 3); assert.equal(mouseState.doubles, 1); assert.equal(mouseState.control, 1);
-  await call('click', { ...handle, ref: await childRef('button', 'Child upload') });
+  await call('click', { ...handle, ref: await childRef('button', 'Child upload'), capture_file_chooser: true });
   await call('upload_file', { ...handle, files: [file] });
   await until(async () => (await frameState('child'))?.files.length === 1, 'OOPIF chooser upload');
   await call('click', { ...handle, ref: await childRef('button', 'Nested button') });

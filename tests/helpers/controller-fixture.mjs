@@ -111,6 +111,17 @@ export function withChildFrames(f) {
   };
 }
 
+export async function captureChooser(f, params, source = { tabId: 9 }) {
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'Input.dispatchMouseEvent' && args.type === 'mouseReleased') f.api.debugger.onEvent.emit(source, 'Page.fileChooserOpened', params);
+    return result;
+  };
+  try { return await f.exec('click', { x: 20, y: 30, capture_file_chooser: true }); }
+  finally { f.api.debugger.sendCommand = send; }
+}
+
 export function fetchFixture() {
   const f = fixture(), send = f.api.debugger.sendCommand;
   f.api.debugger.sendCommand = async (target, method, args) => {

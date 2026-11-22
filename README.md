@@ -105,7 +105,7 @@ Claiming and ordinary input never activate a tab or window; call `browser_tab_co
 | `browser_batch` | Run 1–30 click/fill/type/press_key/hover/scroll/select_option/wait steps in one queue; stops on the first failure and returns partial results |
 | `browser_navigate` | HTTP(S)/file navigation, back/forward and load waiting; local destinations require file access |
 | `browser_handle_dialog` | alert, confirm, prompt |
-| `browser_upload_file` | Native file input or an intercepted file chooser |
+| `browser_upload_file` | Native file input or a chooser captured by `click(capture_file_chooser=true)` |
 | `browser_screenshot` | Viewport or full-page PNG with coordinate mapping |
 | `browser_evaluate` | Main-page JS evaluation, promise awaiting, bounded results |
 | `browser_logs` | Read `kind=console/network/navigation` with independent cursors; buffered reads survive blank or unresponsive pages |

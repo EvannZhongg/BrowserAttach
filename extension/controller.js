@@ -43,13 +43,14 @@ export function createController(api, notify = () => {}) {
     diagnostics.detach(tabId, sessionId);
     network.detach(tabId, sessionId);
     observations.detachSession(tabId, sessionId);
+    uploads.forgetSession(tabId, sessionId);
   }, tabId => diagnostics.networkOptions(tabId));
   const pointer = createPointer(cdp, value, viewport, position, sessions, tabId => api.tabs.get(tabId), windowId => api.windows.get(windowId));
   const mouse = createClick(cdp, value, pointer);
   const gestures = createDrag(cdp, value, pointer, viewport);
   const input = createInput(cdp, value, sessions);
   const evaluations = createEvaluations(cdp);
-  const uploads = createUploads(cdp, value);
+  const uploads = createUploads(cdp, value, sessions);
   const observations = createObservations(cdp, value, sessions, viewport, tabId => claims.get(tabId), (tabId, affected, cause) => {
     if (affected) {
       for (const frameId of affected) evaluations.invalidate(tabId, 'frame_changed', frameId);
@@ -349,11 +350,14 @@ export function createController(api, notify = () => {}) {
     observations.expireCursor(tabId);
     if (command === 'upload_file') return await uploads.upload(tabId, node, args);
     if (command === 'click') {
-      if (inputMode(args) === 'dom') return await input.domClick(tabId, node, args);
-      const result = await mouse.click(tabId, node, args);
-      // Keep click feedback out of the input dispatch/verification path.
-      void clickVisuals.click(tabId, result.clicked.x, result.clicked.y).catch(() => {});
-      return result;
+      const click = async () => {
+        if (inputMode(args) === 'dom') return await input.domClick(tabId, node, args);
+        const result = await mouse.click(tabId, node, args);
+        // Keep click feedback out of the input dispatch/verification path.
+        void clickVisuals.click(tabId, result.clicked.x, result.clicked.y).catch(() => {});
+        return result;
+      };
+      return args.capture_file_chooser ? await uploads.capture(tabId, args, click) : await click();
     }
     if (command === 'hover') return await mouse.click(tabId, node, { ...args, hover: true });
     if (command === 'select_option') return await input.selectOption(tabId, node, args);

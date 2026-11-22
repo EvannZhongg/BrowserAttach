@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture, withChildFrames } from './helpers/controller-fixture.mjs';
+import { fixture, withChildFrames, captureChooser } from './helpers/controller-fixture.mjs';
 
 test('large AX observations page without exceeding the function argument limit', async () => {
   const f = fixture(); await f.claim();
@@ -462,14 +462,14 @@ test('iframe navigation preserves main refs, invalidates descendant refs and sco
   const adRef = snap.snapshot.match(/\[([^\]]+)\] button "ad"/)[1];
   const nestedRef = snap.snapshot.match(/\[([^\]]+)\] button "nested"/)[1];
   const emit = (method, params) => f.api.debugger.onEvent.emit({ tabId: 9 }, method, params);
-  emit('Page.fileChooserOpened', { backendNodeId: 77, mode: 'selectSingle', frameId: 'main' });
+  await captureChooser(f, { backendNodeId: 77, mode: 'selectSingle', frameId: 'main' });
   emit('Page.frameNavigated', { frame: { id: 'ad', parentId: 'main' } });
   f.api.tabs.onUpdated.emit(9, { status: 'loading' });
   f.api.tabs.onUpdated.emit(9, { status: 'complete' });
   await assert.rejects(f.exec('click', { ref: adRef }), /stale/);
   await assert.rejects(f.exec('click', { ref: nestedRef }), /stale/);
   assert.equal((await f.exec('click', { ref: mainRef })).file_chooser.pending, true);
-  emit('Page.fileChooserOpened', { backendNodeId: 77, frameId: 'nested' });
+  await captureChooser(f, { backendNodeId: 77, frameId: 'nested' });
   emit('Page.navigatedWithinDocument', { frameId: 'ad' });
   await assert.rejects(f.exec('upload_file', { files: [] }), /No pending/);
 });
@@ -572,7 +572,7 @@ test('OOPIF trees omitted from root frame metadata still invalidate the full sub
   const snap = await f.exec('snapshot');
   const ref = frame => snap.snapshot.split('\n').find(line => line.includes(`button "${frame}"`)).match(/\[([^\]]+)\]/)[1];
   assert.equal(snap.omitted_frames.length,0);
-  emit(child,'Page.fileChooserOpened',{backendNodeId:77,frameId:'nested'});
+  await captureChooser(f, {backendNodeId:77,frameId:'nested'}, {tabId:9,sessionId:child});
   emit(child,'Page.frameNavigated',{frame:{id:'child'}});
   await assert.rejects(f.exec('click',{ref:ref('child')}),/stale/);
   await assert.rejects(f.exec('click',{ref:ref('nested')}),/stale/);

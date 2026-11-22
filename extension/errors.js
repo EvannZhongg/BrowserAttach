@@ -1,4 +1,4 @@
-const fields = ['input_dispatched', 'outcome_unknown', 'post_action', 'diagnostics', 'observation', 'wait_result', 'recovery', 'open_tab'];
+const fields = ['input_dispatched', 'outcome_unknown', 'post_action', 'diagnostics', 'observation', 'wait_result', 'recovery', 'open_tab', 'file_chooser_cleanup'];
 
 const recovery = {
   stale_ref: 'Observe the affected page/frame and use a fresh ref or selector. A stale ref alone does not require a new claim.',

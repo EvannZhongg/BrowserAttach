@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { fixture } from './helpers/controller-fixture.mjs';
+import { fixture, captureChooser } from './helpers/controller-fixture.mjs';
 
 test('PNG capture supports viewport and bounded full-page screenshots', async () => {
   const f = fixture(); await f.claim();
@@ -36,10 +36,14 @@ test('a screenshot after click hides transient feedback before capture and then 
   assert.ok(f.calls.slice(capture + 1).some(call => call.method === 'Runtime.evaluate' && call.args.expression.includes('?.visible(true)')));
 });
 
-test('claim intercepts file choosers, click reports one, upload uses the native input and clears pending state', async () => {
+test('only explicit capture intercepts choosers, then restores manual selection before upload', async () => {
   const f = fixture(); await f.claim();
-  assert.ok(f.calls.some(call => call.method === 'Page.setInterceptFileChooserDialog' && call.args.enabled));
-  f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.fileChooserOpened', { backendNodeId: 77, mode: 'selectMultiple', frameId: 'main' });
+  assert.ok(!f.calls.some(call => call.method === 'Page.setInterceptFileChooserDialog'));
+  await f.exec('click', { x: 20, y: 30 });
+  assert.ok(!f.calls.some(call => call.method === 'Page.setInterceptFileChooserDialog'));
+  const click = await captureChooser(f, { backendNodeId: 77, mode: 'selectMultiple', frameId: 'main' });
+  assert.equal(click.file_chooser.pending, true);
+  assert.deepEqual(f.calls.filter(call => call.method === 'Page.setInterceptFileChooserDialog').map(call => call.args.enabled), [true, false]);
   assert.equal((await f.exec('snapshot')).file_chooser.mode, 'selectMultiple');
   const result = await f.exec('upload_file', { files: ['C:\\fixtures\\中文 file.txt', 'C:\\fixtures\\empty.txt'] });
   assert.equal(result.assignment_acknowledged, true); assert.equal(result.requested_count, 2);
@@ -60,12 +64,106 @@ test('direct upload retains backend refs; [] clears and file chooser state expir
   assert.equal(cleared.events_trusted, false); assert.equal(cleared.method, 'dom');
   assert.equal(cleared.application_result, 'not_checked');
   assert.equal((await f.exec('upload_file', { ref, files: [] })).count_verified, true);
-  f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.fileChooserOpened', { backendNodeId: 77, mode: 'selectSingle' });
+  await captureChooser(f, { backendNodeId: 77, mode: 'selectSingle' });
   f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.frameNavigated', { frame: { id: 'main' } });
   await assert.rejects(f.exec('upload_file', { files: [] }), /No pending/);
-  f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.fileChooserOpened', { backendNodeId: 77 });
+  await captureChooser(f, { backendNodeId: 77 });
   await f.exec('release_tab'); await f.claim();
   assert.equal((await f.exec('snapshot')).file_chooser, undefined);
+});
+
+test('capture awaits asynchronous choosers and disables interception before post-action waits', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Runtime.evaluate' && args.expression === 'location.href') {
+      f.calls.push({ target, method, args });
+      return { result: { value: 'http://localhost:8000/' } };
+    }
+    const result = await send(target, method, args);
+    if (method === 'Input.dispatchMouseEvent' && args.type === 'mouseReleased') setTimeout(() => {
+      f.api.debugger.onEvent.emit(target, 'Page.fileChooserOpened', { backendNodeId: 77, frameId: 'main' });
+    }, 20);
+    return result;
+  };
+  const clicked = await f.exec('click', { x: 20, y: 30, capture_file_chooser: true, wait_for: { checks: [{ condition: 'url', expected: 'localhost' }], timeout_ms: 200 } });
+  assert.equal(clicked.file_chooser.pending, true);
+  assert.equal(clicked.wait_result.status, 'pass');
+  const disabled = f.calls.findIndex(call => call.method === 'Page.setInterceptFileChooserDialog' && !call.args.enabled);
+  const waiting = f.calls.findIndex((call, index) => index > disabled && call.method === 'Runtime.evaluate' && call.args.expression.includes('location.href'));
+  assert.ok(disabled >= 0 && waiting > disabled);
+});
+
+test('missing chooser retains the click receipt, restores manual selection and ignores late events', async () => {
+  const f = fixture(); await f.claim();
+  const result = await f.exec('click', { x: 20, y: 30, capture_file_chooser: true, timeout_ms: 100 });
+  assert.equal(result.delivery_verified, true);
+  assert.equal(result.file_chooser.pending, false);
+  assert.equal(result.file_chooser.reason, 'not_opened');
+  assert.equal(f.calls.filter(call => call.method === 'Input.dispatchMouseEvent' && call.args.type === 'mouseReleased').length, 1);
+  assert.deepEqual(f.calls.filter(call => call.method === 'Page.setInterceptFileChooserDialog').map(call => call.args.enabled), [true, false]);
+  f.api.debugger.onEvent.emit({ tabId: 9 }, 'Page.fileChooserOpened', { backendNodeId: 77 });
+  await assert.rejects(f.exec('upload_file', { files: [] }), /No pending/);
+});
+
+test('capture setup and input failures restore interception without replaying input', async () => {
+  for (const stage of ['enable', 'input']) {
+    const f = fixture(); await f.claim();
+    const send = f.api.debugger.sendCommand;
+    f.api.debugger.sendCommand = async (target, method, args) => {
+      if (stage === 'enable' && method === 'Page.setInterceptFileChooserDialog' && args.enabled) throw new Error('Enable failed');
+      if (stage === 'input' && method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('function installGuard')) throw new Error('Input preparation failed');
+      return send(target, method, args);
+    };
+    await assert.rejects(f.exec('click', { x: 20, y: 30, capture_file_chooser: true, timeout_ms: 100 }));
+    assert.ok(f.calls.some(call => call.method === 'Page.setInterceptFileChooserDialog' && !call.args.enabled));
+    assert.ok(!f.calls.some(call => call.method === 'Input.dispatchMouseEvent' && call.args.type === 'mouseReleased'));
+  }
+});
+
+test('capture cleanup failures retain action evidence and explicit manual recovery', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    if (method === 'Page.setInterceptFileChooserDialog' && !args.enabled) throw new Error('Disable failed');
+    return send(target, method, args);
+  };
+  await assert.rejects(captureChooser(f, { backendNodeId: 77 }), error => {
+    assert.equal(error.input_dispatched, true);
+    assert.equal(error.post_action.action_result.delivery_verified, true);
+    assert.match(error.file_chooser_cleanup.error, /Disable failed/);
+    assert.match(error.file_chooser_cleanup.recovery, /Release this tab/);
+    return true;
+  });
+  assert.equal(f.calls.filter(call => call.method === 'Input.dispatchMouseEvent' && call.args.type === 'mouseReleased').length, 1);
+});
+
+test('capture ends on detach and does not retain a pending selection', async () => {
+  const f = fixture(); await f.claim();
+  const send = f.api.debugger.sendCommand;
+  f.api.debugger.sendCommand = async (target, method, args) => {
+    const result = await send(target, method, args);
+    if (method === 'Input.dispatchMouseEvent' && args.type === 'mouseReleased') setTimeout(() => f.api.debugger.onDetach.emit(target), 10);
+    return result;
+  };
+  const clicked = await f.exec('click', { x: 20, y: 30, capture_file_chooser: true });
+  assert.equal(clicked.file_chooser.pending, false);
+  assert.match(clicked.file_chooser.observation_error, /control changed/);
+  assert.equal(f.controller.claimedCount(), 0);
+});
+
+test('capture reports unsupported chooser events without leaving interception enabled', async () => {
+  const f = fixture(); await f.claim();
+  const clicked = await captureChooser(f, { mode: 'selectSingle' });
+  assert.equal(clicked.file_chooser.pending, false);
+  assert.equal(clicked.file_chooser.reason, 'unsupported_chooser');
+  assert.equal(f.calls.filter(call => call.method === 'Page.setInterceptFileChooserDialog').at(-1).args.enabled, false);
+});
+
+test('capture option is validated before any dispatch or interception', async () => {
+  const f = fixture(); await f.claim();
+  await assert.rejects(f.exec('click', { x: 20, y: 30, capture_file_chooser: 'true' }), /must be boolean/);
+  assert.ok(!f.calls.some(call => call.method === 'Page.setInterceptFileChooserDialog' || call.method === 'Input.dispatchMouseEvent'));
 });
 
 test('upload validation failure never dispatches native file assignment', async () => {
