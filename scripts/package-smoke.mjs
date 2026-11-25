@@ -54,6 +54,13 @@ try {
   assert.ok(tools.some(tool => tool.name === 'browser_logs'));
   assert.ok(tools.find(tool => tool.name === 'browser_logs').inputSchema.properties.view.enum.includes('requests'));
   assert.equal(tools.find(tool => tool.name === 'browser_click').inputSchema.properties.wait_for.properties.checks.maxItems, 30);
+  const click = tools.find(tool => tool.name === 'browser_click').inputSchema;
+  assert.equal(click.additionalProperties, false);
+  assert.ok(click.properties.selector_type.enum.includes('text'));
+  assert.ok(click.properties.coordinate_space.enum.includes('image'));
+  assert.ok(click.properties.screenshot_id); assert.ok(click.properties.expected_target);
+  const waitStep = tools.find(tool => tool.name === 'browser_batch').inputSchema.properties.steps.items.oneOf.find(branch => branch.properties.action.const === 'wait');
+  assert.equal(waitStep.properties.wait_for, undefined);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));
   const result = await client.callTool({ name: 'browser_discover', arguments: { kind: 'browsers' } });
   assert.equal(JSON.parse(result.content[0].text).browsers[0].browser_id, 'package:one');

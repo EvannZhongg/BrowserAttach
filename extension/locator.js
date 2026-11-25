@@ -1,7 +1,7 @@
 import { checkedValue } from './errors.js';
 
 // Selectors are reusable queries, never identities inferred from old AX text.
-export function targetOptions(args, { coordinates = false, focused = false } = {}) {
+export function targetOptions(args, { coordinates = false, focused = false, image = false } = {}) {
   const hasRef = args.ref != null, hasSelector = args.selector != null;
   const hasPoint = args.x != null || args.y != null;
   if (args.focused != null && (args.focused !== true || !focused)) throw new Error('focused=true is only supported by type');
@@ -11,15 +11,19 @@ export function targetOptions(args, { coordinates = false, focused = false } = {
   }
   if (hasRef && (typeof args.ref !== 'string' || !args.ref)) throw new Error('ref must be nonempty');
   if (hasSelector && (typeof args.selector !== 'string' || !args.selector.trim() || args.selector.length > 10000)) throw new Error('selector must contain 1..10000 characters');
-  if (args.selector_type != null && !['css', 'xpath', 'label', 'placeholder', 'role'].includes(args.selector_type)) throw new Error('selector_type must be css, xpath, label, placeholder or role');
+  if (args.selector_type != null && !['css', 'xpath', 'label', 'placeholder', 'role', 'text'].includes(args.selector_type)) throw new Error('selector_type must be css, xpath, label, placeholder, role or text');
+  if (args.text_match != null && (!hasSelector || args.selector_type !== 'text' || !['exact', 'contains'].includes(args.text_match))) throw new Error('text_match requires selector_type=text and must be exact or contains');
+  if (args.scope != null && (!hasSelector || args.selector_type !== 'text' || typeof args.scope !== 'string' || !args.scope.trim() || args.scope.length > 10000)) throw new Error('scope requires selector_type=text and a nonempty CSS selector of at most 10000 characters');
   if (args.name != null && (args.selector_type !== 'role' || typeof args.name !== 'string' || args.name.length > 10000)) throw new Error('name requires selector_type=role and must be a string of at most 10000 characters');
   frameOptions(args);
   if (!hasSelector && (args.frame_id != null || args.frame != null || args.selector_type != null)) throw new Error('frame/frame_id and selector_type require selector');
   if (args.nth != null && (!hasSelector || !Number.isSafeInteger(args.nth) || args.nth < 0)) throw new Error('nth requires selector and must be a nonnegative safe integer (zero-based)');
-  if (args.coordinate_space != null && (!hasPoint || !['viewport', 'document'].includes(args.coordinate_space))) throw new Error('coordinate_space must be viewport or document and applies to coordinate clicks only');
+  if (args.coordinate_space != null && (!hasPoint || !(image ? ['viewport', 'document', 'image'] : ['viewport', 'document']).includes(args.coordinate_space))) throw new Error(`coordinate_space must be ${image ? 'viewport, document or image' : 'viewport or document'} and applies to coordinates only`);
+  if (args.coordinate_space === 'image' && (typeof args.screenshot_id !== 'string' || !args.screenshot_id)) throw new Error('coordinate_space=image requires screenshot_id from browser_screenshot');
+  if (args.screenshot_id != null && (!image || !hasPoint || args.coordinate_space !== 'image')) throw new Error('screenshot_id requires coordinate_space=image');
 }
 
-export function queryElement(selector, type = 'css', nth, { missing = 'error', countOnly = false } = {}) {
+export function queryElement(selector, type = 'css', nth, { missing = 'error', countOnly = false, text_match = 'exact', scope } = {}) {
   if (nth != null && (!Number.isSafeInteger(nth) || nth < 0)) throw new Error('nth must be a nonnegative safe integer (zero-based)');
   const failure = (message, reason, detail = {}) => Object.assign(new Error(message), {
     diagnostics: { reason, selector, selector_type: type, ...(nth == null ? {} : { nth }), ...detail },
@@ -29,6 +33,29 @@ export function queryElement(selector, type = 'css', nth, { missing = 'error', c
     if (type === 'xpath') {
       const result = document.evaluate(selector, document, null, XPathResult.ORDERED_NODE_SNAPSHOT_TYPE, null);
       count = result.snapshotLength; at = index => result.snapshotItem(index);
+    } else if (type === 'text') {
+      const normalize = text => text.replace(/\s+/g, ' ').trim();
+      const root = scope == null ? document.documentElement : queryElement(scope, 'css');
+      const elements = root ? [root, ...root.querySelectorAll('*')] : [];
+      if (elements.length > 10000) throw failure('Text locator exceeds 10000 elements; narrow scope to a unique CSS container', 'text_locator_limit');
+      const expected = normalize(selector);
+      const matches = elements.filter(element => {
+        if (element.matches('script,style,noscript,template')) return false;
+        const rect = element.getBoundingClientRect(), style = element.ownerDocument.defaultView.getComputedStyle(element);
+        if (rect.width <= 0 || rect.height <= 0 || style.visibility !== 'visible') return false;
+        const text = normalize(element.innerText || '');
+        return text_match === 'contains' ? text.includes(expected) : text === expected;
+      });
+      // A text container and its matching descendant denote the same text.
+      // Keep the smallest matching elements without guessing clickable ancestors.
+      const ancestors = new Set();
+      for (const element of matches) for (let parent = element.parentElement; parent; parent = parent.parentElement) {
+        if (ancestors.has(parent)) break;
+        ancestors.add(parent);
+        if (parent === root) break;
+      }
+      const leaves = matches.filter(element => !ancestors.has(element));
+      count = leaves.length; at = index => leaves[index];
     } else {
       const normalize = text => text.replace(/\s+/g, ' ').trim();
       const elements = type === 'label'
@@ -40,6 +67,7 @@ export function queryElement(selector, type = 'css', nth, { missing = 'error', c
       count = elements.length; at = index => elements[index];
     }
   } catch (error) {
+    if (error.diagnostics) throw error;
     const hint = type === 'css' ? 'Use browser-native CSS, not Playwright selectors such as :has-text(). For accessible names use selector_type="role", selector="<actual AX role>", name="<exact accessible name>"; label matches associated HTML labels and placeholder matches the exact placeholder attribute. Inspect browser_snapshot query to find the actual role/name.' : null;
     throw failure(`${error.message}${hint ? ` ${hint}` : ''}`, 'selector_invalid', hint ? { hint } : {});
   }
@@ -78,6 +106,7 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
   const context = role ? null : await send('Page.createIsolatedWorld', { frameId, worldName: 'browser-attach-locator' });
   let backendNodeId, roleNodes;
   const locator = { selector: args.selector, selector_type: args.selector_type ?? 'css', frame_id: frameId,
+    ...(args.text_match == null ? {} : { text_match: args.text_match }), ...(args.scope == null ? {} : { scope: args.scope }),
     ...(args.name == null ? {} : { name: args.name }), ...(args.nth == null ? {} : { nth: args.nth }) };
   try {
     while (true) {
@@ -90,7 +119,7 @@ export async function resolveSelector(cdp, value, sessions, tabId, args, budget,
         backendNodeId = matchRole(nodes, args, candidates)?.backendDOMNodeId;
       } else {
         const result = await send('Runtime.evaluate', { contextId: context.executionContextId, objectGroup: 'browser-attach',
-          expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},{missing:"count"})` });
+          expression: `(${queryElement.toString()})(${JSON.stringify(args.selector)},${JSON.stringify(args.selector_type ?? 'css')},${args.nth ?? 'undefined'},${JSON.stringify({ missing: 'count', text_match: args.text_match, scope: args.scope })})` });
         await checkedValue(result, send, value);
         if (result.result?.type === 'number') matched = result.result.value;
         else {

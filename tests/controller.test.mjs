@@ -24,7 +24,7 @@ test('file pages reuse AX refs, screenshot, native input, and navigation invalid
   const f = fixture(); f.tabs.get(9).url = 'file:///C:/sample.html'; await f.exec('claim_tab');
   const tree = await f.exec('snapshot', { max_nodes: 2 });
   assert.match(tree.snapshot, /button "Submit"/);
-  assert.equal((await f.exec('screenshot')).data, 'image-data');
+  assert.match((await f.exec('screenshot')).data, /^iVBOR/);
   const ref = f.ref(tree);
   assert.equal((await f.exec('click', { ref })).delivery_verified, true);
   await f.exec('press_key', { key: 'Enter' });
@@ -96,7 +96,7 @@ test('tab_id claim tolerates title drift; explicitly supplied identity guards st
   const claimed = await f.exec('claim_tab');
   assert.equal(claimed.title, 'New title');
   await assert.rejects(f.exec('click', { ref: 'old', selector: '#submit' }), /exactly one/);
-  await assert.rejects(f.exec('click', { selector: '#submit', mode: 'dom', coordinate_space: 'document' }), /coordinate clicks only/);
+  await assert.rejects(f.exec('click', { selector: '#submit', mode: 'dom', coordinate_space: 'document' }), /coordinates only/);
 });
 
 test('an owned tab that becomes blank recovers in place without recreating, reattaching or activating', async () => {

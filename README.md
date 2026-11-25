@@ -24,7 +24,7 @@ Your agent can read files and call APIs, but it cannot touch the page you are al
 - **Your existing sign-in is reused** — actions run in the tabs that are already open and already logged in; no cookie export and no second browser to authenticate.
 - **No debugging port, no browser restart** — nothing to relaunch with flags; the Hub listens on loopback only and pairs with the extension through a random key.
 - **Explicit takeover instead of concurrent trampling** — discover, claim a tab exclusively, release it when done; one owner per tab and serialized operations.
-- **The agent can actually read the page** — accessibility-tree snapshots with refs that survive actions, targeted reads of field values, popups and selected options, or strict CSS/XPath, HTML label, placeholder and AX role/name locators.
+- **The agent can actually read the page** — accessibility-tree snapshots with refs that survive actions, targeted reads of field values, popups and selected options, or strict CSS/XPath, HTML label, placeholder, AX role/name and rendered-text locators.
 - **Input semantics stay transparent** — native pointer click/hover/drag/scroll is kept distinct from DOM-synthesized events, an unknown outcome is never replayed automatically, and ordinary operations never steal focus.
 - **A whole sequence in one call** — 1–30 batch steps, conditional waits and `diff_since` observation; plus screenshots, uploads, dialogs, JavaScript evaluation, console/network logs and background `fetch` — 24 tools over standard stdio MCP.
 

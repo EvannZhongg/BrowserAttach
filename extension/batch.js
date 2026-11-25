@@ -26,7 +26,7 @@ export function validateSteps(steps, startAt = 0, dialogPolicy = 'ask') {
     if (step.action === 'press_key') {
       keyParameters(step.key);
       if (step.ref != null) throw new Error('Batch keyboard targets use a fresh selector, not ref');
-      if (['selector', 'selector_type', 'name', 'frame', 'frame_id', 'nth'].some(key => step[key] != null)) targetOptions(step);
+      if (['selector', 'selector_type', 'name', 'text_match', 'scope', 'frame', 'frame_id', 'nth'].some(key => step[key] != null)) targetOptions(step);
     }
     else if (step.action === 'wait') waitOptions({ ...step, dialog_policy: step.dialog_policy ?? dialogPolicy });
     else if (step.action === 'scroll') {

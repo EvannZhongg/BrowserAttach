@@ -24,7 +24,7 @@
 - **复用你已有的登录态** —— 动作发生在已经打开、已经登录的标签页里，不导出 cookie，也不用为第二个浏览器重新登录。
 - **不需要调试端口，也不需要重启浏览器** —— 不必带参数重启 Chrome / Edge；Hub 仅监听 loopback，通过随机密钥与本机扩展配对。
 - **明确接管，而不是并发抢占** —— 发现、独占 claim、完成后释放；同一标签只有一个 owner，操作串行排队。
-- **让 Agent 真正读懂页面** —— 可访问性树快照与跨动作稳定的 ref，按需读取字段值、弹层与已选选项，也可用严格 CSS/XPath、HTML label、placeholder、AX role/name 定位。
+- **让 Agent 真正读懂页面** —— 可访问性树快照与跨动作稳定的 ref，按需读取字段值、弹层与已选选项，也可用严格 CSS/XPath、HTML label、placeholder、AX role/name 和渲染文字定位。
 - **输入语义保持透明** —— 原生指针 click/hover/drag/scroll 与 DOM 合成事件明确区分，结果未知时不自动重放，普通操作不抢焦点。
 - **一次调用跑完一串动作** —— 1–30 步 batch、条件等待与 `diff_since` 差分观察；另有截图、上传、对话框、JavaScript 求值、console/network 日志与后台 `fetch`，共 24 个标准 stdio MCP 工具。
 

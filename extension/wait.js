@@ -5,7 +5,7 @@ import { boundedRead } from './outcomes.js';
 
 export const WAIT_CONDITIONS = ['attached', 'absent', 'visible', 'actionable', 'text', 'value', 'checked', 'selected', 'expanded', 'url', 'network_idle', 'count', 'value_present'];
 export const MAX_WAIT_CHECKS = 30;
-const locatorFields = ['selector', 'selector_type', 'name', 'frame_id', 'frame', 'nth'];
+const locatorFields = ['selector', 'selector_type', 'name', 'text_match', 'scope', 'frame_id', 'frame', 'nth'];
 const checkFields = [...locatorFields, 'condition', 'expected', 'previous', 'idle_ms', 'not'];
 
 export function actionWaitOptions(args) {
@@ -48,10 +48,10 @@ function checkOptions(args) {
 
 export function inspectWait(query, inspect, args) {
   if (args.condition === 'count') {
-    const count = query(args.selector, args.selector_type ?? 'css', undefined, { countOnly: true });
+    const count = query(args.selector, args.selector_type ?? 'css', undefined, { countOnly: true, text_match: args.text_match, scope: args.scope });
     return { satisfied: count === args.expected, count };
   }
-  const element = query(args.selector, args.selector_type ?? 'css', args.nth, { missing: 'null' });
+  const element = query(args.selector, args.selector_type ?? 'css', args.nth, { missing: 'null', text_match: args.text_match, scope: args.scope });
   if (!element) return { satisfied: args.condition === 'absent', state: 'absent' };
   if (element.isConnected === false) return { satisfied: false, state: 'detached_during_observation' };
   if (args.condition === 'attached') return { satisfied: true, state: 'attached' };

@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.34.0"
+  version: "0.35.0"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -50,7 +50,9 @@ Observe when the next decision depends on new state or an action outcome is unce
 
 ## Locate and act
 
-Use an observed ref or an unambiguous selector. Prefer a simple stable CSS selector, exact HTML label/placeholder, or the observed AX role and name. For example, a link named Claim uses `selector_type="role", selector="link", name="Claim"`. Follow the connected tool's locator syntax.
+Use an observed ref or an unambiguous selector. Prefer a simple stable CSS selector, exact HTML label/placeholder, or the observed AX role and name. For DOM text without useful semantics, use selector_type="text" with an exact normalized string and scope="<unique CSS container>"; text_match="contains" explicitly opts into substring matching. For example, a link named Claim uses `selector_type="role", selector="link", name="Claim"`. Follow the connected tool's locator syntax.
+
+For screenshot points, click/hover accept coordinate_space="image", the latest capture.screenshot_id and original PNG x/y pixels. Use expected_target={ref or selector locator} to constrain the hit before dispatch; mismatches send no input. Recapture after input, scrolling or source changes. A mapping does not prove unchanged layout or application success. All tools reject unknown parameters; do not attach a timeout to individual wait checks or nest wait_for on a wait step.
 
 Narrow repeated matches by container or frame. Use `nth` only when the observed ordering identifies the intended target. Re-observe replaced nodes; do not infer that an old ref now means a same-named replacement.
 

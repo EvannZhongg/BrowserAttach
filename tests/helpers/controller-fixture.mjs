@@ -86,7 +86,11 @@ export function fixture() {
         if (method === 'Runtime.callFunctionOn' && args.functionDeclaration.includes('this.files?.length')) return { result: { value: fileCount } };
         if (method === 'Runtime.callFunctionOn') return { result: { value: !blocked } };
         if (method === 'Page.getLayoutMetrics') return { cssContentSize: { width: 1024, height: 1800 } };
-        if (method === 'Page.captureScreenshot') return { data: 'image-data' };
+        if (method === 'Page.captureScreenshot') {
+          const header = Buffer.from([137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82,0,0,0,0,0,0,0,0]);
+          header.writeUInt32BE(1024, 16); header.writeUInt32BE(768, 20);
+          return { data: header.toString('base64') };
+        }
         return {};
       } } };
   const controller = createController(api, data => notices.push(data));

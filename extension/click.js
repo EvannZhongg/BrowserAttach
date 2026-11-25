@@ -1,5 +1,6 @@
 import { deadline, delivery } from './actionability.js';
 import { offsetOption, timingOption, pause } from './motion.js';
+import { targetOptions } from './locator.js';
 
 // Native mouse dispatch stays in protocol order without serial compositor acknowledgments.
 export function createClick(cdp, value, { prepare, assertReady }) {
@@ -54,6 +55,7 @@ export function createClick(cdp, value, { prepare, assertReady }) {
       await pause(budget, args.settle_ms);
       if (failure) throw failure;
       const pageState = await assertReady(tabId, budget, options.hover ? 'hover' : 'click', args);
+      await prepared.assertCurrent?.();
       if (failure) throw failure;
       budget.dispatch();
       const dispatch = params => budget.run(() => cdp(tabId, 'Input.dispatchMouseEvent', { ...params, ...rootPoint }));
@@ -64,10 +66,10 @@ export function createClick(cdp, value, { prepare, assertReady }) {
       }
       await budget.run(() => delivery(Promise.all([Promise.all(commands), receipt])));
       const verification = { target_verified: node ? true : null, delivery_verified: true, events_trusted: true,
-        target_verification: { basis: node ? 'element' : 'coordinate_hit', hit_relation: relation } };
+        target_verification: { basis: args.expected_target ? 'expected_target' : node ? 'element' : 'coordinate_hit', hit_relation: relation } };
       if (options.hover) return { hovered: rootPoint, hit_target: hitTarget, page_state: pageState, ...verification, application_result: 'not_checked', observe_again: true };
       return { clicked: rootPoint, ...verification, application_result: 'not_checked', frame_id: node?.frameId || frameId,
-        ...(!node && !args.detailed ? { hit_target: compactHit(hitTarget) } : {}),
+        ...(args.x != null && !args.detailed ? { hit_target: compactHit(hitTarget) } : {}),
         ...(args.detailed ? { hit_target: hitTarget, page_state: pageState, coordinate_space: 'viewport_css_pixels', button: options.button, click_count: options.click_count } : {}), observe_again: true };
     } finally {
       pending.delete(tabId);
@@ -138,6 +140,10 @@ function compactHit(hit) {
 }
 
 export function clickOptions(args) {
+  if (args.expected_target != null) {
+    if (args.x == null || args.y == null || args.mode === 'dom') throw new Error('expected_target requires native coordinate input');
+    targetOptions(args.expected_target);
+  }
   if (args.capture_file_chooser != null && typeof args.capture_file_chooser !== 'boolean') throw new Error('capture_file_chooser must be boolean');
   if (args.detailed != null && typeof args.detailed !== 'boolean') throw new Error('detailed must be boolean');
   offsetOption(args);

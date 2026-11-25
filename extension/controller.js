@@ -45,13 +45,15 @@ export function createController(api, notify = () => {}) {
     observations.detachSession(tabId, sessionId);
     uploads.forgetSession(tabId, sessionId);
   }, tabId => diagnostics.networkOptions(tabId));
-  const pointer = createPointer(cdp, value, viewport, position, sessions, tabId => api.tabs.get(tabId), windowId => api.windows.get(windowId));
+  const pointer = createPointer(cdp, value, viewport, position, sessions, tabId => api.tabs.get(tabId), windowId => api.windows.get(windowId),
+    (tabId, args, view) => screenshots.imagePoint(tabId, args, view));
   const mouse = createClick(cdp, value, pointer);
   const gestures = createDrag(cdp, value, pointer, viewport);
   const input = createInput(cdp, value, sessions);
   const evaluations = createEvaluations(cdp);
   const uploads = createUploads(cdp, value, sessions);
   const observations = createObservations(cdp, value, sessions, viewport, tabId => claims.get(tabId), (tabId, affected, cause) => {
+    screenshots.forget(tabId);
     if (affected) {
       for (const frameId of affected) evaluations.invalidate(tabId, 'frame_changed', frameId);
       uploads.forgetFrames(tabId, affected);
@@ -125,6 +127,7 @@ export function createController(api, notify = () => {}) {
     try { await clickVisuals.remove(tabId, dialogs.has(tabId)); await visuals.remove(tabId); }
     finally { await api.debugger.detach({ tabId }); }
     claims.delete(tabId);
+    screenshots.forget(tabId);
     evaluations.forget(tabId);
     observations.forget(tabId);
     dialogs.forget(tabId);
@@ -143,6 +146,7 @@ export function createController(api, notify = () => {}) {
   }
 
   function forget(tabId) {
+    screenshots.forget(tabId);
     evaluations.forget(tabId);
     navigation.cancel(tabId);
     mouse.cancel(tabId);
@@ -192,7 +196,7 @@ export function createController(api, notify = () => {}) {
   async function action(tabId, command, args) {
     // Reading buffered diagnostics does not require a responsive renderer.
     if (command === 'logs') return await diagnostics.readDetails(tabId, args, sessions.targets(tabId));
-    if (command === 'handle_dialog') return await dialogs.handle(tabId, args);
+    if (command === 'handle_dialog') { screenshots.forget(tabId); return await dialogs.handle(tabId, args); }
     if (dialogs.has(tabId)) {
       if (command === 'snapshot') return { dialog: dialogs.get(tabId), note: 'Use browser_handle_dialog to accept or dismiss this dialog.' };
       if (command !== 'release_tab' && command !== 'wait') throw new Error('A JavaScript dialog is open. Observe browser_snapshot and use browser_handle_dialog.');
@@ -303,6 +307,7 @@ export function createController(api, notify = () => {}) {
     if (command === 'screenshot') return await screenshots.capture(tabId, args);
     if (command === 'release_tab') { await release(tabId); return { released: true }; }
     if (command === 'navigate') {
+      screenshots.forget(tabId);
       await args.observe_start?.();
       const url = args.direction != null ? undefined : args.url;
       if (args.direction != null && args.url != null) throw new Error('Provide url or direction, never both');
@@ -329,11 +334,11 @@ export function createController(api, notify = () => {}) {
     if (command === 'fill') fillOptions(args);
     if (command === 'select_option') selectOptions(args);
     if (command === 'type') typeOptions(args);
-    if (command === 'press_key' && ['ref', 'selector', 'selector_type', 'name', 'frame', 'frame_id', 'nth'].some(key => args[key] != null)) targetOptions(args);
+    if (command === 'press_key' && ['ref', 'selector', 'selector_type', 'name', 'text_match', 'scope', 'frame', 'frame_id', 'nth'].some(key => args[key] != null)) targetOptions(args);
     if (command === 'scroll') scrollOptions(args);
-    if (['scroll', 'upload_file'].includes(command) && ['ref', 'selector', 'frame', 'frame_id', 'selector_type', 'name', 'nth'].some(key => args[key] != null)) targetOptions(args);
-    if (['click', 'fill', 'type', 'hover', 'select_option'].includes(command)) targetOptions(args, { coordinates: command === 'hover' || command === 'click' && inputMode(args) !== 'dom', focused: command === 'type' });
-    if (command === 'click') clickOptions(args);
+    if (['scroll', 'upload_file'].includes(command) && ['ref', 'selector', 'frame', 'frame_id', 'selector_type', 'name', 'text_match', 'scope', 'nth'].some(key => args[key] != null)) targetOptions(args);
+    if (['click', 'fill', 'type', 'hover', 'select_option'].includes(command)) targetOptions(args, { coordinates: command === 'hover' || command === 'click' && inputMode(args) !== 'dom', focused: command === 'type', image: ['click', 'hover'].includes(command) });
+    if (['click', 'hover'].includes(command)) clickOptions(args);
     if (['click', 'fill', 'type', 'press_key', 'scroll', 'hover', 'select_option', 'upload_file'].includes(command)) args = { ...args, budget: args.budget || deadline(args.timeout_ms) };
     // Reject unavailable input before renderer preparation or ref invalidation;
     // a lost receipt after dispatch must instead report an unknown outcome.
@@ -345,8 +350,9 @@ export function createController(api, notify = () => {}) {
     if (args.budget) for (const target of sessions.targets(tabId)) {
       await args.budget.run(() => cdp(target, 'Runtime.releaseObjectGroup', { objectGroup: 'browser-attach' }));
     }
-    const node = args.selector ? await resolveSelector(cdp, value, sessions, tabId, args, args.budget || deadline(30000)) :
-      args.ref ? await observations.resolve(tabId, args.ref, args.budget || deadline(30000)) : null;
+    const node = args.expected_target ? await resolveNode(tabId, args.expected_target, args.budget) :
+      args.selector ? await resolveSelector(cdp, value, sessions, tabId, args, args.budget || deadline(30000)) :
+        args.ref ? await observations.resolve(tabId, args.ref, args.budget || deadline(30000)) : null;
     observations.expireCursor(tabId);
     if (command === 'upload_file') return await uploads.upload(tabId, node, args);
     if (command === 'click') {
@@ -431,6 +437,7 @@ export function createController(api, notify = () => {}) {
       throw error;
     } finally {
       dialogs.exit(tabId, state);
+      if (args.budget?.has_dispatched()) screenshots.forget(tabId);
       await outcome?.stop();
     }
   }

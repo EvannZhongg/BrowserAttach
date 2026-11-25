@@ -2,7 +2,7 @@ import { deadline, waitForTarget } from './actionability.js';
 import { offsetOption } from './motion.js';
 import { describeTarget } from './target-description.js';
 
-export function createPointer(cdp, value, viewport, position, sessions, getTab, getWindow) {
+export function createPointer(cdp, value, viewport, position, sessions, getTab, getWindow, imagePoint) {
   async function assertReady(tabId, budget, action, args = {}) {
     const inactiveClick = action === 'click' && (args.button ?? 'left') === 'left' &&
       (args.click_count ?? 1) === 1 && (args.modifiers ?? []).length === 0;
@@ -35,7 +35,7 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     const budget = args.budget || deadline(args.timeout_ms);
     try { return await prepareOnce(tabId, node, { ...args, budget }); }
     catch (error) {
-      if (!node || args.scroll === false || budget.has_dispatched() || error.input_dispatched !== false ||
+      if (!node || args.x != null || args.scroll === false || budget.has_dispatched() || error.input_dispatched !== false ||
           !['obstructed', 'frame_obstructed'].includes(error.diagnostics?.reason)) throw error;
       // Chromium may leave a visible target behind a sticky overlay. Recenter
       // once before input, then repeat every hit/frame check on the same node.
@@ -50,17 +50,18 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
   }
   async function prepareOnce(tabId, node, args) {
     offsetOption(args);
-    if (!!node === (args.x != null || args.y != null)) throw new Error('Provide either ref/selector or x/y');
-    if (args.coordinate_space != null && !['viewport', 'document'].includes(args.coordinate_space)) throw new Error('coordinate_space must be viewport or document');
-    if (node && args.coordinate_space != null) throw new Error('coordinate_space applies to coordinate clicks only');
+    const coordinates = args.x != null || args.y != null;
+    if (!!node === coordinates && !(node && coordinates && args.expected_target)) throw new Error('Provide either ref/selector or x/y');
+    if (args.coordinate_space != null && !['viewport', 'document', 'image'].includes(args.coordinate_space)) throw new Error('coordinate_space must be viewport, document or image');
+    if (!coordinates && args.coordinate_space != null) throw new Error('coordinate_space applies to coordinate clicks only');
     const budget = args.budget || deadline(args.timeout_ms);
     const obstruction = (detail, diagnostics) => Object.assign(new Error(`${detail}. ${budget.has_dispatched()
       ? 'Input has already been dispatched. Outcome is unknown; observe before continuing. Do not replay automatically.'
       : 'No input was dispatched.'}`), { outcome_unknown: budget.has_dispatched(), input_dispatched: budget.has_dispatched(), diagnostics });
-    let target = node?.target || { tabId };
+    let target = coordinates ? { tabId } : node?.target || { tabId };
     const send = (method, params) => budget.run(() => cdp(target, method, params));
-    let point, view;
-    if (node) {
+    let point, view, image;
+    if (node && !coordinates) {
       await waitForTarget(cdp, value, target, node, budget, { hover: args.hover === true });
       if (args.scroll !== false) await send('DOM.scrollIntoViewIfNeeded', { backendNodeId: node.backendNodeId });
       await waitForTarget(cdp, value, target, node, budget, { hover: args.hover === true });
@@ -74,8 +75,12 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
         reason: 'no_visible_click_point', frame_id: node.frameId, viewport: view, quads: quads || [],
       });
     } else {
+      if (node) await waitForTarget(cdp, value, node.target, node, budget, { hover: args.hover === true });
       view = await budget.run(() => viewport(target));
-      if (args.coordinate_space === 'document') {
+      if (args.coordinate_space === 'image') {
+        image = imagePoint(tabId, args, view);
+        point = image.point;
+      } else if (args.coordinate_space === 'document') {
         if (!Number.isFinite(args.x) || !Number.isFinite(args.y) || args.x < 0 || args.y < 0) throw new Error('Document coordinates must be finite and nonnegative');
         const x = args.x - view.scroll_x, y = args.y - view.scroll_y;
         if (args.scroll !== false && (x < 0 || y < 0 || x >= view.width || y >= view.height)) {
@@ -95,7 +100,7 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     // Coordinate input starts in the root viewport; descend into a remote frame
     // before resolving backend ids or installing isolated-world verification.
     const visited = new Set();
-    while (!node) {
+    while (coordinates) {
       const description = await send('DOM.describeNode', { backendNodeId: hitNode.backendNodeId, depth: 0 });
       const childId = description.node.frameId, child = childId && sessions.target(tabId, childId);
       if (!child?.sessionId || child.sessionId === target.sessionId) break;
@@ -136,6 +141,10 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     if (pseudo) hitTarget.pseudo_element = true;
     let relation = null;
     if (node) {
+      if (coordinates && ((node.target.sessionId ?? null) !== (target.sessionId ?? null) || node.frameId !== frameId)) {
+        throw obstruction('Coordinate hit is outside expected_target frame', { reason: 'suspected_mistarget', suspected_mistarget: true,
+          requested_target: await requestedTarget(node), hit_target: hitTarget, frame_id: frameId });
+      }
       // resolveNode without an explicit context can reuse wrappers from a prior
       // isolated read. Compare both backend identities in the same frame world.
       const { executionContextId } = await send('Page.createIsolatedWorld', { frameId: node.frameId, worldName: 'browser-attach-input' });
@@ -149,7 +158,7 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
       if (!relation) {
         const requested = await requestedTarget(node);
         throw obstruction(`Another element covers the requested target. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(hitTarget)}; point=${JSON.stringify(point)}; frame_id=${JSON.stringify(node.frameId)}`,
-          { reason: 'obstructed', requested_target: requested, blocked_by: hitTarget, hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
+          { reason: coordinates ? 'suspected_mistarget' : 'obstructed', ...(coordinates ? { suspected_mistarget: true } : {}), requested_target: requested, blocked_by: hitTarget, hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
       }
     }
     // Dispatch through the root widget so overlays in ancestor documents cannot
@@ -182,7 +191,8 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
       boundaries.push({ target: parent.target, backendNodeId: owner.backendNodeId, frameId: ownerFrameId });
       current = parent.target; currentView = parentView;
     }
-    return { target, point: rootPoint, hitTarget, relation, frameId: node?.frameId || frameId, backendNodeId: node?.backendNodeId || backendNodeId, boundaries };
+    return { target, point: rootPoint, hitTarget, relation, frameId: node?.frameId || frameId, backendNodeId: node?.backendNodeId || backendNodeId, boundaries,
+      ...(image ? { assertCurrent: () => image.assertCurrent(budget) } : {}) };
     async function requestedTarget(node) {
       const identity = { backend_node_id: node.backendNodeId, frame_id: node.frameId };
       try {

@@ -1,8 +1,10 @@
 # BrowserAttach 使用指南
 
-适用于 **0.34.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.35.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
+
+所有工具的顶层参数和嵌套对象均拒绝未知字段，不静默忽略拼错或放错层级的参数。`wait_for.timeout_ms` 是整组检查的上限，checks 内没有独立 timeout_ms；batch 的 wait 步骤直接使用 condition/checks，不接受 wait_for。0.35 起，依赖未知顶层字段被忽略的旧调用会明确报错。
 
 ## 基本流程
 
@@ -72,8 +74,8 @@ open_tab 始终创建新标签，即使同 URL 已打开；继续现有页面任
 
 | 结果字段 | 能证明什么 |
 |---|---|
-| `target_verified` | true 表示可信鼠标事件命中显式 ref/selector 目标；纯坐标调用为 null，没有提供期望元素 |
-| `target_verification` | basis 为 element 或 coordinate_hit；hit_relation 为准备时的 same_node / composed_descendant，纯坐标为 null |
+| `target_verified` | true 表示可信鼠标事件命中显式元素或坐标 expected_target；未提供期望元素的坐标调用为 null |
+| `target_verification` | basis 为 element、expected_target 或 coordinate_hit；hit_relation 为准备时的 same_node / composed_descendant，无期望元素的坐标为 null |
 | `delivery_verified` | 已核验工具对应的可信输入事件 |
 | `value_verified` | 字段保留文本与核验预期一致，或选项与设置结果一致 |
 | `assignment_acknowledged` | 文件赋值/清空命令已获得回执，不证明事件送达或上传完成 |
@@ -301,6 +303,14 @@ selector 每次重新解析，省略 nth 时必须唯一；歧义立即报错并
 | `label` | 关联 HTML label 的文本；折叠空白后精确匹配，支持 for 和包裹式 label |
 | `placeholder` | placeholder 属性的完整精确值 |
 | `role` | 浏览器 AX role，可另传 `name` 精确匹配 accessible name；包括浏览器提供的隐式角色 |
+| `text` | 当前渲染文字；折叠空白、区分大小写，默认精确匹配；text_match=contains 显式启用子串匹配 |
+
+text 可传 `scope` 指定唯一 CSS 容器，搜索包括该容器自身；最多检查 10000 个元素，超限须缩小 scope。只保留有尺寸且 CSS visibility=visible 的最小匹配元素，排除 script/style/noscript/template；视口外元素仍可匹配，不包含虚拟列表中尚未渲染的内容。嵌套匹配去掉包含其他匹配的祖先，独立重复项仍报歧义或需显式 nth，不推断可点击父节点。它匹配 DOM innerText，不搜索字段 value 或替代 AX accessible name；纯图片/canvas 中的文字不在范围内。
+
+```js
+browser_click({tab_handle, selector_type:"text", selector:"¥45", scope:"#plans"})
+browser_read_text({tab_handle, selector_type:"text", selector:"套餐", text_match:"contains", scope:"#plans"})
+```
 
 `name` 仅适用于 role。`nth` 从 0 开始，按 DOM 顺序选择，role 则按 AX 树顺序；准备阶段可等待目标出现。元素定位失败保留 selector、selector_type、实际 frame_id、显式 nth 和最后匹配数 matched；零匹配为 selector_not_found，有匹配但 nth 越界为 selector_nth_out_of_range，二者仍可在准备预算内等待，不自动改选索引。重复匹配应缩小范围或显式 nth，不按可见性猜选。label 不推断兄弟 div 的标签关系，ARIA 命名可通过 role/name 定位。
 
@@ -315,7 +325,7 @@ browser_fill({tab_handle, selector_type:"label", selector:"工作职责", text:"
 browser_click({tab_handle, selector_type:"role", selector:"option", name:"2026"})
 ```
 
-CSS/XPath/label/placeholder 不穿透 Shadow DOM；可用 AX role 或 ref。role 每次读取所选 frame 的完整 AX 树，不保证比简单 CSS 查询便宜。selector、read_text、evaluate 可用 frame 或 frame_id 指定范围，两者互斥：
+CSS/XPath/label/placeholder/text 不穿透 Shadow DOM；可用 AX role 或 ref。role 每次读取所选 frame 的完整 AX 树，不保证比简单 CSS 查询便宜。selector、read_text、evaluate 可用 frame 或 frame_id 指定范围，两者互斥：
 
 ```json
 {"tab_handle":"...","selector":"#comment","frame":{"path":["iframe[title='Outer']","iframe[title='Inner']"]},"text":"填写内容"}
@@ -352,7 +362,9 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 | 参数 | 选择规则 |
 |---|---|
 | `ref` / `selector` / `x`,`y` | 三选一；元素目标自动滚入视口 |
-| `coordinate_space` | 坐标目标专用：viewport（默认）严格限制视口内；document 自动滚动顶层文档 |
+| `coordinate_space` | 坐标目标专用：viewport（默认）为 CSS 像素；document 自动滚动顶层文档；image 为指定截图原始 PNG 像素 |
+| `screenshot_id` | image 坐标必填，取自当前标签最新 screenshot 的 capture.screenshot_id，无须手算 DPR |
+| `expected_target` | 可选，原生坐标 click/hover 的 ref 或 selector 定位对象；实际命中须为该元素或其 composed 后代，不滚动期望元素 |
 | `button` / `click_count` | left / 1；另可选 middle、right 和双击 2 |
 | `modifiers` | 默认 []；Alt、Control、Meta、Shift |
 | `mode` | native（默认）或 dom；DOM 只支持 HTML 元素、左键单击且无修饰键 |
@@ -361,9 +373,9 @@ native 与 dom 由调用者显式选择。DOM click/fill 使用非可信事件�
 | `detailed` | 默认 false；true 在成功时附完整 hit_target、page_state 和点击参数，失败始终保留诊断 |
 | `capture_file_chooser` | 默认 false；本次点击临时捕获文件 input，结束后恢复手动选择，见[文件上传](#文件上传) |
 
-原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素目标返回 target_verified=true；坐标调用返回 target_verified=null，仅证明事件送达该坐标命中的节点。目标被遮挡或派发中变化时失败；遮挡错误的 diagnostics 分开返回 requested_target（请求目标）和 blocked_by（遮挡物），保留 hit_target 表示实际命中，并附命中点及受阻 frame，前序输入可能已经送达。
+原生模式核验对应的 click/dblclick/auxclick/contextmenu，成功返回 delivery_verified=true、events_trusted=true。显式元素或 expected_target 核验通过时 target_verified=true；无期望元素的坐标调用为 null，仅证明事件送达该坐标命中的节点。派发前命中不符合 expected_target 时返回 diagnostics.reason=suspected_mistarget、suspected_mistarget=true 和 input_dispatched=false；不会移到期望元素或自动丢弃约束重试。期望目标复用元素可操作性、frame 和可信事件路径守卫，派发中变化仍属未知结果。遮挡错误的 diagnostics 分开返回 requested_target（请求目标）和 blocked_by（遮挡物），保留 hit_target 表示实际命中，并附命中点及受阻 frame，前序输入可能已经送达。
 
-布局可能变化时优先传 selector 或 ref：每次操作重新计算点击位置，无须缓存 getBoundingClientRect 坐标。无 AX role 的 div 也可用唯一 CSS/XPath 定位；复杂查询可通过 evaluate 的 result_type=element 返回 ref，再调用 click，继续使用相同的命中和事件路径核验。纯坐标调用无法推断此前截图中期望的元素。
+布局可能变化时优先传 selector 或 ref：每次操作重新计算点击位置，无须缓存 getBoundingClientRect 坐标。无 AX role 的 div 也可用唯一 text/CSS/XPath 定位；复杂查询可通过 evaluate 的 result_type=element 返回 ref，再调用 click，继续使用相同的命中和事件路径核验。没有 expected_target 的坐标调用无法推断此前截图中期望的元素。
 
 detailed=true 的成功结果或失败诊断中的 hit_target 描述实际命中的 tag/id/classes/text/role/disabled，以及所属文档视口 CSS 坐标的 rect、position、z_index、visibility；z_index 不代表全局遮挡顺序。classes 最多 8 项，每项最多 100 字符；最近的 clickable_target 也包含 tag/id/classes。这些是当次 DOM 身份线索，不保证唯一或稳定。clickable_hint 和 clickable_target 仅是启发式提示，不改变实际目标；false 不表示无法响应点击。伪元素命中标记 pseudo_element=true。返回 clicked 始终为顶层视口 CSS 坐标，跨进程 iframe 仍检查祖先遮挡；透视变换 frame 不支持。
 
@@ -585,9 +597,16 @@ browser_screenshot 默认截图视口，full_page=true 截整页，或用 ref/se
 
 元素截图不自动滚动，可直接采集顶层视口外已渲染的区域；祖先 overflow 裁剪仍保留，因此有渲染 box 不代表截图里能看到该元素。需要滚入视口时先显式滚动，再重新截图并使用新映射。
 
-返回 PNG 与 capture：scope、viewport、css_width/css_height、image_origin_css、image_to_viewport_css。图片像素换算为视口 CSS 坐标：`css = 像素 × scale + offset`。整页图的视口外位置需先滚动再输入。
+返回 PNG 与 capture：screenshot_id、image.width/height、scope、viewport、css_width/css_height、image_origin_css、image_to_viewport_css。click/hover 可直接使用原始 PNG 像素：
 
-分别使用 image_to_viewport_css.scale_x/scale_y 和 offset_x/offset_y，不直接用 DPR 相除。例如 2561×1263 图片对应 1707×842 CSS 视口时，按返回映射换算两个轴，避免尺寸取整误差。映射只属于本次截图；布局或滚动变化后应重新观察，元素目标可直接交给 click 计算位置。
+```js
+browser_click({tab_handle, coordinate_space:"image", screenshot_id:"<capture.screenshot_id>", x:1280, y:600,
+  expected_target:{selector_type:"text", selector:"¥45", scope:"#plans"}})
+```
+
+每个已接管标签仅保留最新一份映射，不保存图片。新截图替换旧映射；已派发的输入/新 evaluate、导航、frame 变化、释放或断连清除映射。使用时以及派发前核对视口尺寸、滚动位置与 DPR，变化则拒绝；image 坐标不自动滚动，整页或元素图中的视口外位置需显式滚动并重截。使用原始图片尺寸；宿主缩放后的显示坐标不等于 PNG 像素。
+
+如需自行换算，分别使用 image_to_viewport_css.scale_x/scale_y 和 offset_x/offset_y：`css = 像素 × scale + offset`，不直接用 DPR 相除。例如 2561×1263 图片对应 1707×842 CSS 视口时，逐轴映射避免尺寸取整误差。映射不证明 DOM、动画或业务状态未变；关键操作使用 expected_target 或直接点击元素，并另行核验结果。
 
 超时 5 秒，超过 4000 万像素被拒绝；元素无渲染 box、负文档坐标或透视 frame 也会失败。后台渲染停滞时显式 activate，或改读 AX/正文。默认隐藏约 1.2 秒的点击反馈，include_indicators=true 可保留。
 

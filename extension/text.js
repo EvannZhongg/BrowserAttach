@@ -6,11 +6,11 @@ export async function readText(cdp, value, tabId, args) {
   if (!Number.isInteger(max) || max < 1 || max > 100000) throw new Error('max_chars must be 1..100000');
   if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('offset must be 0..9007199254740991');
   if (!['visible', 'text_content', 'value', 'editor'].includes(mode)) throw new Error('read_text mode must be visible, text_content, value or editor');
-  if (args.selector != null || args.selector_type != null || args.name != null || args.nth != null) targetOptions(args);
+  if (args.selector != null || args.selector_type != null || args.name != null || args.nth != null || args.text_match != null || args.scope != null) targetOptions(args);
   if (mode === 'value' || mode === 'editor') {
     if (!args.selector) throw new Error(`${mode} requires selector to identify exactly one field/editor`);
   }
-  const options = { selector: args.selector, selector_type: args.selector_type, nth: args.nth, mode, offset, max_chars: max };
+  const options = { selector: args.selector, selector_type: args.selector_type, nth: args.nth, text_match: args.text_match, scope: args.scope, mode, offset, max_chars: max };
   const send = (method, params) => cdp(tabId, method, params);
   const frameId = args.node?.frameId ?? args.diagnostic_frame_id;
   const context = frameId ? { frame_id: frameId } : undefined;
@@ -21,7 +21,7 @@ export async function readText(cdp, value, tabId, args) {
 }
 
 export function extractText(args, query) {
-  const element = args.selector ? query(args.selector, args.selector_type ?? 'css', args.nth) : document.body;
+  const element = args.selector ? query(args.selector, args.selector_type ?? 'css', args.nth, { text_match: args.text_match, scope: args.scope }) : document.body;
   let text, source = args.mode, complete = true;
   if (args.mode === 'visible') { text = element?.innerText ?? ''; complete = false; }
   else if (args.mode === 'text_content') { text = element?.textContent ?? ''; complete = false; }

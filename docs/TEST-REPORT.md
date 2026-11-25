@@ -1,6 +1,14 @@
 # 验证报告
 
-当前版本 **0.34.0**（2026-11-22）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.35.0**（2026-11-26）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+
+## 0.35：严格契约、DOM 文本定位与截图坐标约束
+
+- 所有 MCP 工具顶层参数拒绝未知字段；batch wait 的 schema 移除运行时禁止的 wait_for，checks 继续使用统一 deadline，不引入单项超时。
+- selector_type=text 复用现有定位链路，按规范化 innerText 精确或显式包含匹配，支持唯一 CSS scope、严格歧义/nth/count、读取、输入、wait、batch 及 frame。只保留有尺寸且 visibility=visible 的最小匹配，不爬升可点击父节点、不穿透 Shadow DOM；遍历上限 10000，超限须缩小 scope。
+- screenshot 返回实际 PNG 尺寸、screenshot_id 和逐轴映射，click/hover 的 image 坐标自动换算。每个已接管标签仅保留最新元数据；文档/frame 失效、释放、已派发输入/求值等清除映射，派发前再次检查记录与 viewport/scroll/DPR，视口外点拒绝。expected_target 复用元素命中及事件路径守卫；派发前不符为 suspected_mistarget/input_dispatched=false，不重定位、不丢弃约束补发。映射不证明布局未变，送达及目标核验仍不证明业务成功。
+- 验证：全套单元测试 443/443 通过（并发 4），包含新增契约、文本定位、映射生命周期及跨标签隔离检查；最终相关组 83/83。发布前复核时首次全套运行的既有 120 ms wait 用例在并发下返回 unavailable 而非 fail，该文件单独运行 15/15 通过，全套复跑 443/443 通过；未放宽生产语义。Chrome / Edge 临时 Profile 的 headless targeting 专项均通过，覆盖 DPR 1.5、文本读取/wait/count/歧义/click/batch、裁剪图与 image hover、同进程和 OOPIF 的文本/坐标/期望目标约束、跨 frame 错配拒绝、滚动后失效及视口外点拒绝；Chrome 既有 issues 专项通过，保留闭合 Shadow DOM、遮挡、缩放 frame、裁剪及视口外截图行为。包外安装、24 工具与严格/text/image/expected_target schema 检查通过。
+- 部署：已重启本机配对 Hub，连接扩展自动重载到 0.35.0 / ready；47 个普通扩展资源逐文件 SHA-256 一致，生成 manifest 按配对 CSP 核对；新 stdio 会话确认 24 工具、新定位/坐标参数及未知顶层参数拒绝。现有 MCP 客户端需重连以加载新 schema，旧 tab_handle 不再有效。记录：unit-0350.tap、targeting-unit-0350.log、targeting-{chrome,edge}.json、issues-chrome.json、package-0350.log、deployment-0.35.0.json。
 
 ## 0.34：按次点击捕获文件选择器
 

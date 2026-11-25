@@ -3,10 +3,18 @@ import { deadline } from './actionability.js';
 import { framePoint } from './pointer.js';
 
 export function createScreenshots(cdp, value, viewport, sessions, clickVisuals, resolveNode) {
+  // One bounded mapping per claimed tab; no image bytes or separate DOM history.
+  const captures = new Map();
+  const sameViewport = (a, b) => ['width', 'height', 'scroll_x', 'scroll_y', 'device_pixel_ratio'].every(key => a[key] === b[key]);
+  const failure = (message, reason = 'stale_screenshot') => Object.assign(new Error(`${message}. Take a fresh browser_screenshot. No input was dispatched.`), {
+    input_dispatched: false, diagnostics: { reason },
+  });
   async function capture(tabId, args) {
+    const pending = {};
+    captures.set(tabId, pending);
     const view = await viewport(tabId);
     const hasTarget = args.ref != null || args.selector != null;
-    if (!hasTarget && (args.frame || args.frame_id || args.nth != null || args.selector_type || args.name != null)) throw new Error('Element screenshot frame/nth/type/name requires an element selector');
+    if (!hasTarget && (args.frame || args.frame_id || args.nth != null || args.selector_type || args.name != null || args.text_match != null || args.scope != null)) throw new Error('Element screenshot frame/nth/type/name requires an element selector');
     if (hasTarget && args.full_page) throw new Error('Element target and full_page are mutually exclusive');
     const clip = hasTarget ? await elementClip(tabId, args, view) : args.full_page ? await fullPageClip(tabId) : null;
     const includeIndicators = args.include_indicators === true;
@@ -26,10 +34,18 @@ export function createScreenshots(cdp, value, viewport, sessions, clickVisuals, 
           )), 5000); }),
         ]);
       } finally { clearTimeout(timer); }
-      return { ...result, capture: { scope: hasTarget ? 'element' : clip ? 'full_page' : 'viewport', viewport: view,
+      if (captures.get(tabId) !== pending || !sameViewport(view, await viewport(tabId))) throw failure('Screenshot source or viewport changed during capture');
+      const image = pngSize(result.data);
+      const metadata = { screenshot_id: crypto.randomUUID(), scope: hasTarget ? 'element' : clip ? 'full_page' : 'viewport', viewport: view,
         css_width: clip?.width ?? view.width, css_height: clip?.height ?? view.height,
         image_origin_css: { x: clip?.x ?? view.scroll_x, y: clip?.y ?? view.scroll_y },
-        click_coordinate_space: 'viewport_css_pixels', agent_indicators_included: includeIndicators } };
+        click_coordinate_space: 'viewport_css_pixels', agent_indicators_included: includeIndicators, image };
+      metadata.image_to_viewport_css = { scale_x: metadata.css_width / image.width, scale_y: metadata.css_height / image.height,
+        offset_x: metadata.image_origin_css.x - view.scroll_x, offset_y: metadata.image_origin_css.y - view.scroll_y };
+      // Viewport reads can yield to navigation/detach. Never resurrect a mapping.
+      if (captures.get(tabId) !== pending) throw failure('Screenshot source changed during capture');
+      captures.set(tabId, metadata);
+      return { ...result, capture: metadata };
     } finally { await clickVisuals.visible(tabId, true); }
   }
 
@@ -60,5 +76,29 @@ export function createScreenshots(cdp, value, viewport, sessions, clickVisuals, 
     return { x: 0, y: 0, width: cssContentSize.width, height: cssContentSize.height, scale: 1 };
   }
 
-  return { capture };
+  function imagePoint(tabId, args, view) {
+    const capture = captures.get(tabId);
+    if (!capture?.screenshot_id || capture.screenshot_id !== args.screenshot_id) throw failure('Screenshot is stale or belongs to another tab');
+    if (!sameViewport(capture.viewport, view)) { captures.delete(tabId); throw failure('Screenshot viewport changed'); }
+    if (![args.x, args.y].every(Number.isFinite) || args.x < 0 || args.y < 0 || args.x >= capture.image.width || args.y >= capture.image.height) throw failure('Image coordinates are outside the original PNG', 'image_point_out_of_bounds');
+    const map = capture.image_to_viewport_css;
+    const point = { x: args.x * map.scale_x + map.offset_x, y: args.y * map.scale_y + map.offset_y };
+    if (point.x < 0 || point.y < 0 || point.x >= view.width || point.y >= view.height) throw failure('Image point is outside the current viewport; scroll explicitly and recapture', 'image_point_out_of_viewport');
+    return { point, async assertCurrent(budget) {
+      const current = await budget.run(() => viewport(tabId));
+      if (captures.get(tabId) !== capture) throw failure('Screenshot source changed before input');
+      if (!sameViewport(capture.viewport, current)) { captures.delete(tabId); throw failure('Screenshot viewport changed before input'); }
+    } };
+  }
+  return { capture, imagePoint, forget: tabId => captures.delete(tabId) };
+}
+
+export function pngSize(data) {
+  let header;
+  try { header = Uint8Array.from(atob(data.slice(0, 32)), char => char.charCodeAt(0)); }
+  catch { throw new Error('Browser returned an invalid PNG'); }
+  if (header.length < 24 || ![137,80,78,71,13,10,26,10,0,0,0,13,73,72,68,82].every((byte, index) => header[index] === byte)) throw new Error('Browser returned an invalid PNG');
+  const view = new DataView(header.buffer), width = view.getUint32(16), height = view.getUint32(20);
+  if (!width || !height) throw new Error('Browser returned an invalid PNG size');
+  return { width, height, mime_type: 'image/png' };
 }

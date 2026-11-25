@@ -7,6 +7,8 @@ const recovery = {
   selector_not_found: 'Inspect snapshot(profile="interactive", query=...) or read_control for an open popup; wait for a concrete condition if loading. Absence from rendered options does not prove absence from a virtual list.',
   selector_nth_out_of_range: 'Inspect matched/nth and the current ordering in the reported frame. Choose an observed target; do not guess another index.',
   selector_ambiguous: 'Scope the observed target by container/frame; use nth only when the observed ordering identifies it.',
+  suspected_mistarget: 'Inspect requested_target and hit_target. No input was dispatched. Re-observe the intended element and coordinates; never drop expected_target to bypass a mismatch.',
+  stale_screenshot: 'Take a fresh screenshot of this claimed tab and use its screenshot_id with original PNG coordinates. Mapping does not prove unchanged layout; constrain the intended element with expected_target.',
   value_not_retained: 'Read the current control with read_control or the form with snapshot(profile="fields"). Retained values and application acceptance are separate; do not refill automatically.',
   delivery_unverified: 'Use browser_wait for the expected result or observe current state. Activate explicitly if rendering/focus is unavailable; activation does not prove earlier non-delivery.',
   input_timeout: 'Observe current state or repeat only the read-only browser_wait; do not repeat the input or switch modes automatically.',

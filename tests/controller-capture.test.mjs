@@ -5,7 +5,7 @@ import { fixture, captureChooser } from './helpers/controller-fixture.mjs';
 test('PNG capture supports viewport and bounded full-page screenshots', async () => {
   const f = fixture(); await f.claim();
   await assert.rejects(f.exec('screenshot', {name:'Submit'}), /name requires an element selector/);
-  assert.equal((await f.exec('screenshot')).data, 'image-data');
+  assert.match((await f.exec('screenshot')).data, /^iVBOR/);
   const full = await f.exec('screenshot', { full_page: true, include_indicators: true });
   assert.equal(full.capture.agent_indicators_included, true);
   const calls = f.calls.filter(call => call.method === 'Page.captureScreenshot');

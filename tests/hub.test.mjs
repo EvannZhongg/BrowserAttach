@@ -53,6 +53,8 @@ async function fixture(t, options) {
       if (data.command === 'batch') result = { completed: false, results: [{ value_verified: true }], failed_step: 1, error: 'Outcome is unknown' };
       if (data.command === 'wait') result = { status: 'fail', timed_out: true, retry_safe: true, failed: [0], unavailable: [], results: [{ index: 0, status: 'fail', expected: 1, actual: { count: 0 } }] };
       if (data.command === 'screenshot') result = { data: PNG, capture: { css_width: 1, css_height: 1,
+        screenshot_id: 'test-capture', image: { width: 1, height: 1, mime_type: 'image/png' },
+        image_to_viewport_css: { scale_x: 1, scale_y: 1, offset_x: 0, offset_y: 0 },
         image_origin_css: { x: 0, y: 0 }, viewport: { scroll_x: 0, scroll_y: 0 } } };
       ws.send(JSON.stringify({ id: data.id, result }));
     });
