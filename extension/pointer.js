@@ -2,7 +2,7 @@ import { deadline, waitForTarget } from './actionability.js';
 import { offsetOption } from './motion.js';
 import { describeTarget } from './target-description.js';
 
-export function createPointer(cdp, value, viewport, position, sessions, getTab, getWindow, imagePoint) {
+export function createPointer(cdp, value, viewport, position, sessions, getTab, getWindow, { imagePoint, rememberBlocker } = {}) {
   async function assertReady(tabId, budget, action, args = {}) {
     const inactiveClick = action === 'click' && (args.button ?? 'left') === 'left' &&
       (args.click_count ?? 1) === 1 && (args.modifiers ?? []).length === 0;
@@ -32,6 +32,23 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
     } finally { clearTimeout(timer); }
   }
   async function prepare(tabId, node, args) {
+    const budget = args.budget || deadline(args.timeout_ms);
+    try { return await prepareTarget(tabId, node, { ...args, budget }); }
+    catch (error) {
+      // Enrich only the final obstruction after bounded recentering. Failure to
+      // publish a ref must never replace the original input/obstruction evidence.
+      if (rememberBlocker && error.blockerNode && error.diagnostics?.blocked_by) {
+        try {
+          const identity = await rememberBlocker(tabId, error.blockerNode, budget.child(250));
+          error.diagnostics.blocked_by = { ...error.diagnostics.blocked_by, ref: identity.ref, frame_id: identity.frame_id };
+        } catch (readError) {
+          error.diagnostics.blocked_by = { ...error.diagnostics.blocked_by, ref: null, observation_error: String(readError.message).slice(0, 300) };
+        }
+      }
+      throw error;
+    }
+  }
+  async function prepareTarget(tabId, node, args) {
     const budget = args.budget || deadline(args.timeout_ms);
     try { return await prepareOnce(tabId, node, { ...args, budget }); }
     catch (error) {
@@ -157,8 +174,10 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
       }));
       if (!relation) {
         const requested = await requestedTarget(node);
-        throw obstruction(`Another element covers the requested target. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(hitTarget)}; point=${JSON.stringify(point)}; frame_id=${JSON.stringify(node.frameId)}`,
-          { reason: coordinates ? 'suspected_mistarget' : 'obstructed', ...(coordinates ? { suspected_mistarget: true } : {}), requested_target: requested, blocked_by: hitTarget, hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
+        const error = obstruction(`${coordinates ? 'Coordinate hit does not match expected_target' : 'Another element covers the requested target'}. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(hitTarget)}; point=${JSON.stringify(point)}; frame_id=${JSON.stringify(node.frameId)}`,
+          { reason: coordinates ? 'suspected_mistarget' : 'obstructed', ...(coordinates ? { suspected_mistarget: true } : { blocked_by: hitTarget }), requested_target: requested, hit_target: hitTarget, point, coordinate_space: 'session_viewport_css_pixels', frame_id: node.frameId, hit_relation: null });
+        if (!coordinates) error.blockerNode = { target, objectId: hit.object.objectId, frameId };
+        throw error;
       }
     }
     // Dispatch through the root widget so overlays in ancestor documents cannot
@@ -176,16 +195,17 @@ export function createPointer(cdp, value, viewport, position, sessions, getTab, 
         x: Math.floor(rootPoint.x + parentView.scroll_x), y: Math.floor(rootPoint.y + parentView.scroll_y), includeUserAgentShadowDOM: true,
       }));
       if (parentHit.backendNodeId !== owner.backendNodeId) {
-        let blocker;
+        let blocker, blockerNode;
         try {
           const diagnostic = budget.child(200);
           const resolved = await diagnostic.run(() => cdp(parent.target, 'DOM.resolveNode', { backendNodeId: parentHit.backendNodeId, objectGroup: 'browser-attach' }));
+          blockerNode = { target: parent.target, objectId: resolved.object.objectId, frameId: parentHit.frameId || parent.ownerFrameId };
           blocker = value(await diagnostic.run(() => cdp(parent.target, 'Runtime.callFunctionOn', { objectId: resolved.object.objectId,
             functionDeclaration: describeHit.toString(), returnByValue: true })));
         } catch { /* Preserve the obstruction error even if its node disappears. */ }
         const requested = node ? await requestedTarget(node) : null;
-        throw obstruction(`Another element covers this frame. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(blocker ?? { backend_node_id: parentHit.backendNodeId })}; point=${JSON.stringify(rootPoint)}; blocked_frame_id=${JSON.stringify(parent.frameId)}`,
-          { reason: 'frame_obstructed', requested_target: requested, blocked_by: blocker ?? { backend_node_id: parentHit.backendNodeId }, hit_target: blocker ?? null, point: rootPoint, coordinate_space: 'session_viewport_css_pixels', blocked_frame_id: parent.frameId });
+        throw Object.assign(obstruction(`Another element covers this frame. requested_target=${JSON.stringify(requested)}; hit_target=${JSON.stringify(blocker ?? { backend_node_id: parentHit.backendNodeId })}; point=${JSON.stringify(rootPoint)}; blocked_frame_id=${JSON.stringify(parent.frameId)}`,
+          { reason: 'frame_obstructed', requested_target: requested, blocked_by: blocker ?? { backend_node_id: parentHit.backendNodeId }, hit_target: blocker ?? null, point: rootPoint, coordinate_space: 'session_viewport_css_pixels', blocked_frame_id: parent.frameId }), { blockerNode });
       }
       const ownerFrameId = parent.ownerFrameId || (await budget.run(() => cdp(parent.target, 'Page.getFrameTree'))).frameTree.frame.id;
       boundaries.push({ target: parent.target, backendNodeId: owner.backendNodeId, frameId: ownerFrameId });

@@ -2,8 +2,8 @@ const fields = ['input_dispatched', 'outcome_unknown', 'post_action', 'diagnosti
 
 const recovery = {
   stale_ref: 'Observe the affected page/frame and use a fresh ref or selector. A stale ref alone does not require a new claim.',
-  obstructed: 'Inspect blocked_by and the visible control or associated HTML label. If input_dispatched=false, choose an observed target explicitly; otherwise observe effects first. Never switch to DOM input automatically.',
-  frame_obstructed: 'Inspect the ancestor-frame blocker before choosing another target. Do not bypass it with DOM input automatically.',
+  obstructed: 'Use read_control(view="context", ref=blocked_by.ref) when available to inspect DOM relatives; inspect ancestor/sibling refs for controls outside the blocker. Relatives are not inferred close controls. If input_dispatched=false, choose an observed target explicitly; otherwise observe effects first. Never remove DOM or switch input modes automatically.',
+  frame_obstructed: 'Inspect the ancestor-frame blocked_by.ref with read_control(view="context"); its frame_id identifies the blocker, not the covered child frame. Do not bypass it with DOM input or remove DOM automatically.',
   selector_not_found: 'Inspect snapshot(profile="interactive", query=...) or read_control for an open popup; wait for a concrete condition if loading. Absence from rendered options does not prove absence from a virtual list.',
   selector_nth_out_of_range: 'Inspect matched/nth and the current ordering in the reported frame. Choose an observed target; do not guess another index.',
   selector_ambiguous: 'Scope the observed target by container/frame; use nth only when the observed ordering identifies it.',

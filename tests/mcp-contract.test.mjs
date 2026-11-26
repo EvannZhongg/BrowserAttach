@@ -40,4 +40,10 @@ test('MCP rejects unknown fields before forwarding and wait step schema matches 
     const before = calls.length;
     assert.equal((await call('click', args)).isError, true); assert.equal(calls.length, before);
   }
+  assert.ok(!(await call('read_control', { ref: 'blocker', view: 'context', max_nodes: 10 })).isError);
+  assert.equal(calls.at(-1).args.max_options, undefined);
+  for (const args of [{ selector:'#overlay',view:'context',max_options:3 }, { selector:'#overlay',view:'context',popup_selector:'#portal' }, { selector:'#overlay',max_nodes:3 }]) {
+    const before=calls.length;
+    assert.equal((await call('read_control',args)).isError,true);assert.equal(calls.length,before);
+  }
 });

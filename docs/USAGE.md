@@ -1,6 +1,6 @@
 # BrowserAttach 使用指南
 
-适用于 **0.35.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
+适用于 **0.36.0**：Node.js 22+、Chrome / Edge 125+、24 个 MCP 工具。安装、配对与升级见 [README](../README.md)，宿主配置见 [Agent 集成](AGENT-INTEGRATION.md)，内部机制见 [架构说明](ARCHITECTURE.md)。
 
 本文供按需查阅，不会自动通过 MCP 发送给 agent。MCP 初始化 `instructions` 提供通用规则，工具 description 与参数 schema 提供调用说明；宿主应把 instructions 纳入模型上下文。
 
@@ -240,7 +240,27 @@ fields 视图用 `fields` 数组替代 snapshot 文本，保留重复标签和�
 
 ### browser_read_control
 
-弹层选项、已有选中项及键盘活动项优先使用本工具；整页字段值/控件状态使用 snapshot(profile=fields)。定向读取一个 ref 或唯一 selector，不替换现有快照、refs 或分页。不聚焦、不展开控件、不推断组件库内部模型；新增 refs 复用现有文档/frame/session 与 AX 身份校验。同一身份重复读取复用 ref，新增 ref 仍受每次观察 500 个的预算限制。内部仍采集所属 frame 的完整 AX 树，收益是减少调用轮次和保留 refs，不保证比 snapshot 更低的 CDP 成本或输出体积。
+默认 `view=control`：弹层选项、已有选中项及键盘活动项优先使用本工具；整页字段值/控件状态使用 snapshot(profile=fields)。定向读取一个 ref 或唯一 selector，不替换现有快照、refs 或分页。不聚焦、不展开控件、不推断组件库内部模型；新增 refs 复用现有文档/frame/session 与 AX 身份校验。同一身份重复读取复用 ref，新增 ref 仍受每次观察 500 个的预算限制。control 视图仍采集所属 frame 的完整 AX 树，收益是减少调用轮次和保留 refs，不保证比 snapshot 更低的 CDP 成本或输出体积。
+
+`view=context` 用于遮挡等非语义节点的 DOM 定向观察，不采集完整 AX 树。返回 target、最多 3 层 ancestors、直接 children 和邻近 siblings；默认总计 max_nodes=20，可选 1–50，包含目标。子项按 DOM 顺序取样，同级节点优先取目标前后邻居，omitted 报告省略数及 ancestors_more。祖先可通过 shadow_host 跨到所属 host；不跨 iframe 文档，不扫描全页或搜索视觉上邻近的关闭按钮。可继续观察返回的祖先或同级 ref，逐步定位其他 Portal。
+
+每项提供 tag/id/classes、最多 300 字符的渲染文字、原始 role/ARIA label/title/hidden/modal/disabled、frame 视口 CSS rect、position/z_index/pointer_events。字段节点不直接读取 value；text_truncated/truncated_attributes 标记截断。visible 仅表示有尺寸且 visibility=visible，不证明未遮挡或可操作。关系不代表弹层所有权，也不证明某按钮能关闭遮挡。
+
+context 的 refs 仍通过局部 AX 身份、连接状态和文档/frame/session 校验注册，允许 AX ignored 节点；无可核验身份时保留 DOM 事实，ref=null 并附 ref_unavailable，不按 CSS class 猜造定位器。timeout_ms/max_chars 沿用本工具预算；context 不接受 popup_selector/max_options，max_nodes 仅适用于 context。动作 observe 同样可用此视图。
+
+#### 遮挡后的观察与恢复
+
+原生输入最后一次遮挡检查失败时，工具在剩余准备预算内尝试给 `diagnostics.blocked_by` 添加 ref/frame_id。祖先 frame 遮挡的 frame_id 指向遮挡节点所属文档，blocked_frame_id 则指向被挡的子 frame。身份不可用、节点消失或预算不足时 ref=null/observation_error 保留原因，不覆盖原来的遮挡及 input_dispatched 证据。
+
+```js
+browser_read_control({tab_handle, view:"context", ref:"<diagnostics.blocked_by.ref>"})
+browser_read_control({tab_handle, view:"context", ref:"<观察到的兄弟 Portal ref>"})
+browser_click({tab_handle, ref:"<明确选定的关闭按钮 ref>"})
+```
+
+使用 ref 时不再附 frame_id。这些 ref 与普通观察共用失效边界；不要先取得替换现有 refs 的完整快照再使用旧 blocker ref。读取不滚动、不聚焦、不派发输入，也不删除 DOM、隐藏遮罩或自动选按钮；只有调用方明确选择后才按既有输入流程操作。已经派发但结果未知时先核验结果，不因得到 blocker ref 就重放输入。若没有正规关闭入口，观察结果不构成绕过遮挡的授权。
+
+#### 控件事实与动作后观察
 
 ```json
 {"tab_handle":"...","selector":"#education","max_options":10}

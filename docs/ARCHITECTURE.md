@@ -1,6 +1,6 @@
 # 架构与设计边界
 
-当前实现为 **0.35.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
+当前实现为 **0.36.0**。本文说明 BrowserAttach 的组件、控制模型与设计取舍；工具参数见 [使用指南](USAGE.md)。
 
 ## 组件与数据流
 
@@ -36,6 +36,7 @@ MCP 客户端
 | `extension/observation.js`、`snapshot.js`、`snapshot-diff.js`、`observation-options.js` | 文档/frame 观察版本、AX 采集、ref 身份与失效历史；语义渲染、差分、分页和动作观察参数校验 |
 | `extension/fields.js` | 每次观察按 debugger session 采集 DOMSnapshot，按 frame/backend 节点身份关联 AX，提取结构化字段事实和原生文件选择状态 |
 | `extension/control.js`、`target-description.js` | 无持久缓存的定向控件/弹层读取，复用 ref 注册；共享不含输入值的目标描述 |
+| `extension/element-context.js` | read_control 的 context 视图；有界 DOM 亲缘取样和事实读取，沿用局部 AX ref 身份，不推断关闭控件 |
 | `extension/network.js` | 一份被动请求与文档响应状态，供 fetch、网络空闲等待及诊断日志使用 |
 | `extension/diagnostics.js`、`log-data.js` | 日志缓冲与分页、可选正文捕获、截断及脱敏；不拥有网络空闲或文档状态 |
 | `extension/{navigation,evaluate}.js` | 导航等待、有界求值结果缓存与分页 |
@@ -139,6 +140,7 @@ HTTP 状态复用 network.js 的 Network.responseReceived 观察，按主文档 
 - **选择器捕获**：接管和普通 session 初始化不启用文件选择器拦截。click(capture_file_chooser=true) 在原标签队列内暂时启用各 session 拦截，等待事件与点击共享预算，结束后用独立的有界清理关闭，再进行 wait_for/observe。新 OOPIF 初始化继承当时的拦截状态；关闭先更新期望状态，不等待尚未完成的 frame 初始化，避免迟到初始化重新开启拦截。捕获的 input 身份与拦截开关分离，关闭后仍可通过 upload_file 赋值；文档/frame/session 失效或释放清除对应记录。没有捕获到 input 时保留点击回执并报告独立原因，不重放；清理失败保留动作证据并返回 file_chooser_cleanup，要求释放标签后再手动选择。短暂捕获期间不能区分人和 Agent 的点击，也不为 DOM 点击授予用户激活。
 - **上传证据**：非空文件通过 DOM.setFileInputFiles 设置；清空由 DOM 赋值并派发合成 input/change。命令回执与 FileList 核验分层：assignment_acknowledged=true 后单独返回 requested_count、observed_count 与 count_verified，数量不符不是赋值错误；节点脱离或读取失败以 null 和 observation_error 表达，不能覆盖已有命令回执。赋值本身异常/超时仍报告已派发、结果未知，不补发设置或事件。非空路径 events_trusted=null，不把 CDP 回执作为事件送达核验；清空路径 events_trusted=false，两者 application_result=not_checked，不推断组件登记或服务器接收。
 - **送达不等于业务完成**：原生 click/hover 的 delivery_verified 表示可信事件送达；target_verified=true 用于显式元素或坐标 expected_target，无期望元素的坐标为 null，target_verification 标明 element/expected_target/coordinate_hit 和准备时的 same_node/composed_descendant。hit_relation 按 composed 祖先遍历处理 slot/ShadowRoot，派发后仍由隔离世界事件路径核验。元素命中关系比较先把双方 backend 节点显式解析到目标 frame 的同一隔离 world，避免先前定向读取留下的默认 wrapper 导致跨 world 对象比较失败。value_verified 表示字段保留文本与核验预期一致；点击、按键、fill 和 batch 返回 `application_result: "not_checked"`。fill 不证明 React 状态、选项提交、blur 校验或保存完成。
+- **遮挡观察出口**：pointer 只在最后一次遮挡失败后，用剩余预算的至多 250 ms 尝试注册 blocker ref，不在每次重定位或派发前添加观察轮次。注册复用局部 AX 身份与控制权校验，失败只在 blocked_by 上报告 ref 不可用，保留原输入阶段和遮挡证据。祖先 frame 使用命中节点的实际 frame/session，既不把子 frame 身份套到遮挡上，也不按 backend ID 暴露新操作接口。read_control(view=context) 在隔离世界一次收集目标、最多三层父链、直接子项和邻近兄弟；同一返回数组保留 DOM 对象，取样和输出受节点/字符/时间预算限制，逐项沿用 rememberElement，允许 ignored AX，缺失身份时不伪造 ref。末尾核对目标连接及文档/frame/session/claim，清理临时 wrappers；无新的遮罩缓存、关闭策略或自动 DOM 改写。
 - **定向控件观察**：read_control 在同一标签队列中按显式目标读取 DOM 与所属 frame 的 AX，分开保留原生值、显示文本、状态、原始 ARIA 属性、title/aria-description、同根 aria-describedby 文本及浏览器 AX description、明确的 controls/owns 弹层及 activedescendant。显式描述引用最多 8 项、每项 1000 字符，来源与缺失/截断分开报告，不自动悬停或推断禁用原因。仍使用所属 frame 的 getFullAXTree，定向指输出范围与 ref 稳定性，不表示减少 AX 采集成本；弹层 DOM 文本在 CDP 返回前裁为 120 字符预览，超出标记 text_truncated，控件本身的文本上限仍为 1000。只遍历目标/明确弹层子树中的当前 AX 选项，不猜组件库、列表全集或所有权；活动与选中项独立保留。复用当前观察状态新增/复用至多 500 个额外 ref，不替换快照或分页；读取后检查文档/frame/session/claim，清理隔离与定位 wrappers，无持久组件缓存。定位器形式的 observe 复用相同读取。
 - **动作后快照观察**：单个动作或整批末尾的 observe 可用 diff_since，在 perform 入口验证并绑定动作前的基线/视图/claim；派发后复用 snapshot 采集与 latest 重置规则，不重新解析成动作后的另一份基线。参数或未读基线错误在输入前拒绝；派发后观察受剩余动作预算约束，以独立 observation 返回，失败不覆盖动作结果，已派发失败仍可保留证据，不重放或推断业务成功。默认观察上限为 5 秒，可显式调整但不能超过剩余总预算；步骤 observe 保持控件 selector 形式。
 - **动作后条件等待**：wait_for 仅接受 checks 与子预算；输入前预检，派发后在原标签队列和 deadline 中复用同一 waitFor 检查器，然后才执行 observe。等待期间临时覆盖对话框策略为 ask，重新解析新文档 selector 并检查权限/claim；wait_result 与动作回执独立，未知动作不因条件通过而变成已核验送达。batch 对步骤 wait_result 非 pass 停止并保留该动作回执；不放宽下一步骤的文档边界，不添加后台任务或自动重放。

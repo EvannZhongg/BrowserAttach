@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { deadline, inspectTarget, waitForTarget, delivery } from '../extension/actionability.js';
+import { errorData } from '../extension/errors.js';
 import { clickOptions } from '../extension/click.js';
 import { createPointer, describeHit, framePoint, normalizeHit, hitRelation } from '../extension/pointer.js';
 import { NAVIGATION_MAX_TIMEOUT_MS, NAVIGATION_OBSERVATION_TIMEOUT_MS, HUB_OPERATION_TIMEOUT_MS, CLIENT_RESPONSE_TIMEOUT_MS } from '../extension/limits.js';
@@ -301,4 +302,40 @@ test('hit relationships resolve both backend nodes in one explicit frame world a
   assert.equal(result.relation, 'same_node');
   assert.equal(calls.filter(call => call.method === 'DOM.resolveNode' && call.args.executionContextId === 42).length, 2);
   assert.ok(!calls.some(call => call.method.startsWith('Input.')));
+});
+
+test('only the final blocker gains an observation ref; diagnostic failures preserve input evidence', async () => {
+  for (const scenario of ['ref', 'unavailable', 'earlier_dispatch']) {
+    const calls=[];let centers=0,remembered=0;
+    const cdp=async(target,method,args)=>{
+      calls.push(method);
+      if(method==='Page.createIsolatedWorld')return {executionContextId:1};
+      if(method==='DOM.resolveNode')return {object:{objectId:'blocker-wrapper'}};
+      if(method==='DOM.getContentQuads')return {quads:[[0,0,50,0,50,50,0,50]]};
+      if(method==='DOM.getNodeForLocation')return {backendNodeId:2,frameId:'main'};
+      if(method==='Runtime.callFunctionOn'){
+        if(args.functionDeclaration.includes('this.scrollIntoView(')){centers++;return {result:{}}}
+        if(args.functionDeclaration.includes('function inspectTarget'))return {result:{value:{ready:true}}};
+        if(args.functionDeclaration.includes('function describeHit'))return {result:{value:{tag:'div',id:'overlay'}}};
+        if(args.functionDeclaration.includes('function hitRelation'))return {result:{value:null}};
+      }
+      return {};
+    };
+    const pointer=createPointer(cdp,r=>r.result.value,async()=>({width:100,height:100,scroll_x:0,scroll_y:0}),null,{},null,null,{
+      rememberBlocker:async(tab,node)=>{
+        remembered++;assert.equal(node.frameId,'main');assert.equal(node.objectId,'blocker-wrapper');
+        if(scenario==='unavailable')throw new Error('AX unavailable');
+        return {ref:'blocker-ref',frame_id:'main'};
+      }
+    });
+    const budget=deadline(1000);if(scenario==='earlier_dispatch')budget.dispatch();
+    await assert.rejects(pointer.prepare(1,{target:{tabId:1},objectId:'target',backendNodeId:1,frameId:'main'},{budget}),error=>{
+      assert.equal(error.input_dispatched,scenario==='earlier_dispatch');assert.equal(error.diagnostics.reason,'obstructed');
+      assert.equal(error.diagnostics.blocked_by.ref,scenario==='unavailable'?null:'blocker-ref');
+      if(scenario==='unavailable')assert.equal(error.diagnostics.blocked_by.observation_error,'AX unavailable');
+      assert.ok(!JSON.stringify(errorData(error)).includes('blocker-wrapper'));return true;
+    });
+    assert.equal(remembered,1);assert.equal(centers,scenario==='earlier_dispatch'?0:1);
+    assert.ok(!calls.some(method=>method.startsWith('Input.')));
+  }
 });

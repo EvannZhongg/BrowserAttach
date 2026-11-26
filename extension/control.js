@@ -2,6 +2,7 @@ import { deadline } from './actionability.js';
 import { targetOptions, resolveSelector } from './locator.js';
 import { popupProperties, descriptionProperties } from './snapshot.js';
 import { boundedRead } from './outcomes.js';
+import { createContextReader } from './element-context.js';
 
 const OPTION_ROLES = new Set(['option', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'treeitem']);
 const STATES = new Set(['disabled', 'readonly', 'required', 'invalid', 'checked', 'selected', 'expanded', 'focused', 'multiselectable']);
@@ -10,6 +11,9 @@ const POPUP_TEXT_PREVIEW_CHARS = 120;
 export function controlOptions(args) {
   if (!args || typeof args !== 'object' || Array.isArray(args)) throw new Error('observe requires a control locator object');
   targetOptions(args);
+  if (!['control', 'context'].includes(args.view ?? 'control')) throw new Error('read_control view must be control or context');
+  if (args.view === 'context' && (args.popup_selector != null || args.max_options != null)) throw new Error('Context view does not accept popup_selector or max_options');
+  if (args.max_nodes != null && (args.view !== 'context' || !Number.isInteger(args.max_nodes) || args.max_nodes < 1 || args.max_nodes > 50)) throw new Error('max_nodes requires view=context and must be 1..50');
   if (args.popup_selector != null && (typeof args.popup_selector !== 'string' || !args.popup_selector.trim() || args.popup_selector.length > 10000)) throw new Error('popup_selector must contain 1..10000 CSS characters');
   for (const [key, fallback, min, max] of [['timeout_ms', 1000, 100, 5000], ['max_options', 30, 1, 100], ['max_chars', 16000, 1000, 64000]]) {
     if (!Number.isInteger(args[key] ?? fallback) || (args[key] ?? fallback) < min || (args[key] ?? fallback) > max) throw new Error(`${key} must be ${min}..${max}`);
@@ -31,8 +35,10 @@ function axFacts(node, protectedValue = false) {
 }
 
 export function createControlReader(cdp, value, sessions, observations, resolveNode, currentClaim) {
+  const readContext = createContextReader(cdp, value, sessions, observations, resolveNode, currentClaim);
   return async (tabId, args, budget = deadline(args.timeout_ms ?? 1000, 'snapshot')) => {
     controlOptions(args);
+    if (args.view === 'context') return await readContext(tabId, args, budget);
     const claim = currentClaim(tabId), version = observations.version(tabId), group = 'browser-attach-control';
     let target;
     try {

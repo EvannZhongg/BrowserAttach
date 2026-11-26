@@ -5,7 +5,7 @@ license: MIT
 compatibility: Requires the BrowserAttach MCP server (npm @evan_zhong/browser-attach, Node >= 22), a Chrome or Edge 125+ profile with the paired extension enabled, and a local Hub on the same machine. No remote debugging port is needed.
 metadata:
   author: EvannZhongg
-  version: "0.35.0"
+  version: "0.36.0"
   repository: https://github.com/EvannZhongg/BrowserAttach
   requires-mcp-server: browser_attach
 ---
@@ -47,6 +47,8 @@ For an independent HTTP(S) URL read, `browser_fetch` uses the profile's sign-in 
 | Page data not exposed by these observations | A small, task-specific `browser_evaluate` expression |
 
 Observe when the next decision depends on new state or an action outcome is uncertain; a full snapshot is not required after every action. Queries, interactive views and diffs reduce returned content, not full AX collection cost. latest can return a full reset; explicit snapshot IDs remain strict. Finish unread pages before the next input. Use the connected tool descriptions for ref lifetime, diff application and pagination rules.
+
+For obstructed input, use diagnostics.blocked_by.ref with browser_read_control(view="context"). It returns DOM ancestors, direct children and nearby siblings, including non-semantic overlays; follow returned ancestor/sibling refs to inspect controls in other portals. These are structural relations, not inferred close controls. Choose any dismissal action explicitly; never delete/hide DOM or switch input modes automatically to bypass an obstruction.
 
 ## Locate and act
 

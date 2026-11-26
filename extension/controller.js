@@ -46,7 +46,13 @@ export function createController(api, notify = () => {}) {
     uploads.forgetSession(tabId, sessionId);
   }, tabId => diagnostics.networkOptions(tabId));
   const pointer = createPointer(cdp, value, viewport, position, sessions, tabId => api.tabs.get(tabId), windowId => api.windows.get(windowId),
-    (tabId, args, view) => screenshots.imagePoint(tabId, args, view));
+    { imagePoint: (tabId, args, view) => screenshots.imagePoint(tabId, args, view),
+      rememberBlocker: (tabId, node, budget) => {
+        if (!claims.has(tabId)) throw new Error('Tab control ended; no blocker ref was created');
+        if (!node.frameId) throw new Error('Blocker frame identity is unavailable; observe its frame before choosing a target');
+        if ((sessions.target(tabId, node.frameId).sessionId ?? null) !== (node.target.sessionId ?? null)) throw new Error('Blocker session identity is unavailable; observe its frame before choosing a target');
+        return observations.rememberElement(tabId, node.target, node.objectId, node.frameId, budget);
+      } });
   const mouse = createClick(cdp, value, pointer);
   const gestures = createDrag(cdp, value, pointer, viewport);
   const input = createInput(cdp, value, sessions);

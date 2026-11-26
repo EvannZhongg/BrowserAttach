@@ -59,6 +59,9 @@ try {
   assert.ok(click.properties.selector_type.enum.includes('text'));
   assert.ok(click.properties.coordinate_space.enum.includes('image'));
   assert.ok(click.properties.screenshot_id); assert.ok(click.properties.expected_target);
+  const control = tools.find(tool => tool.name === 'browser_read_control').inputSchema;
+  assert.ok(control.properties.view.enum.includes('context'));
+  assert.equal(control.properties.max_nodes.maximum, 50);
   const waitStep = tools.find(tool => tool.name === 'browser_batch').inputSchema.properties.steps.items.oneOf.find(branch => branch.properties.action.const === 'wait');
   assert.equal(waitStep.properties.wait_for, undefined);
   assert.ok(!tools.some(tool => ['browser_console_logs', 'browser_network_logs'].includes(tool.name)));

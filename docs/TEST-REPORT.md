@@ -1,6 +1,13 @@
 # 验证报告
 
-当前版本 **0.35.0**（2026-11-26）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+当前版本 **0.36.0**（2026-11-26）。本文件按次版本组织：每个次版本先给语义变化，再给验证结果，补丁差异合并为单行。浏览器验证使用本地 fixture 或临时 profile；本机配对链路的部署核对记录在各次版本下。原始日志保存在被忽略的 `test-results/`。
+
+## 0.36：遮挡后的 DOM 上下文观察
+
+- read_control 增加 view=context，复用现有定位、队列和 ref 身份，返回目标、最多三层祖先、直接子项和邻近同级节点；max_nodes/max_chars/timeout_ms 有界，不采集完整 AX。DOM 事实包含 ARIA label、几何和样式，ignored AX 可注册 ref；身份不可用时保留事实并标记 ref=null。关系不推断关闭入口，不派发输入或改写 DOM。
+- 原生输入最后一次遮挡失败后，剩余预算内尝试给 blocked_by 添加 ref/frame_id；失败仍保留原诊断和 input_dispatched。祖先 frame 遮挡返回实际外层文档身份，沿用 claim/文档/frame/session/ref 失效边界，无新遮罩缓存或自动恢复状态机。
+- 验证：全套单元测试 448/448 通过（并发 4）；覆盖 DOM 取样/字符预算、身份缺失、文档/frame/控制权变化、目标分离、最终遮挡 ref 注册及诊断失败保留原输入证据。Chrome / Edge 临时 Profile 的 headless obstructions 专项均通过：aria-hidden 无文字全屏遮罩 → blocker ref → 同级 Portal → 显式点击关闭；观察前后 DOM 和操作计数不变；OOPIF 外层遮挡 ref 指向实际父文档，导航后旧 ref 拒绝，前台变化只发生在显式 activate。包外安装、24 工具及 context schema 检查通过。记录：unit-0360.tap、context-unit-0360.log、context-boundaries-0360.log、obstructions-{chrome,edge}.json、package-0360.log。
+- 部署：本机 Hub 已重启，连接的扩展自动重载到 0.36.0 / ready；48 个普通扩展资源逐文件 SHA-256 一致，生成 manifest 按配对 CSP 核对；新 stdio 会话确认 24 工具、context schema 及参数互斥校验。现有 MCP 客户端需重连加载新 schema，旧句柄需重新发现/接管。记录：deployment-0.36.0.json。
 
 ## 0.35：严格契约、DOM 文本定位与截图坐标约束
 
